@@ -3324,6 +3324,11 @@
         const clone = src.cloneNode(true);
         clone.querySelectorAll('.post-reply-count').forEach(function (el) { el.remove(); });
         clone.querySelectorAll('.post.embedded').forEach(function (el) { el.remove(); });
+        // 検索 / 人気レス / 画像レスの絞り込み (.filter-hidden) は「一覧の表示」を絞るためのもので、
+        // ポップアップは文脈参照なので絞らずすべて見せる。クローン自身と内部の残存要素から剥がす
+        // (NG 系の非表示 [DOM 除去 / .ai-ng-hidden] はここでは復活させない = NG は NG のまま)。
+        clone.classList.remove('filter-hidden');
+        clone.querySelectorAll('.filter-hidden').forEach(function (el) { el.classList.remove('filter-hidden'); });
         return clone;
     }
 
