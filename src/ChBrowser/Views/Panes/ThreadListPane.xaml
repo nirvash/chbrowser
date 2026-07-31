@@ -169,8 +169,12 @@
                  デフォルトの TabPanel は環境によって wrap が機能しないことがあったため明示的に WrapPanel に変更。 -->
             <TabControl.Template>
                 <ControlTemplate TargetType="TabControl">
-                    <WrapPanel IsItemsHost="True" Orientation="Horizontal"
-                               Background="{x:Static SystemColors.ControlBrush}" />
+                    <!-- タブ列と下のコンテンツ領域の境界を分かりやすくするための下ボーダー。 -->
+                    <Border BorderBrush="{StaticResource PaneBorderBrush}"
+                            BorderThickness="0,0,0,1">
+                        <WrapPanel IsItemsHost="True" Orientation="Horizontal"
+                                   Background="{x:Static SystemColors.ControlBrush}" />
+                    </Border>
                 </ControlTemplate>
             </TabControl.Template>
             <TabControl.ItemContainerStyle>
