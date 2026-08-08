@@ -127,7 +127,8 @@
 
     function renderParamsGrid(params) {
         // file-details.js と同じ priority 順 (人間が見たい主要パラメータを先頭に)。
-        var priority = ['Steps', 'Sampler', 'CFG scale', 'Seed', 'Size', 'Model hash', 'Model'];
+        // Text encoder / VAE は ComfyUI グラフから取れたときのみ存在する (動画ワークフロー等)。
+        var priority = ['Steps', 'Sampler', 'CFG scale', 'Seed', 'Size', 'Model hash', 'Model', 'Text encoder', 'VAE'];
         var ordered  = [];
         for (var i = 0; i < priority.length; i++) {
             if (params[priority[i]] !== undefined) ordered.push(priority[i]);

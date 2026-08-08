@@ -6,8 +6,10 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -20,6 +22,8 @@ namespace ChBrowser.Services.Image;
 /// <list type="bullet">
 /// <item>PNG: tEXt / iTXt / zTXt チャンク内の <c>parameters</c> / <c>UserComment</c> / <c>Comment</c> キー。</item>
 /// <item>JPEG / WebP: EXIF UserComment (APP1 セグメント / RIFF EXIF チャンク) 内の SD WebUI infotext。</item>
+/// <item>MP4 / MOV: moov/udta/meta の keys+ilst (ComfyUI SaveVideo の <c>prompt</c> JSON)。</item>
+/// <item>WebM / MKV: Matroska Tags の SimpleTag (ComfyUI SaveWEBM の <c>prompt</c> JSON)。</item>
 /// </list>
 /// </para>
 ///
@@ -37,11 +41,14 @@ public sealed class AiImageMetadataService
 
     /// <summary>URL からキャッシュを引いて解析。
     /// キャッシュ未ヒット / 非対応形式 / 解析例外なら null。
-    /// 形式は認識できたが AI 生成データが無い画像については、画像基本情報 (format/size/dimensions) のみが入った
+    /// 画像 (CacheKind.Image) に無ければ動画キャッシュ (CacheKind.Video) も探す
+    /// (= ComfyUI 生成動画のメタデータ抽出。スレ表示の動画スロットは DL 済み動画を Video kind で持つ)。
+    /// 形式は認識できたが AI 生成データが無いファイルについては、基本情報 (format/size/dimensions) のみが入った
     /// インスタンスが返る (AI フィールドは null)。<see cref="AiImageMetadata.HasAiData"/> で判別可能。</summary>
     public Task<AiImageMetadata?> TryGetAsync(string url)
     {
-        if (!_cache.TryGet(url, out var hit)) return Task.FromResult<AiImageMetadata?>(null);
+        if (!_cache.TryGet(url, out var hit) && !_cache.TryGet(url, out hit, CacheKind.Video))
+            return Task.FromResult<AiImageMetadata?>(null);
         var path = hit.FilePath;
         // ファイル I/O + パースをスレッドプールへ。サイズの大きい PNG (数 MB) でも UI を止めない。
         return Task.Run<AiImageMetadata?>(() => TryExtractFromFile(path));
@@ -51,6 +58,27 @@ public sealed class AiImageMetadataService
     {
         try
         {
+            // 先頭 12 バイトのシグネチャで動画コンテナを先に判別する。動画は GB 級になり得るため
+            // ReadAllBytes せず、ストリームでメタデータ格納ボックスだけを読む (viewer 実装の移植)。
+            using (var fs = File.OpenRead(path))
+            {
+                var head = new byte[12];
+                if (fs.Read(head, 0, 12) < 12) return null;
+
+                // MP4/MOV/M4V (ISO-BMFF): [size]"ftyp"
+                if (head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p')
+                {
+                    fs.Position = 0;
+                    return ExtractFromMp4(fs);
+                }
+                // WebM/MKV (EBML): 1A 45 DF A3
+                if (head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3)
+                {
+                    fs.Position = 0;
+                    return ExtractFromWebm(fs);
+                }
+            }
+
             byte[] data = File.ReadAllBytes(path);
             if (data.Length < 12) return null;
 
@@ -836,6 +864,10 @@ public sealed class AiImageMetadataService
             string? srcImage = null;
             int?    latW     = null;
             int?    latH     = null;
+            // text encoder (CLIP) / VAE はローダが複数あり得る (Dual/TripleCLIPLoader、動画+音声 VAE 等) ので
+            // 全部集めて ", " 連結で出す。出現順を保ちつつ重複は除く。
+            List<string>? textEncoders = null;
+            List<string>? vaes         = null;
 
             foreach (var prop in root.EnumerateObject())
             {
@@ -845,10 +877,25 @@ public sealed class AiImageMetadataService
                 var ct = ctElem.GetString() ?? "";
                 isComfyGraph = true;
 
-                // sampler を 1 つ見つけたら hold (= 後段で positive/negative を辿る)
-                if (samplerInputs is null && ct.Contains("Sampler", StringComparison.OrdinalIgnoreCase))
+                // sampler を 1 つ見つけたら hold (= 後段で positive/negative を辿る)。
+                // KSamplerSelect (= sampler_name を持つだけの選択ノード) のような「辿る入力を持たない」
+                // sampler を先に掴むと本命 (SamplerCustomAdvanced 等) を見逃すため、
+                // positive / negative / guider のいずれかを持つ sampler ノードを優先して差し替える。
+                if (ct.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
+                    && node.TryGetProperty("inputs", out var ipSampler))
                 {
-                    if (node.TryGetProperty("inputs", out var ip)) samplerInputs = ip;
+                    var hasTraceable = ipSampler.TryGetProperty("positive", out _)
+                                    || ipSampler.TryGetProperty("negative", out _)
+                                    || ipSampler.TryGetProperty("guider",   out _);
+                    if (samplerInputs is null) samplerInputs = ipSampler;
+                    else if (hasTraceable
+                             && samplerInputs is { } cur
+                             && !cur.TryGetProperty("positive", out _)
+                             && !cur.TryGetProperty("negative", out _)
+                             && !cur.TryGetProperty("guider",   out _))
+                    {
+                        samplerInputs = ipSampler; // 辿れない sampler を掴んでいたら本命に差し替え
+                    }
                 }
 
                 // model: ローダ系ノードから取得。
@@ -898,6 +945,34 @@ public sealed class AiImageMetadataService
                     && imgEl.ValueKind == System.Text.Json.JsonValueKind.String)
                 {
                     srcImage = imgEl.GetString();
+                }
+
+                // text encoder (CLIP) ローダ: CLIPLoader / DualCLIPLoader / TripleCLIPLoader (+GGUF 派生等)。
+                // 入力名は clip_name (単発) / clip_name1..4 (複数) を網羅する。
+                if (ct.Contains("CLIPLoader", StringComparison.OrdinalIgnoreCase)
+                    && node.TryGetProperty("inputs", out var ipClip))
+                {
+                    foreach (var fieldName in new[] { "clip_name", "clip_name1", "clip_name2", "clip_name3", "clip_name4" })
+                    {
+                        if (ipClip.TryGetProperty(fieldName, out var cv)
+                            && cv.ValueKind == System.Text.Json.JsonValueKind.String
+                            && cv.GetString() is { Length: > 0 } cname)
+                        {
+                            textEncoders ??= new List<string>();
+                            if (!textEncoders.Contains(cname)) textEncoders.Add(cname);
+                        }
+                    }
+                }
+
+                // VAE ローダ: VAELoader (+派生)。動画ワークフローでは映像用 + 音声用の 2 つが載ることがある。
+                if (ct.Contains("VAELoader", StringComparison.OrdinalIgnoreCase)
+                    && node.TryGetProperty("inputs", out var ipVae)
+                    && ipVae.TryGetProperty("vae_name", out var vv)
+                    && vv.ValueKind == System.Text.Json.JsonValueKind.String
+                    && vv.GetString() is { Length: > 0 } vname)
+                {
+                    vaes ??= new List<string>();
+                    if (!vaes.Contains(vname)) vaes.Add(vname);
                 }
             }
 
@@ -956,6 +1031,8 @@ public sealed class AiImageMetadataService
 
             if (latW is int lw && latH is int lh)  parameters["Size"] = $"{lw}x{lh}";
             if (!string.IsNullOrEmpty(model))      parameters["Model"] = model!;
+            if (textEncoders is { Count: > 0 })    parameters["Text encoder"] = string.Join(", ", textEncoders);
+            if (vaes is { Count: > 0 })            parameters["VAE"] = string.Join(", ", vaes);
             if (!string.IsNullOrEmpty(srcImage))   parameters["Source image"] = srcImage!;
             // 参考 viewer に合わせて Generator を埋める。ComfyUI 由来 (= prompt JSON が valid だった) のは確定。
             parameters["Generator"] = "ComfyUI";
@@ -1624,6 +1701,608 @@ public sealed class AiImageMetadataService
         }
 
         return (positive.ToString().Trim(), negative.ToString().Trim(), parameters);
+    }
+
+    // -----------------------------------------------------------------
+    // MP4 / MOV (ComfyUI SaveVideo 等の生成 AI 動画) — viewer からの移植
+    //
+    // ComfyUI は動画保存時、QuickTime メタデータ (moov/udta/meta の keys + ilst、
+    // namespace "mdta") へ key="prompt" (API グラフ JSON) 等を書き込む。
+    // moov ボックスだけを読み、mdat (映像本体) はシークで飛ばす = ファイル全読みしない
+    // (動画は GB 級になり得るため)。
+    // -----------------------------------------------------------------
+
+    private static AiImageMetadata? ExtractFromMp4(Stream s)
+    {
+        long fileSize = s.Length;
+        byte[]? moov = null;
+
+        // ---- トップレベルボックス走査 (ftyp 確認・moov 取得) ----
+        long pos = 0;
+        var hdr = new byte[8];
+        bool first = true;
+        while (pos + 8 <= fileSize)
+        {
+            s.Position = pos;
+            if (!ReadExact(s, hdr, 8)) break;
+            long size = BinaryPrimitives.ReadUInt32BigEndian(hdr.AsSpan(0, 4));
+            string typ = Encoding.ASCII.GetString(hdr, 4, 4);
+            int hdrLen = 8;
+            if (size == 1)
+            {
+                if (!ReadExact(s, hdr, 8)) break;
+                size = (long)BinaryPrimitives.ReadUInt64BigEndian(hdr.AsSpan(0, 8));
+                hdrLen = 16;
+            }
+            else if (size == 0) size = fileSize - pos;
+            if (first && typ != "ftyp") return null; // ISO-BMFF (MP4/MOV) ではない
+            first = false;
+            if (typ == "moov")
+            {
+                long body = size - hdrLen;
+                if (body <= 0 || body > 64 * 1024 * 1024) return null; // 異常サイズは対象外
+                moov = new byte[body];
+                if (!ReadExact(s, moov, (int)body)) return null;
+                break;
+            }
+            if (size < hdrLen) break;
+            pos += size;
+        }
+        if (moov == null) return null;
+        return ParseMoovBody(moov, fileSize);
+    }
+
+    /// <summary>moov ボックス本体 (ヘッダ除く) から寸法とメタデータを読んで結果を組み立てる。
+    /// ローカルファイル経路 (<see cref="ExtractFromMp4"/>) とネットワーク Range 取得経路の共通部。</summary>
+    private static AiImageMetadata ParseMoovBody(byte[] moov, long fileSize)
+    {
+        // ---- moov 内: 寸法 (trak/tkhd) とメタデータ (udta/meta) ----
+        int w = 0, h = 0;
+        var kv = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (typ, _, start, len) in Mp4Boxes(moov, 0, moov.Length))
+        {
+            if (typ == "trak")
+            {
+                foreach (var (t2, _, s2, l2) in Mp4Boxes(moov, start, start + len))
+                    if (t2 == "tkhd") ReadTkhdSize(moov, s2, l2, ref w, ref h);
+            }
+            else if (typ == "udta")
+            {
+                foreach (var (t2, _, s2, l2) in Mp4Boxes(moov, start, start + len))
+                    if (t2 == "meta") ReadMetaKeysIlst(moov, s2, l2, kv);
+            }
+        }
+
+        return BuildVideoResult(kv, "MP4", fileSize, w, h);
+    }
+
+    /// <summary>動画コンテナから集めたメタキー辞書を共通解釈する (MP4 / WebM 共用)。
+    /// ComfyUI の key="prompt" (API グラフ JSON) を画像と同じパーサで解釈し、
+    /// 解釈不能でも署名があれば部分ラベル、無ければ一般メタデータのみで返す。</summary>
+    private static AiImageMetadata BuildVideoResult(
+        Dictionary<string, string> kv, string format, long fileSize, int w, int h)
+    {
+        // ---- ComfyUI: key="prompt" (API グラフ JSON) を画像と同じパーサで解釈 ----
+        if (kv.TryGetValue("prompt", out var comfyPrompt))
+        {
+            var meta = TryParseComfyPrompt(comfyPrompt, format, fileSize, w, h);
+            if (meta is { HasAiData: true }) return meta;
+        }
+
+        // 署名 (prompt / workflow キー) はあるが JSON を解釈できなかった場合は部分結果。
+        if (kv.ContainsKey("prompt") || kv.ContainsKey("workflow"))
+        {
+            var other = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (k, v) in kv) AddGeneralMeta(other, k, v);
+            return BuildPartialAiResult("ComfyUI", other, format, fileSize, w, h);
+        }
+
+        // AI 由来でなくても、取れたキー (encoder 等) は一般メタデータとして公開。
+        var otherMeta = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (k, v) in kv) AddGeneralMeta(otherMeta, k, v);
+        return new AiImageMetadata
+        {
+            Format = format, FileSize = fileSize, Width = w, Height = h,
+            OtherMetadata = otherMeta,
+        };
+    }
+
+    /// <summary>start..end の連続ボックスを列挙。type は ASCII 4 文字、code は同 4 バイトの
+    /// ビッグエンディアン値 (ilst の子はキー index が type になるため code で判定する)。</summary>
+    private static IEnumerable<(string type, uint code, int start, int len)> Mp4Boxes(byte[] b, int start, int end)
+    {
+        int off = start;
+        while (off + 8 <= end)
+        {
+            long size = BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(off, 4));
+            uint code = BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(off + 4, 4));
+            string typ = Encoding.ASCII.GetString(b, off + 4, 4);
+            int hdrLen = 8;
+            if (size == 1 && off + 16 <= end)
+            {
+                size = (long)BinaryPrimitives.ReadUInt64BigEndian(b.AsSpan(off + 8, 8));
+                hdrLen = 16;
+            }
+            else if (size == 0) size = end - off;
+            if (size < hdrLen || off + size > end) yield break;
+            yield return (typ, code, off + hdrLen, (int)(size - hdrLen));
+            off += (int)size;
+        }
+    }
+
+    /// <summary>tkhd から幅・高さ (16.16 固定小数) を読む。音声トラックは 0×0 なので最大値を採用。</summary>
+    private static void ReadTkhdSize(byte[] b, int start, int len, ref int w, ref int h)
+    {
+        if (len < 4) return;
+        int ver = b[start];
+        int wOff = start + (ver == 1 ? 88 : 76); // v1 は creation/modification/duration が 64bit
+        if (wOff + 8 > start + len) return;
+        int tw = (int)(BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(wOff, 4)) >> 16);
+        int th = (int)(BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(wOff + 4, 4)) >> 16);
+        if (tw > w) w = tw;
+        if (th > h) h = th;
+    }
+
+    /// <summary>meta ボックス内の keys (キー名表) と ilst (値。type が 1 始まりのキー index) を
+    /// 突き合わせ、UTF-8 テキスト値を kv へ集める。</summary>
+    private static void ReadMetaKeysIlst(byte[] b, int start, int len, Dictionary<string, string> kv)
+    {
+        // meta は ISO-BMFF では FullBox (先頭 4 バイトが version/flags)、QuickTime 古典形式では
+        // 直接子ボックスが始まる。先頭が子ボックスに見えるか (type が英数字か) で判別する。
+        int body = LooksLikeMp4Box(b, start, start + len) ? start : start + 4;
+
+        var keys = new List<string>(); // ilst の index は 1 始まり
+        int ilstStart = -1, ilstLen = 0;
+        foreach (var (typ, _, s2, l2) in Mp4Boxes(b, body, start + len))
+        {
+            if (typ == "keys" && l2 >= 8)
+            {
+                // ver/flags(4) + entry_count(4) + {size(4) + namespace(4)="mdta" + キー名}×n
+                int count = BinaryPrimitives.ReadInt32BigEndian(b.AsSpan(s2 + 4, 4));
+                int off = s2 + 8;
+                for (int i = 0; i < count && off + 8 <= s2 + l2; i++)
+                {
+                    int ksize = BinaryPrimitives.ReadInt32BigEndian(b.AsSpan(off, 4));
+                    if (ksize < 8 || off + ksize > s2 + l2) break;
+                    keys.Add(Encoding.UTF8.GetString(b, off + 8, ksize - 8));
+                    off += ksize;
+                }
+            }
+            else if (typ == "ilst") { ilstStart = s2; ilstLen = l2; }
+        }
+        if (ilstStart < 0 || keys.Count == 0) return;
+
+        foreach (var (_, code, s2, l2) in Mp4Boxes(b, ilstStart, ilstStart + ilstLen))
+        {
+            int idx = (int)code; // このボックスの type がキー index
+            if (idx <= 0 || idx > keys.Count) continue;
+            foreach (var (dt, _, s3, l3) in Mp4Boxes(b, s2, s2 + l2))
+            {
+                if (dt != "data" || l3 < 8) continue;
+                // data: type indicator(4) + locale(4) + 値。type=1 が UTF-8 テキスト。
+                if (BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(s3, 4)) != 1) continue;
+                var key = keys[idx - 1];
+                if (!kv.ContainsKey(key)) kv[key] = Encoding.UTF8.GetString(b, s3 + 8, l3 - 8);
+            }
+        }
+    }
+
+    private static bool LooksLikeMp4Box(byte[] b, int off, int end)
+    {
+        if (off + 8 > end) return false;
+        for (int i = 4; i < 8; i++)
+        {
+            byte c = b[off + i];
+            bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                      || c == ' ' || c == 0xA9; // 0xA9 = '©' (QuickTime の ©cmt 等)
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    private static bool ReadExact(Stream s, byte[] buf, int count)
+    {
+        int read = 0;
+        while (read < count)
+        {
+            int n = s.Read(buf, read, count - read);
+            if (n <= 0) return false;
+            read += n;
+        }
+        return true;
+    }
+
+    // -----------------------------------------------------------------
+    // WebM / MKV (EBML) — ComfyUI SaveWEBM 等
+    //
+    // libav 系エンコーダはコンテナメタデータを Matroska の Tags 要素
+    // (Segment > Tags > Tag > SimpleTag { TagName, TagString }) に書き出す。
+    // ComfyUI SaveWEBM も prompt / workflow をこの形で埋める。
+    // Segment 直下を走査し、必要な master 要素 (Tags / Tracks) だけ潜って
+    // Cluster (映像本体) はサイズでスキップする = 全読みしない。
+    // -----------------------------------------------------------------
+
+    private const uint EbmlSegment    = 0x18538067;
+    private const uint EbmlTags       = 0x1254C367;
+    private const uint EbmlTag        = 0x7373;
+    private const uint EbmlSimpleTag  = 0x67C8;
+    private const uint EbmlTagName    = 0x45A3;
+    private const uint EbmlTagString  = 0x4487;
+    private const uint EbmlTracks     = 0x1654AE6B;
+    private const uint EbmlTrackEntry = 0xAE;
+    private const uint EbmlVideo      = 0xE0;
+    private const uint EbmlPixelW     = 0xB0;
+    private const uint EbmlPixelH     = 0xBA;
+
+    private static AiImageMetadata? ExtractFromWebm(Stream s, long? totalSize = null)
+    {
+        // ネットワーク Range 経路では先頭バッファのみが渡るため、実ファイルサイズを引数で受ける。
+        long fileSize = totalSize ?? s.Length;
+        var kv = new Dictionary<string, string>(StringComparer.Ordinal);
+        int w = 0, h = 0;
+
+        // トップレベル: EBML ヘッダ → Segment。Segment の中だけ走査する。
+        long pos = 0;
+        while (pos < fileSize)
+        {
+            s.Position = pos;
+            if (!TryReadEbmlElement(s, fileSize, out var id, out var size, out var bodyStart)) break;
+            if (id == EbmlSegment)
+            {
+                var segEnd = size < 0 ? fileSize : Math.Min(fileSize, bodyStart + size);
+                ScanSegmentChildren(s, bodyStart, segEnd, kv, ref w, ref h);
+                break;
+            }
+            if (size < 0) break; // Segment 以外で不定長は想定外
+            pos = bodyStart + size;
+        }
+
+        if (kv.Count == 0 && w == 0 && h == 0) return null; // Matroska として何も取れなかった
+        return BuildVideoResult(kv, "WebM", fileSize, w, h);
+    }
+
+    /// <summary>Segment 直下の子要素を走査し、Tags と Tracks だけ読み込む (他はスキップ)。</summary>
+    private static void ScanSegmentChildren(
+        Stream s, long start, long end, Dictionary<string, string> kv, ref int w, ref int h)
+    {
+        long pos = start;
+        while (pos < end)
+        {
+            s.Position = pos;
+            if (!TryReadEbmlElement(s, end, out var id, out var size, out var bodyStart)) break;
+            if (size < 0) break; // Segment 内の不定長 (ライブ配信形) は非対応
+            if (id == EbmlTags && size <= 16 * 1024 * 1024)
+            {
+                var body = new byte[size];
+                s.Position = bodyStart;
+                if (ReadExact(s, body, (int)size)) ParseEbmlTags(body, kv);
+            }
+            else if (id == EbmlTracks && size <= 4 * 1024 * 1024)
+            {
+                var body = new byte[size];
+                s.Position = bodyStart;
+                if (ReadExact(s, body, (int)size)) ParseEbmlTracks(body, ref w, ref h);
+            }
+            pos = bodyStart + size;
+        }
+    }
+
+    /// <summary>Tags バッファから SimpleTag { TagName, TagString } を kv に集める。</summary>
+    private static void ParseEbmlTags(byte[] b, Dictionary<string, string> kv)
+    {
+        ForEachEbml(b, 0, b.Length, (id, s2, l2) =>
+        {
+            if (id != EbmlTag) return;
+            ForEachEbml(b, s2, s2 + l2, (id2, s3, l3) =>
+            {
+                if (id2 != EbmlSimpleTag) return;
+                string? name = null, value = null;
+                ForEachEbml(b, s3, s3 + l3, (id3, s4, l4) =>
+                {
+                    if (id3 == EbmlTagName)   name  = Encoding.UTF8.GetString(b, s4, l4);
+                    if (id3 == EbmlTagString) value = Encoding.UTF8.GetString(b, s4, l4);
+                });
+                if (name is not null && value is not null && !kv.ContainsKey(name)) kv[name] = value;
+            });
+        });
+    }
+
+    /// <summary>Tracks バッファから映像トラックの PixelWidth / PixelHeight を読む (最大値採用)。</summary>
+    private static void ParseEbmlTracks(byte[] b, ref int w, ref int h)
+    {
+        int tw = 0, th = 0;
+        ForEachEbml(b, 0, b.Length, (id, s2, l2) =>
+        {
+            if (id != EbmlTrackEntry) return;
+            ForEachEbml(b, s2, s2 + l2, (id2, s3, l3) =>
+            {
+                if (id2 != EbmlVideo) return;
+                ForEachEbml(b, s3, s3 + l3, (id3, s4, l4) =>
+                {
+                    if (id3 == EbmlPixelW) tw = Math.Max(tw, (int)ReadEbmlUInt(b, s4, l4));
+                    if (id3 == EbmlPixelH) th = Math.Max(th, (int)ReadEbmlUInt(b, s4, l4));
+                });
+            });
+        });
+        if (tw > w) w = tw;
+        if (th > h) h = th;
+    }
+
+    /// <summary>バッファ内の EBML 子要素を列挙してコールバックする (不正・不定長で打ち切り)。</summary>
+    private static void ForEachEbml(byte[] b, int start, int end, Action<uint, int, int> visit)
+    {
+        int pos = start;
+        while (pos < end)
+        {
+            if (!TryReadEbmlIdSize(b, pos, end, out var id, out var size, out var bodyStart)) return;
+            if (size < 0 || bodyStart + size > end) return;
+            visit(id, bodyStart, (int)size);
+            pos = (int)(bodyStart + size);
+        }
+    }
+
+    /// <summary>EBML 符号なし整数値 (ビッグエンディアン可変長) を読む。</summary>
+    private static ulong ReadEbmlUInt(byte[] b, int start, int len)
+    {
+        ulong v = 0;
+        for (int i = 0; i < len && i < 8; i++) v = (v << 8) | b[start + i];
+        return v;
+    }
+
+    /// <summary>ストリームから EBML 要素ヘッダ (ID + サイズ) を読む。size=-1 は不定長。</summary>
+    private static bool TryReadEbmlElement(Stream s, long end, out uint id, out long size, out long bodyStart)
+    {
+        id = 0; size = 0; bodyStart = 0;
+        var buf = new byte[12];
+        long pos = s.Position;
+        int got = s.Read(buf, 0, (int)Math.Min(12, end - pos));
+        if (got < 2) return false;
+        if (!TryReadEbmlIdSize(buf, 0, got, out id, out size, out var bodyOff)) return false;
+        bodyStart = pos + bodyOff;
+        return true;
+    }
+
+    /// <summary>バッファから EBML の ID (1〜4 バイト) とサイズ (1〜8 バイト可変長) を読む。
+    /// サイズが「全ビット 1」(未知長) のときは size=-1 を返す。</summary>
+    private static bool TryReadEbmlIdSize(byte[] b, int pos, int end, out uint id, out long size, out int bodyStart)
+    {
+        id = 0; size = 0; bodyStart = 0;
+        if (pos >= end) return false;
+
+        // ID: 先頭バイトの最上位ビット位置で長さが決まる (VINT だがマーカービットは保持したまま使う)。
+        byte first = b[pos];
+        int idLen = first >= 0x80 ? 1 : first >= 0x40 ? 2 : first >= 0x20 ? 3 : first >= 0x10 ? 4 : 0;
+        if (idLen == 0 || pos + idLen > end) return false;
+        for (int i = 0; i < idLen; i++) id = (id << 8) | b[pos + i];
+
+        // サイズ: VINT (マーカービットを除いた値)。
+        int sp = pos + idLen;
+        if (sp >= end) return false;
+        byte sf = b[sp];
+        int sLen = sf >= 0x80 ? 1 : sf >= 0x40 ? 2 : sf >= 0x20 ? 3 : sf >= 0x10 ? 4
+                 : sf >= 0x08 ? 5 : sf >= 0x04 ? 6 : sf >= 0x02 ? 7 : sf >= 0x01 ? 8 : 0;
+        if (sLen == 0 || sp + sLen > end) return false;
+        long v = sf & ((1 << (8 - sLen)) - 1);
+        bool allOnes = v == ((1 << (8 - sLen)) - 1);
+        for (int i = 1; i < sLen; i++)
+        {
+            v = (v << 8) | b[sp + i];
+            if (b[sp + i] != 0xFF) allOnes = false;
+        }
+        size = allOnes ? -1 : v; // 全ビット 1 = 未知長 (ライブ/未確定 Segment)
+        bodyStart = sp + sLen;
+        return true;
+    }
+
+    // -----------------------------------------------------------------
+    // ネットワーク Range 取得 (サムネ表示時点のメタ表示用)
+    //
+    // 動画本体が未 DL でも、HTTP Range でコンテナのメタデータ部だけを取って解析する。
+    //   MP4  : 先頭 256KB → box walk。moov がバッファ外なら「次 box ヘッダ 16B」を hop して
+    //          moov の位置とサイズを特定し、moov 本体だけを追加 Range で取る (通常 1〜3 リクエスト)。
+    //   WebM : 先頭 256KB のみで best effort (libav 系は Tags が先頭側にある)。
+    // 結果 (失敗 = null も含む) はセッション内メモリキャッシュし、同一 URL の再要求はネットワークに出ない。
+    // -----------------------------------------------------------------
+
+    private const int  NetHeadFetchBytes = 256 * 1024;
+    private const long NetMoovMaxBytes   = 16 * 1024 * 1024;
+
+    private static readonly HttpClient _netHttp = CreateNetHttp();
+    private static HttpClient CreateNetHttp()
+    {
+        var handler = new HttpClientHandler
+        {
+            AutomaticDecompression   = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate,
+            AllowAutoRedirect        = true,
+            MaxAutomaticRedirections = 5,
+        };
+        var http = new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(20) };
+        // 動画 DL (VideoDownloadManager) と同じブラウザ UA で外部 CDN にアクセスする。
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 ChBrowser");
+        http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("ja,en;q=0.8");
+        return http;
+    }
+
+    /// <summary>同時ネットワーク取得の上限 (= スレを開いた直後に動画スロットが大量にあっても帯域を絞る)。</summary>
+    private static readonly SemaphoreSlim _netGate = new(2, 2);
+
+    /// <summary>URL → 取得結果 (null = 取得失敗 / AI メタ無しの negative cache)。セッション内のみ。</summary>
+    private static readonly Dictionary<string, AiImageMetadata?> _netCache = new(StringComparer.Ordinal);
+    /// <summary>URL → in-flight タスク (= 同一 URL の並行要求を 1 つのネットワーク取得に束ねる)。</summary>
+    private static readonly Dictionary<string, Task<AiImageMetadata?>> _netInFlight = new(StringComparer.Ordinal);
+    private static readonly object _netLock = new();
+
+    /// <summary>URL の拡張子が動画 (= ネットワーク Range 取得の対象) か。</summary>
+    public static bool LooksLikeVideoUrl(string url)
+    {
+        int q = url.IndexOfAny(new[] { '?', '#' });
+        var path = (q >= 0 ? url[..q] : url).ToLowerInvariant();
+        return path.EndsWith(".mp4") || path.EndsWith(".m4v") || path.EndsWith(".mov")
+            || path.EndsWith(".webm") || path.EndsWith(".mkv");
+    }
+
+    /// <summary>動画 URL のメタデータを HTTP Range で取得・解析する (サムネ表示時点用)。
+    /// 失敗も含め結果はセッション内キャッシュされ、同一 URL は再度ネットワークに出ない。</summary>
+    public Task<AiImageMetadata?> TryGetVideoMetaOverNetworkAsync(string url)
+    {
+        lock (_netLock)
+        {
+            if (_netCache.TryGetValue(url, out var hitMeta)) return Task.FromResult(hitMeta);
+            if (_netInFlight.TryGetValue(url, out var inflight)) return inflight;
+            var task = FetchVideoMetaAsync(url);
+            _netInFlight[url] = task;
+            return task;
+        }
+    }
+
+    private static async Task<AiImageMetadata?> FetchVideoMetaAsync(string url)
+    {
+        AiImageMetadata? result = null;
+        try
+        {
+            await _netGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var (head, totalSize) = await FetchRangeAsync(url, 0, NetHeadFetchBytes).ConfigureAwait(false);
+                if (head is { Length: >= 12 })
+                {
+                    if (head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p')
+                        result = await ParseMp4OverNetworkAsync(url, head, totalSize).ConfigureAwait(false);
+                    else if (head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3)
+                        result = ExtractFromWebm(new MemoryStream(head), totalSize > 0 ? totalSize : head.Length);
+                }
+            }
+            finally { _netGate.Release(); }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[AiVideoMeta] network fetch failed: {ex.Message}");
+        }
+        lock (_netLock)
+        {
+            _netCache[url] = result;
+            _netInFlight.Remove(url);
+        }
+        return result;
+    }
+
+    /// <summary>先頭バッファからトップレベル box を歩き、moov を見つけて解析する。
+    /// ヘッダがバッファ外に出たら 16B の Range hop (<see cref="ParseMp4HopAsync"/>) に切り替え、
+    /// moov 本体だけを追加取得する。</summary>
+    private static async Task<AiImageMetadata?> ParseMp4OverNetworkAsync(string url, byte[] head, long totalSize)
+    {
+        long fileSize = totalSize > 0 ? totalSize : head.Length;
+        long pos = 0;
+        for (var hop = 0; hop < 8 && pos + 8 <= fileSize; hop++)
+        {
+            if (pos + 16 > head.Length)
+            {
+                // ヘッダが先頭バッファ外 → 16B Range 取得の hop ループに切り替えて続行。
+                var (next, _) = await FetchRangeAsync(url, pos, 16, requirePartial: true).ConfigureAwait(false);
+                if (next is null || next.Length < 8) return null;
+                return await ParseMp4HopAsync(url, pos, next, fileSize).ConfigureAwait(false);
+            }
+
+            int off = (int)pos;
+            long size = BinaryPrimitives.ReadUInt32BigEndian(head.AsSpan(off, 4));
+            string typ = Encoding.ASCII.GetString(head, off + 4, 4);
+            int hdrLen = 8;
+            if (size == 1)
+            {
+                size = (long)BinaryPrimitives.ReadUInt64BigEndian(head.AsSpan(off + 8, 8));
+                hdrLen = 16;
+            }
+            else if (size == 0) size = fileSize - pos;
+            if (pos == 0 && typ != "ftyp") return null;
+            if (typ == "moov")
+            {
+                long body = size - hdrLen;
+                if (body <= 0 || body > NetMoovMaxBytes) return null;
+                // moov 全体が head 内にあればそのまま、無ければ本体だけ追加 Range
+                if (pos + hdrLen + body <= head.Length)
+                {
+                    var moov = new byte[body];
+                    Array.Copy(head, pos + hdrLen, moov, 0, (int)body);
+                    return ParseMoovBody(moov, fileSize);
+                }
+                var (moovBuf, _) = await FetchRangeAsync(url, pos + hdrLen, (int)body, requirePartial: true).ConfigureAwait(false);
+                if (moovBuf is null || moovBuf.Length < body) return null;
+                return ParseMoovBody(moovBuf, fileSize);
+            }
+            if (size < hdrLen) return null;
+            pos += size;
+        }
+        return null;
+    }
+
+    /// <summary>バッファ外 hop 用: pos 起点で取得した 16B ヘッダから box を辿り続ける。</summary>
+    private static async Task<AiImageMetadata?> ParseMp4HopAsync(string url, long pos, byte[] hdr16, long fileSize)
+    {
+        var hdr = hdr16;
+        for (var hop = 0; hop < 8 && pos + 8 <= fileSize; hop++)
+        {
+            long size = BinaryPrimitives.ReadUInt32BigEndian(hdr.AsSpan(0, 4));
+            string typ = Encoding.ASCII.GetString(hdr, 4, 4);
+            int hdrLen = 8;
+            if (size == 1 && hdr.Length >= 16)
+            {
+                size = (long)BinaryPrimitives.ReadUInt64BigEndian(hdr.AsSpan(8, 8));
+                hdrLen = 16;
+            }
+            else if (size == 0) size = fileSize - pos;
+
+            if (typ == "moov")
+            {
+                long body = size - hdrLen;
+                if (body <= 0 || body > NetMoovMaxBytes) return null;
+                var (moovBuf, _) = await FetchRangeAsync(url, pos + hdrLen, (int)body, requirePartial: true).ConfigureAwait(false);
+                if (moovBuf is null || moovBuf.Length < body) return null;
+                return ParseMoovBody(moovBuf, fileSize);
+            }
+            if (size < hdrLen) return null;
+            pos += size;
+            if (pos + 8 > fileSize) return null;
+            var (next, _) = await FetchRangeAsync(url, pos, 16, requirePartial: true).ConfigureAwait(false);
+            if (next is null || next.Length < 8) return null;
+            hdr = next;
+        }
+        return null;
+    }
+
+    /// <summary>HTTP Range GET。返り値は (取得バイト, 総ファイルサイズ)。
+    /// 総サイズは Content-Range から。取れなければ 0。
+    /// <paramref name="requirePartial"/>=true でサーバが Range 非対応 (200 応答) なら null を返す
+    /// (= オフセット付き要求で先頭バイトを掴まされる誤読を防ぐ)。offset=0 の要求は 200 でも先頭 N バイトだけ読んで打ち切る。</summary>
+    private static async Task<(byte[]? Data, long TotalSize)> FetchRangeAsync(
+        string url, long offset, int count, bool requirePartial = false)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(offset, offset + count - 1);
+        using var resp = await _netHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode) return (null, 0);
+
+        long total = resp.Content.Headers.ContentRange?.Length
+                  ?? (resp.StatusCode == System.Net.HttpStatusCode.OK ? (resp.Content.Headers.ContentLength ?? 0) : 0);
+
+        if (resp.StatusCode != System.Net.HttpStatusCode.PartialContent)
+        {
+            // 200 = Range 非対応。offset 0 なら先頭から必要分だけ読んで自主的に切る。offset>0 は誤読になるので諦める。
+            if (requirePartial || offset != 0) return (null, total);
+        }
+
+        await using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        var buf  = new byte[count];
+        int read = 0;
+        while (read < count)
+        {
+            int n = await stream.ReadAsync(buf.AsMemory(read, count - read)).ConfigureAwait(false);
+            if (n <= 0) break;
+            read += n;
+        }
+        if (read == 0) return (null, total);
+        if (read < count) Array.Resize(ref buf, read);
+        return (buf, total);
     }
 }
 

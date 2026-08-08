@@ -885,10 +885,22 @@ public partial class ThreadDisplayPane : UserControl
         {
             // 「キャッシュに来ているか」を先に判定する。来ていなければ JS 側に「キャッシュ未到着」と伝える
             // (= JS は no-data をキャッシュせず、次のホバーで再試行できるようにする)。
-            var cached = mainWindow.ImageCacheService?.Contains(url) ?? false;
+            // 画像キャッシュに加え動画キャッシュ (CacheKind.Video) も見る (= ComfyUI 生成動画のメタ抽出)。
+            var cached = (mainWindow.ImageCacheService?.Contains(url) ?? false)
+                      || (mainWindow.ImageCacheService?.Contains(url, ChBrowser.Services.Image.CacheKind.Video) ?? false);
             var meta   = cached
                 ? await mainWindow.AiImageMetadataService!.TryGetAsync(url).ConfigureAwait(true)
                 : null;
+
+            // 未キャッシュの動画 URL は HTTP Range でコンテナのメタ部だけ取って解析する
+            // (= サムネ表示時点でラベル/ポップアップを出すため。結果はサービス側でセッションキャッシュ)。
+            // 成否によらず cached=true で返す (= JS 側の再試行ループを止める。DL 完了後は
+            // ローカル動画キャッシュ優先の上記経路で再解析されるので取り逃しは残らない)。
+            if (!cached && ChBrowser.Services.Image.AiImageMetadataService.LooksLikeVideoUrl(url))
+            {
+                meta   = await mainWindow.AiImageMetadataService!.TryGetVideoMetaOverNetworkAsync(url).ConfigureAwait(true);
+                cached = true;
+            }
             if (wv.CoreWebView2 is null) return;
             var json = JsonSerializer.Serialize(new
             {

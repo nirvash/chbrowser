@@ -632,6 +632,9 @@ body.slot-resizing * {
 .ai-meta-popup {
     position: fixed;
     z-index: 10000;
+    /* JS が maxWidth/maxHeight で「空きスペースぴったり」に制約するため、
+       padding/border 込みで計算される border-box にする (content-box だと 22px はみ出す)。 */
+    box-sizing: border-box;
     max-width: 480px;
     max-height: 60vh;
     overflow-y: auto;
@@ -648,17 +651,8 @@ body.slot-resizing * {
     user-select: text;
 }
 .ai-meta-popup-section + .ai-meta-popup-section { margin-top: 6px; }
-/* 生成元バッジ (= "ComfyUI" / "SD WebUI Forge" 等)。ポップアップ最上段に出して識別性を上げる。 */
-.ai-meta-popup-generator {
-    display: inline-block;
-    background: #2C5F2C;
-    color: #FFFFFF;
-    font-size: 10px;
-    font-weight: bold;
-    padding: 1px 6px;
-    border-radius: 3px;
-    margin-bottom: 6px;
-}
+/* 生成元 / モデル名はサムネイル上のバッジ (.image-slot-badge-row) で表示するため、
+   ポップアップ内には出さない (旧 .ai-meta-popup-generator は撤去済み)。 */
 .ai-meta-popup-label {
     font-size: 10px;
     color: #555;

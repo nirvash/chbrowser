@@ -2108,6 +2108,25 @@
                 extractAndCacheVideoThumbnail(url);
             }
 
+            // 1b) AI 生成メタ (ComfyUI 動画等) をバッジ表示用に要求する。
+            // サムネ表示時点 (hasThumb) から要求してよい: 未 DL でも C# が HTTP Range で
+            // コンテナのメタ部だけを取得して解析する。DL 済み (hasVideo) ならローカル解析。
+            // aiMetaCache 済み/pending/no-data は requestAiMetaForBadge 側で弾かれる (= 冪等)。
+            if (state.hasThumb || state.hasVideo) {
+                const cachedMeta = aiMetaCache.get(url);
+                if (cachedMeta && cachedMeta !== 'pending' && cachedMeta !== 'no-data') {
+                    applyGeneratorBadge(slot, cachedMeta);
+                } else {
+                    // ネットワーク経路で no-data 確定した後に動画本体が DL された場合は、
+                    // ローカル解析でやり直す価値があるので 1 スロット 1 回だけ再試行する。
+                    if (state.hasVideo && cachedMeta === 'no-data' && slot.dataset.aiMetaRetried !== '1') {
+                        slot.dataset.aiMetaRetried = '1';
+                        aiMetaCache.delete(url);
+                    }
+                    requestAiMetaForBadge(url);
+                }
+            }
+
             // 2a) ファイルサイズラベル (キャッシュ済動画のみ、スロット左下に "12.3 MB" 等)
             let sizeLabel = slot.querySelector('.video-size-label');
             if (state.hasVideo && state.videoSize > 0) {
@@ -2418,19 +2437,12 @@
     }
 
     function showAiPopup(targetImg, meta) {
-        if (!meta || (!meta.generator && !meta.model && !meta.positive && !meta.negative)) return;
+        // 生成元 / モデル名はサムネイル上のバッジで常時表示済みなので、ポップアップには出さない
+        // (= 重複排除)。ポップアップはプロンプト系の情報だけを担当し、それが無ければ出さない。
+        if (!meta || (!meta.positive && !meta.negative)) return;
         const popup = ensureAiPopup();
 
         let html = '';
-        // 生成元 (ComfyUI / SD WebUI Forge 等) を最上段に小さくバッジ風で表示。
-        if (meta.generator) {
-            html += '<div class="ai-meta-popup-generator">' + escapeHtml(meta.generator) + '</div>';
-        }
-        if (meta.model) {
-            html += '<div class="ai-meta-popup-section">'
-                  + '<div class="ai-meta-popup-label">モデル</div>'
-                  + '<div class="ai-meta-popup-value">' + escapeHtml(meta.model) + '</div></div>';
-        }
         if (meta.positive) {
             html += '<div class="ai-meta-popup-section">'
                   + '<div class="ai-meta-popup-label">プロンプト</div>'
@@ -2444,27 +2456,63 @@
         if (!html) return;
 
         popup.innerHTML = html;
-        popup.style.display = 'block';
 
-        // 画像の真下に出すのが基本。下に出るとビューポート下端を超える場合は上に。
-        // 左右ははみ出さないように 8px マージンでクランプ。
+        // ---- 配置 (強制ルール): ----
+        //  (1) アンカー矩形 (サムネ / 動画プレーヤー) に一切かぶらない (= 下→上→右→左 の空きに置く)
+        //  (2) ビューポートから一切はみ出さない
+        // 自然サイズでどこにも収まらない場合は、最も広い方向に maxWidth/maxHeight で押し込み
+        // (overflow-y:auto でスクロール)、それでも置き場が無い (空き < 40px) なら表示しない。
         const r  = targetImg.getBoundingClientRect();
-        const pr = popup.getBoundingClientRect();
         const vw = window.innerWidth;
         const vh = window.innerHeight;
-        const margin = 8;
+        const margin = 8, gap = 4;
 
-        let left = r.left;
-        if (left + pr.width > vw - margin) left = vw - pr.width - margin;
-        if (left < margin) left = margin;
+        // 測定: 一旦不可視で表示し、CSS 既定サイズ (幅はビューポート内に事前クランプ) で測る。
+        popup.style.maxWidth   = Math.max(40, Math.min(480, vw - 2 * margin)) + 'px';
+        popup.style.maxHeight  = '';
+        popup.style.visibility = 'hidden';
+        popup.style.display    = 'block';
 
-        let top;
-        if (r.bottom + pr.height + 4 < vh - margin)         top = r.bottom + 4;
-        else if (r.top - pr.height - 4 > margin)            top = r.top - pr.height - 4;
-        else                                                top = Math.max(margin, vh - pr.height - margin);
+        const spaces = {
+            below: vh - r.bottom - gap - margin,
+            above: r.top         - gap - margin,
+            right: vw - r.right  - gap - margin,
+            left:  r.left        - gap - margin,
+        };
 
+        let pr  = popup.getBoundingClientRect();
+        let dir = null;
+        if      (pr.height <= spaces.below) dir = 'below';
+        else if (pr.height <= spaces.above) dir = 'above';
+        else if (pr.width  <= spaces.right && pr.height <= vh - 2 * margin) dir = 'right';
+        else if (pr.width  <= spaces.left  && pr.height <= vh - 2 * margin) dir = 'left';
+        if (dir === null) {
+            // 自然サイズではどこにも収まらない → 最も広い方向に強制的に収める。
+            dir = 'below';
+            for (const d of ['above', 'right', 'left']) if (spaces[d] > spaces[dir]) dir = d;
+            if (spaces[dir] < 40) { popup.style.display = 'none'; popup.style.visibility = ''; return; }
+            if (dir === 'below' || dir === 'above') {
+                popup.style.maxHeight = Math.floor(spaces[dir]) + 'px';
+            } else {
+                popup.style.maxWidth  = Math.floor(spaces[dir]) + 'px';
+                popup.style.maxHeight = Math.floor(vh - 2 * margin) + 'px';
+            }
+            pr = popup.getBoundingClientRect(); // 制約後サイズで再測定
+        }
+
+        let left, top;
+        if (dir === 'below' || dir === 'above') {
+            // 上下配置: 縦はアンカー外が保証されるので、横はビューポート内クランプのみ。
+            left = Math.min(Math.max(r.left, margin), Math.max(margin, vw - pr.width - margin));
+            top  = dir === 'below' ? r.bottom + gap : r.top - pr.height - gap;
+        } else {
+            // 左右配置: 横はアンカー外が保証されるので、縦はビューポート内クランプのみ。
+            left = dir === 'right' ? r.right + gap : r.left - pr.width - gap;
+            top  = Math.min(Math.max(r.top, margin), Math.max(margin, vh - pr.height - margin));
+        }
         popup.style.left = Math.round(left) + 'px';
         popup.style.top  = Math.round(top)  + 'px';
+        popup.style.visibility = '';
     }
 
     function hideAiPopup() {
@@ -2473,14 +2521,17 @@
         aiHoverImg = null;
     }
 
-    /** mouseover (delegation) で .inline-image に到達したら呼ばれる。
-     *  キャッシュ命中なら即座にポップアップ表示、未取得なら C# に問い合わせる。 */
+    /** mouseover (delegation) で .inline-image / 動画スロット (.image-slot.video) に到達したら呼ばれる。
+     *  img にはインライン画像 <img> または動画スロット要素そのものが渡る (= aiHoverAnchorFrom 参照)。
+     *  キャッシュ命中なら即座にポップアップ表示、未取得なら C# に問い合わせる
+     *  (動画は未 DL でも C# が HTTP Range でコンテナメタを取得して返す)。 */
     function onImageHoverEnter(img) {
         // ポップアップから画像に戻ってきた経路で残存 hide タイマーを必ず止める。
         // 初回ホバーや別画像へ移った場合でも cancel するだけなら無害なので無条件で呼ぶ。
         cancelHideAiPopup();
 
-        const slot = img.closest && img.closest('.image-slot.loaded');
+        const slot = (img.closest && img.closest('.image-slot.loaded'))
+                  || (img.closest && img.closest('.image-slot.video'));
         if (!slot) return;
         // dataset.src は (resolvedUrl で上書き済の) 実体画像 URL。これがローカルキャッシュのキー。
         const url = slot.dataset.src;
@@ -2534,22 +2585,34 @@
         if (aiHoverUrl === msg.url && aiHoverImg) showAiPopup(aiHoverImg, meta);
 
         // 該当 URL の slot 全件に generator バッジを overlay (同 URL が複数貼られる流用に対応)。
+        // 画像 (.loaded) に加え、動画スロット (ComfyUI 生成動画のサムネ) にも同じバッジを貼る。
         if (meta.generator) {
-            document.querySelectorAll('.image-slot.loaded').forEach(function (slot) {
+            document.querySelectorAll('.image-slot.loaded, .image-slot.video').forEach(function (slot) {
                 if (slot.dataset.src === msg.url) applyGeneratorBadge(slot, meta);
             });
         }
     }
 
+    /** AI メタポップアップのアンカー要素を mouseover/mouseout の target から解決する。
+     *  - インライン画像: <img class="inline-image"> 自身。
+     *  - 動画スロット: サムネ <img class="video-thumb"> は pointer-events:none のため
+     *    イベントは受けられない (= target は常にスロット側)。そこでスロット要素そのものを
+     *    アンカーにする (サムネはスロット全面を占めるので popup 位置は同じ。サムネ到着前後で
+     *    アンカーが変わらないので enter/leave の対応も安定する)。
+     *    再生中 (= <video> プレーヤー化した後) もスロットが target 側の祖先に居るので同様に対象
+     *    (ポップアップはスロットの外側 [下 or 上] に出るため再生コントロールは隠さない)。 */
+    function aiHoverAnchorFrom(t) {
+        if (!t || !t.closest) return null;
+        if (t.tagName === 'IMG' && t.classList.contains('inline-image')) return t;
+        return t.closest('.image-slot.video');
+    }
     document.addEventListener('mouseover', function (e) {
-        const t = e.target;
-        if (!t || t.tagName !== 'IMG' || !t.classList.contains('inline-image')) return;
-        onImageHoverEnter(t);
+        const anchor = aiHoverAnchorFrom(e.target);
+        if (anchor) onImageHoverEnter(anchor);
     });
     document.addEventListener('mouseout', function (e) {
-        const t = e.target;
-        if (!t || t.tagName !== 'IMG' || !t.classList.contains('inline-image')) return;
-        onImageHoverLeave(t);
+        const anchor = aiHoverAnchorFrom(e.target);
+        if (anchor) onImageHoverLeave(anchor);
     });
     // スクロール / ウィンドウサイズ変更でもポップアップは消す (位置がずれるため)。
     window.addEventListener('scroll', hideAiPopup, { passive: true });
@@ -3195,6 +3258,9 @@
             }
             const mediaType = slot.dataset.mediaType || 'image';
             if (mediaType === 'video') {
+                // サムネ <img> が <video> に置換されると mouseout が飛ばないことがあるので、
+                // 開いている AI メタポップアップはここで明示的に閉じる。
+                hideAiPopup();
                 playMedia(slot);
                 return;
             }
