@@ -3119,6 +3119,76 @@
         }
     });
 
+    // ---------- レス番号ダイレクトジャンプ (数字タイプ → 該当レスへスクロール) ----------
+    // 1〜4 桁の数字を素早く打つと該当レス番号 (id="rN") へスクロールする (5ch は設定により
+    // 最大 5000 レスまで付くため 4 桁対応)。
+    //   - 700ms 入力が途切れる / 4 桁揃う / Enter で確定、Esc で取消
+    //   - 修飾キー付き・IME 変換中・入力欄フォーカス中は無視 (ショートカット等と衝突させない)
+    //   - 入力中は画面右下に ">>123" インジケータを表示。該当レスが無ければ「なし」を短時間表示
+    var numJumpBuf     = '';
+    var numJumpTimer   = 0;
+    var numJumpHideTimer = 0;
+    var numJumpEl      = null;
+    var NUM_JUMP_COMMIT_MS = 700;
+
+    function numJumpShow(text) {
+        if (!numJumpEl) {
+            numJumpEl = document.createElement('div');
+            numJumpEl.id = 'num-jump-indicator';
+            document.body.appendChild(numJumpEl);
+        }
+        clearTimeout(numJumpHideTimer);
+        numJumpEl.textContent = text;
+        numJumpEl.style.display = 'block';
+    }
+    function numJumpHide() {
+        if (numJumpEl) numJumpEl.style.display = 'none';
+    }
+    function numJumpCancel() {
+        clearTimeout(numJumpTimer);
+        numJumpTimer = 0;
+        numJumpBuf = '';
+        numJumpHide();
+    }
+    function numJumpCommit() {
+        clearTimeout(numJumpTimer);
+        numJumpTimer = 0;
+        var n = parseInt(numJumpBuf, 10);
+        numJumpBuf = '';
+        if (!n) { numJumpHide(); return; } // "0" や空は無視
+        var target = document.getElementById('r' + n);
+        if (target) {
+            numJumpHide();
+            closeFrom(0); // 開いているポップアップは閉じてから飛ぶ (= 飛び先が隠れないように)
+            target.scrollIntoView({ block: 'start' });
+        } else {
+            // 該当レスなし (未取得 / フィルタ非表示 / NG 等): 短時間フィードバックして消える
+            numJumpShow('>>' + n + ' なし');
+            numJumpHideTimer = setTimeout(numJumpHide, 800);
+        }
+    }
+    document.addEventListener('keydown', function (e) {
+        if (e.ctrlKey || e.altKey || e.metaKey) return; // 修飾キー付きはショートカットの領分
+        if (e.isComposing) return;                      // IME 変換中
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
+        if (e.key >= '0' && e.key <= '9') {
+            e.preventDefault();
+            if (numJumpBuf.length >= 4) numJumpBuf = ''; // 保険 (通常は 4 桁で即確定済み)
+            numJumpBuf += e.key;
+            numJumpShow('>>' + numJumpBuf);
+            clearTimeout(numJumpTimer);
+            if (numJumpBuf.length >= 4) { numJumpCommit(); return; } // 最大桁 → 即確定
+            numJumpTimer = setTimeout(numJumpCommit, NUM_JUMP_COMMIT_MS);
+            return;
+        }
+        if (!numJumpBuf) return;
+        if (e.key === 'Enter')       { e.preventDefault(); numJumpCommit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); numJumpCancel(); }
+        else                         { numJumpCancel(); } // 数字以外が来たら取消 (そのキー自体は通常処理へ)
+    });
+
     // ============================================================
     // サムネイルサイズのドラッグリサイズ。
     // 仕様: image-slot 右下 14px にホバー時、半透明三角ハンドル + nwse-resize カーソル表示。

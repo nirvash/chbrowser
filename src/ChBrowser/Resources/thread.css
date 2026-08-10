@@ -351,6 +351,23 @@ body.slot-resizing * {
     font-variant-numeric: tabular-nums;
 }
 
+/* レス番号ダイレクトジャンプ (数字タイプ) の入力インジケータ。画面右下に固定表示。
+   right はリッチスクロールバー (幅 24px) を避けた位置。 */
+#num-jump-indicator {
+    position: fixed;
+    right: 32px;
+    bottom: 16px;
+    z-index: 10001;
+    display: none;
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 4px 10px;
+    border-radius: 4px;
+    pointer-events: none;
+}
+
 /* 中央に重ねる ▶ アイコン (黒丸 + 白い三角) */
 .media-play-icon {
     position: absolute;
