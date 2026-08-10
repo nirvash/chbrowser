@@ -1192,6 +1192,56 @@ public sealed class AiImageMetadataService
         }
         if (texts.Count > 0) return string.Join("\n", texts);
 
+        // 既知フィールドで取れない場合の汎用フォールバック: フィールド名に "text" / "prompt" を含む入力を
+        // テキスト候補として扱う (カスタムノードの editable_text_widget / populated_text / wildcard_text 等、
+        // 名前が非標準でも意味はフィールド名に現れることが多い)。
+        //   - "negative" を名前に含むものは除外 (= positive 追跡経路への negative 汚染防止。負側は専用経路で辿る)
+        //   - モデルファイル名っぽい値 (.safetensors 等) は除外
+        foreach (var prop in inputs.EnumerateObject())
+        {
+            var nm = prop.Name.ToLowerInvariant();
+            if (!(nm.Contains("text") || nm.Contains("prompt"))) continue;
+            if (nm.Contains("negative")) continue;
+            var p = prop.Value;
+            if (p.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var s = p.GetString();
+                if (!string.IsNullOrEmpty(s) && !LooksLikeAssetFileName(s!) && !texts.Contains(s!)) texts.Add(s!);
+            }
+            else if (p.ValueKind == System.Text.Json.JsonValueKind.Array && p.GetArrayLength() >= 1
+                     && p[0].ValueKind == System.Text.Json.JsonValueKind.String
+                     && root.TryGetProperty(p[0].GetString()!, out var refNode2))
+            {
+                var s = ExtractTextFromComfyNode(refNode2, root, depth + 1);
+                if (!string.IsNullOrEmpty(s) && !texts.Contains(s!)) texts.Add(s!);
+            }
+        }
+        if (texts.Count > 0) return string.Join("\n", texts);
+
+        // スイッチノード (ComfySwitchNode 等: on_true / on_false + switch 入力): 実行された枝へ中継する。
+        // switch の真偽はリテラル or 参照 (PrimitiveBoolean 等) を辿って解決し、判定できた場合はその枝のみ、
+        // 判定不能なら on_false → on_true の順に両方試す (先に取れた方)。
+        // これが無いと BasicGuider → switch → MiniMax 系のようなグラフでプロンプト追跡が switch で途切れる。
+        if (inputs.TryGetProperty("on_true", out _) || inputs.TryGetProperty("on_false", out _))
+        {
+            var sw = ResolveComfySwitchState(inputs, root);
+            var branches = sw switch
+            {
+                true  => new[] { "on_true" },
+                false => new[] { "on_false" },
+                null  => new[] { "on_false", "on_true" },
+            };
+            foreach (var f in branches)
+            {
+                if (!inputs.TryGetProperty(f, out var bv)) continue;
+                if (bv.ValueKind != System.Text.Json.JsonValueKind.Array || bv.GetArrayLength() < 1) continue;
+                if (bv[0].ValueKind != System.Text.Json.JsonValueKind.String) continue;
+                if (!root.TryGetProperty(bv[0].GetString()!, out var branchNode)) continue;
+                var s = ExtractTextFromComfyNode(branchNode, root, depth + 1);
+                if (!string.IsNullOrEmpty(s)) return s;
+            }
+        }
+
         // ConditioningCombine / ConditioningConcat 等は conditioning_1 / conditioning_2 / from / to を持つので合成する。
         var combined = new List<string>();
         foreach (var prop in inputs.EnumerateObject())
@@ -1205,6 +1255,49 @@ public sealed class AiImageMetadataService
             if (!string.IsNullOrEmpty(s) && !combined.Contains(s)) combined.Add(s);
         }
         return combined.Count > 0 ? string.Join("\n", combined) : null;
+    }
+
+    /// <summary>値がモデル/アセットのファイル名に見えるか (= テキストフォールバックの誤検出防止)。</summary>
+    private static bool LooksLikeAssetFileName(string s)
+        => s.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase)
+        || s.EndsWith(".sft",  StringComparison.OrdinalIgnoreCase)
+        || s.EndsWith(".ckpt", StringComparison.OrdinalIgnoreCase)
+        || s.EndsWith(".pt",   StringComparison.OrdinalIgnoreCase)
+        || s.EndsWith(".pth",  StringComparison.OrdinalIgnoreCase)
+        || s.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase)
+        || s.EndsWith(".bin",  StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>スイッチノードの <c>switch</c> 入力の真偽を解決する。
+    /// リテラル (bool / "True"/"False" 文字列) はそのまま、参照 ([nodeId, outIdx]) なら参照先の
+    /// <c>value</c> / <c>boolean</c> フィールド (PrimitiveBoolean 等) を最大 4 ホップ辿る。
+    /// 判定できなければ null (= 呼び出し側は両枝を試す)。</summary>
+    private static bool? ResolveComfySwitchState(System.Text.Json.JsonElement inputs, System.Text.Json.JsonElement root)
+    {
+        if (!inputs.TryGetProperty("switch", out var v)) return null;
+        for (var hop = 0; hop < 4; hop++)
+        {
+            switch (v.ValueKind)
+            {
+                case System.Text.Json.JsonValueKind.True:  return true;
+                case System.Text.Json.JsonValueKind.False: return false;
+                case System.Text.Json.JsonValueKind.String:
+                    var s = v.GetString();
+                    if (string.Equals(s, "true",  StringComparison.OrdinalIgnoreCase)) return true;
+                    if (string.Equals(s, "false", StringComparison.OrdinalIgnoreCase)) return false;
+                    return null;
+                case System.Text.Json.JsonValueKind.Array
+                    when v.GetArrayLength() >= 1
+                         && v[0].ValueKind == System.Text.Json.JsonValueKind.String
+                         && root.TryGetProperty(v[0].GetString()!, out var refNode)
+                         && refNode.TryGetProperty("inputs", out var refInputs):
+                    if (refInputs.TryGetProperty("value",   out var nv)) { v = nv; continue; }
+                    if (refInputs.TryGetProperty("boolean", out var nb)) { v = nb; continue; }
+                    return null;
+                default:
+                    return null;
+            }
+        }
+        return null;
     }
 
     private static void CopyComfyParam(System.Text.Json.JsonElement inputs, string srcKey,
@@ -1823,11 +1916,38 @@ public sealed class AiImageMetadataService
         // {"prompt": "<グラフJSON文字列>", "workflow": "..."} という JSON ラッパーで包んで書くことがある。
         // また生のグラフ JSON をそのままコメントに書くツールもある。どのキーに入っていても展開する。
         UnwrapNestedVideoMetadata(kv);
+
+        // StringRecord 系ノードが実行時テキストを記録する "recorded_texts" ({"prompt": "...", ...})。
+        // LLM 生成プロンプトのような「グラフを辿っても静的には得られない実行時確定値」の正本なので、
+        // グラフ解析で positive/negative が取れなかったときの補完に使う。
+        var (recordedPositive, recordedNegative) = ExtractRecordedTexts(kv);
         // ---- ComfyUI: key="prompt" (API グラフ JSON) を画像と同じパーサで解釈 ----
         if (kv.TryGetValue("prompt", out var comfyPrompt))
         {
             var meta = TryParseComfyPrompt(comfyPrompt, format, fileSize, w, h);
-            if (meta is { HasAiData: true }) return meta;
+            if (meta is { HasAiData: true })
+            {
+                // グラフから positive/negative が静的に取れないワークフロー (LLM 実行時生成等) は
+                // recorded_texts の実行時記録で補完する。
+                if (string.IsNullOrEmpty(meta.Positive) && !string.IsNullOrEmpty(recordedPositive))
+                    meta = meta with { Positive = recordedPositive };
+                if (string.IsNullOrEmpty(meta.Negative) && !string.IsNullOrEmpty(recordedNegative))
+                    meta = meta with { Negative = recordedNegative };
+                return meta;
+            }
+        }
+
+        // グラフが無い / 解釈不能でも recorded_texts に実行時プロンプトが残っていれば ComfyUI として返す。
+        if (!string.IsNullOrEmpty(recordedPositive))
+        {
+            var parameters = new Dictionary<string, string>(StringComparer.Ordinal) { ["Generator"] = "ComfyUI" };
+            if (w > 0 && h > 0) parameters["Size"] = $"{w}x{h}";
+            return new AiImageMetadata
+            {
+                Format = format, FileSize = fileSize, Width = w, Height = h,
+                Positive = recordedPositive, Negative = recordedNegative,
+                Generator = "ComfyUI", Parameters = parameters,
+            };
         }
 
         // 署名 (prompt / workflow キー) はあるが JSON を解釈できなかった場合は部分結果。
@@ -1846,6 +1966,34 @@ public sealed class AiImageMetadataService
             Format = format, FileSize = fileSize, Width = w, Height = h,
             OtherMetadata = otherMeta,
         };
+    }
+
+    /// <summary>"recorded_texts" キー ({"prompt": "...", "negative": "...", ...} 形式) から
+    /// 実行時に記録されたプロンプト文字列を取り出す。キー名は "negative" を含めば負側、
+    /// それ以外 ("prompt" / "positive" 等) は正側として最初の非空値を採用する。無ければ (null, null)。</summary>
+    private static (string? Positive, string? Negative) ExtractRecordedTexts(Dictionary<string, string> kv)
+    {
+        if (!kv.TryGetValue("recorded_texts", out var json) || string.IsNullOrEmpty(json)) return (null, null);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(SanitizeJsonNonStandardLiterals(json));
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, null);
+            string? pos = null, neg = null;
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+                var v = prop.Value.GetString();
+                if (string.IsNullOrEmpty(v)) continue;
+                if (prop.Name.Contains("negative", StringComparison.OrdinalIgnoreCase)) neg ??= v;
+                else                                                                    pos ??= v;
+            }
+            return (pos, neg);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[AiVideoMeta] recorded_texts parse failed: {ex.Message}");
+            return (null, null);
+        }
     }
 
     /// <summary>kv のどれかの値が「JSON ラッパー ({"prompt": ..., "workflow": ...})」または
