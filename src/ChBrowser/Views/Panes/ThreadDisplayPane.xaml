@@ -57,20 +57,27 @@
 
         <!-- URL (本文中のテキストリンク / 画像/動画サムネ) 右クリック用コンテキストメニュー。
              JS の urlContextMenu メッセージを受けて HandleUrlContextMenu が IsOpen=true で開く。
-             対象 URL は ContextMenu.Tag に積んでクリックハンドラから読み出す。
-             「ビューアで開く」は画像/動画サムネ右クリック時のみ Visible (HandleUrlContextMenu で切替)。 -->
+             対象 (UrlMenuContext: url / srcUrl / mediaType) は ContextMenu.Tag に積んで
+             クリックハンドラから読み出す。「ビューアで開く / 保存 / キャッシュ削除」は
+             メディアスロット (image / video) 右クリック時のみ Visible (HandleUrlContextMenu で切替)。 -->
         <ContextMenu x:Key="UrlContextMenu" x:Shared="False">
-            <!-- ビューア項目は Tag="openInViewer" で HandleUrlContextMenu から識別 (x:Name は
-                 x:Shared="False" だと毎回違う名前スコープに登録されるため Tag のほうが扱いやすい)。 -->
+            <!-- 各項目は Tag で HandleUrlContextMenu から識別 (x:Name は x:Shared="False" だと
+                 毎回違う名前スコープに登録されるため Tag のほうが扱いやすい)。 -->
             <MenuItem Header="ビューアで開く"
                       Tag="openInViewer"
                       Click="OpenInViewer_Click"
                       Visibility="Collapsed" />
-            <!-- キャッシュ削除: 動画スロット (mediaType=='video') 右クリック時のみ表示。
-                 VideoThumb + Video のキャッシュエントリ + DL 失敗状態をクリアする。 -->
+            <!-- 保存 (画像/動画共通): キャッシュ済ならキャッシュからコピー、
+                 未キャッシュならキャッシュを経由せず直接 DL 保存。 -->
+            <MenuItem Header="保存"
+                      Tag="save"
+                      Click="Save_Click"
+                      Visibility="Collapsed" />
+            <!-- キャッシュ削除 (画像/動画共通): 動画は VideoThumb + Video + DL 失敗状態、
+                 画像は Image キャッシュ + 取得失敗状態をクリアする。 -->
             <MenuItem Header="キャッシュ削除"
-                      Tag="deleteVideoCache"
-                      Click="DeleteVideoCache_Click"
+                      Tag="deleteCache"
+                      Click="DeleteCache_Click"
                       Visibility="Collapsed" />
             <MenuItem Header="リンクをコピー" Click="UrlCopy_Click" />
         </ContextMenu>

@@ -3079,13 +3079,15 @@
 
     /** URL (テキストリンク or 画像/動画サムネ) の右クリック時に C# にコンテキストメニュー表示を依頼。
      *  「リンクをコピー」等のメニューは C# (ThreadDisplayPane) 側 UrlContextMenu リソースで定義。
-     *  data-url にはオリジナルのページ URL (= サムネ生成用に解決した data-src ではなく、ユーザが
-     *  共有したい元 URL) が入っているのでそれをそのまま渡す。
-     *  mediaType は C# 側で「ビューアで開く」項目の可視切替に使う (image / video / youtube / 未指定)。 */
-    function postUrlContextMenu(url, mediaType) {
+     *  url    = オリジナルのページ URL (data-url。「リンクをコピー」で共有したい元 URL)。
+     *  srcUrl = 実メディア URL (data-src。キャッシュキー / 保存・ビューア対象。無ければ空)。
+     *  mediaType は C# 側で「ビューアで開く / 保存 / キャッシュ削除」項目の可視切替に使う。 */
+    function postUrlContextMenu(url, mediaType, srcUrl) {
         if (!url) return;
         if (window.chrome && window.chrome.webview) {
-            window.chrome.webview.postMessage({ type: 'urlContextMenu', url: url, mediaType: mediaType || '' });
+            window.chrome.webview.postMessage({
+                type: 'urlContextMenu', url: url, mediaType: mediaType || '', srcUrl: srcUrl || '',
+            });
         }
     }
 
@@ -3107,9 +3109,12 @@
         if (urlEl && urlEl.dataset && urlEl.dataset.url) {
             e.preventDefault();
             e.stopPropagation();
-            // image-slot なら mediaType を読み取って C# に渡す (= ビューアで開く項目の出し分け)
-            const mt = (urlEl.dataset && urlEl.dataset.mediaType) || '';
-            postUrlContextMenu(urlEl.dataset.url, mt);
+            // メディアスロットなら mediaType を送る (画像スロットは data-media-type を持たないので
+            // 'image' に補完 = クリックハンドラ側の `|| 'image'` と同じ規約)。テキストリンクは空。
+            const isSlot = urlEl.classList && urlEl.classList.contains('image-slot');
+            const mt  = isSlot ? (urlEl.dataset.mediaType || 'image') : '';
+            const src = isSlot ? (urlEl.dataset.src || '') : '';
+            postUrlContextMenu(urlEl.dataset.url, mt, src);
             return;
         }
     });

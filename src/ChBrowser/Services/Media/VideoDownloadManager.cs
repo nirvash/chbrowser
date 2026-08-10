@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using ChBrowser.Services.Image;
 
@@ -131,6 +133,27 @@ public sealed class VideoDownloadManager
 
     /// <summary>指定 URL の動画が現在ダウンロード進行中か。</summary>
     public bool IsDownloading(string url) => !string.IsNullOrEmpty(url) && _inFlight.ContainsKey(url);
+
+    /// <summary>キャッシュを経由せず、URL を直接指定ファイルへダウンロード保存する
+    /// (スレ表示の動画右クリック「保存」で、未キャッシュ動画を保存する用)。
+    /// DL 用のブラウザ UA / タイムアウト設定を共有するためここに置く。失敗時は書きかけファイルを消して throw。</summary>
+    public async Task SaveDirectAsync(string url, string destPath, CancellationToken ct = default)
+    {
+        try
+        {
+            using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            await using var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            await using var dst = File.Create(destPath);
+            await src.CopyToAsync(dst, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            try { if (File.Exists(destPath)) File.Delete(destPath); }
+            catch { /* 書きかけ削除の失敗は無視 (元例外を優先) */ }
+            throw;
+        }
+    }
 
     /// <summary>指定 URL が過去 (= このセッション中) に DL 失敗済か (404 / 5xx / ネットワークエラー等)。
     /// UI バッジ「取得失敗」表示の判定に使う。アプリ再起動でクリアされる。</summary>

@@ -509,28 +509,88 @@ public partial class ThreadDisplayPane : UserControl
         mgr.Request(url);
     }
 
-    /// <summary>UrlContextMenu「キャッシュ削除」項目クリック。
-    /// 対象 URL の VideoThumb + Video キャッシュエントリ + DL 失敗状態をクリアし、
-    /// state push でスロットを「未DL」状態に戻す。</summary>
-    private void DeleteVideoCache_Click(object sender, RoutedEventArgs e)
+    /// <summary>UrlContextMenu「保存」項目クリック (画像 / 動画共通)。
+    /// キャッシュ済ならキャッシュファイルをコピー、未キャッシュならキャッシュを経由せず直接 DL 保存する。</summary>
+    private void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not MenuItem mi) return;
-        var owner = ItemsControl.ItemsControlFromItemContainer(mi) as ContextMenu
-                  ?? mi.Parent as ContextMenu;
-        if (owner?.Tag is not string url || string.IsNullOrEmpty(url)) return;
+        if (UrlMenuOf(sender).Ctx is not { } ctx) return;
+        _ = SaveMediaWithDialogAsync(ctx.SrcUrl, ctx.MediaType);
+    }
+
+    private async Task SaveMediaWithDialogAsync(string url, string mediaType)
+    {
+        var isVideo = mediaType == "video";
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            FileName = ImageSaver.SuggestFileName(url, isVideo ? "video/mp4" : "image/jpeg"),
+            Filter   = isVideo
+                ? "動画ファイル (*.mp4;*.webm;*.mov;*.m4v;*.mkv)|*.mp4;*.webm;*.mov;*.m4v;*.mkv|すべてのファイル (*.*)|*.*"
+                : "画像ファイル (*.jpg;*.png;*.gif;*.webp)|*.jpg;*.png;*.gif;*.webp|すべてのファイル (*.*)|*.*",
+            Title    = isVideo ? "動画を保存" : "画像を保存",
+        };
+        var ownerWin = Window.GetWindow(this);
+        if (dlg.ShowDialog(ownerWin) != true) return;
+
+        try
+        {
+            if (Application.Current is not App app) return;
+
+            // キャッシュ済み → キャッシュファイルをコピーするだけ (再ダウンロードしない)。
+            var kind = isVideo ? ChBrowser.Services.Image.CacheKind.Video
+                               : ChBrowser.Services.Image.CacheKind.Image;
+            if (app.ImageCacheServiceInstance is { } cache && cache.TryGet(url, out var hit, kind))
+            {
+                System.IO.File.Copy(hit.FilePath, dlg.FileName, overwrite: true);
+                ChBrowser.Services.Logging.LogService.Instance.Write(
+                    $"[mediaSave] キャッシュから保存: {dlg.FileName}");
+                return;
+            }
+
+            // 未キャッシュ → キャッシュを経由せず保存先へ直接ダウンロード
+            // (SaveDirectAsync はブラウザ UA / 長タイムアウトの DL 用クライアント。画像にもそのまま使える)。
+            if (app.VideoDownloadManagerInstance is not { } mgr) return;
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 直接ダウンロード開始: {url}");
+            await mgr.SaveDirectAsync(url, dlg.FileName);
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 保存完了: {dlg.FileName}");
+        }
+        catch (Exception ex)
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 保存失敗: {ex.Message}");
+            MessageBox.Show(ownerWin ?? Application.Current.MainWindow!,
+                $"保存に失敗しました: {ex.Message}", "ChBrowser",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>UrlContextMenu「キャッシュ削除」項目クリック (画像 / 動画共通)。
+    /// 動画: VideoThumb + Video キャッシュ + DL 失敗状態をクリアし、state push でスロットを「未DL」に戻す。
+    /// 画像: Image キャッシュ + 取得失敗状態をクリアする (表示中のサムネは次回表示から効く)。</summary>
+    private void DeleteCache_Click(object sender, RoutedEventArgs e)
+    {
+        var (ctx, owner) = UrlMenuOf(sender);
+        if (ctx is null) return;
 
         if (Application.Current is not App app) return;
         var cache = app.ImageCacheServiceInstance;
         if (cache is null) return;
 
-        cache.Delete(url, ChBrowser.Services.Image.CacheKind.VideoThumb);
-        cache.Delete(url, ChBrowser.Services.Image.CacheKind.Video);
-        app.VideoDownloadManagerInstance?.ResetFailedState(url);
-
-        // state push で UI を未DL状態に戻す。push 先はメニューを開いた WebView2 (= owner.PlacementTarget)。
-        if (owner.PlacementTarget is WebView2 wv)
+        if (ctx.MediaType == "video")
         {
-            PushVideoCacheStateTo(wv, cache, url);
+            cache.Delete(ctx.SrcUrl, ChBrowser.Services.Image.CacheKind.VideoThumb);
+            cache.Delete(ctx.SrcUrl, ChBrowser.Services.Image.CacheKind.Video);
+            app.VideoDownloadManagerInstance?.ResetFailedState(ctx.SrcUrl);
+
+            // state push で UI を未DL状態に戻す。push 先はメニューを開いた WebView2 (= owner.PlacementTarget)。
+            if (owner?.PlacementTarget is WebView2 wv)
+            {
+                PushVideoCacheStateTo(wv, cache, ctx.SrcUrl);
+            }
+        }
+        else
+        {
+            cache.Delete(ctx.SrcUrl, ChBrowser.Services.Image.CacheKind.Image);
+            app.MediaAcquisitionTrackerInstance?.ResetAll(ctx.SrcUrl);
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaCache] 画像キャッシュ削除: {ctx.SrcUrl}");
         }
     }
 
@@ -660,9 +720,24 @@ public partial class ThreadDisplayPane : UserControl
 
     // ---- URL (テキストリンク / 画像サムネ) 右クリックメニュー (Phase 25) ----
 
+    /// <summary>URL メニューの対象。ContextMenu.Tag に積んで各 Click ハンドラから読み出す。
+    /// Url = 元のページ URL (リンクコピー用)、SrcUrl = 実メディア URL (キャッシュキー / 保存・ビューア対象。
+    /// スロット以外や data-src 未解決時は Url と同じ)、MediaType = "image" / "video" / "youtube" / ""。</summary>
+    private sealed record UrlMenuContext(string Url, string SrcUrl, string MediaType);
+
+    /// <summary>クリックされた MenuItem から (UrlMenuContext, ContextMenu) を取り出す共通ヘルパ。</summary>
+    private static (UrlMenuContext? Ctx, ContextMenu? Menu) UrlMenuOf(object sender)
+    {
+        if (sender is not MenuItem mi) return (null, null);
+        var owner = ItemsControl.ItemsControlFromItemContainer(mi) as ContextMenu
+                  ?? mi.Parent as ContextMenu;
+        return (owner?.Tag as UrlMenuContext, owner);
+    }
+
     /// <summary>JS から「URL リンクが右クリックされた」通知を受け、UrlContextMenu を開く。
-    /// 対象 URL は ContextMenu.Tag に積んで <see cref="UrlCopy_Click"/> などから読み出す。
-    /// mediaType が "image" / "video" の場合は「ビューアで開く」項目を表示 (それ以外は Collapsed)。</summary>
+    /// mediaType が "image" / "video" の場合は「ビューアで開く / 保存 / キャッシュ削除」を表示
+    /// (テキストリンクや youtube は「リンクをコピー」のみ)。
+    /// x:Shared="False" なのでこの menu インスタンス内の MenuItem を直接いじる。</summary>
     private void HandleUrlContextMenu(object sender, JsonElement payload)
     {
         if (sender is not WebView2 wv) return;
@@ -670,51 +745,43 @@ public partial class ThreadDisplayPane : UserControl
         var url = urlProp.GetString();
         if (string.IsNullOrEmpty(url)) return;
         var mediaType = payload.TryGetProperty("mediaType", out var mtp) ? (mtp.GetString() ?? "") : "";
+        var srcUrl    = payload.TryGetProperty("srcUrl",    out var sp)  ? (sp.GetString()  ?? "") : "";
+        if (string.IsNullOrEmpty(srcUrl)) srcUrl = url;
 
         if (TryFindResource("UrlContextMenu") is not ContextMenu menu) return;
-        // 「ビューアで開く」は image / video のみ表示。
-        // 「キャッシュ削除」は video のみ表示。
-        // x:Shared="False" なのでこの menu インスタンス内の MenuItem を直接いじる。
-        var canOpenInViewer = mediaType == "image" || mediaType == "video";
-        var canDeleteCache  = mediaType == "video";
+        var isMedia = mediaType == "image" || mediaType == "video";
         foreach (var item in menu.Items)
         {
             if (item is not MenuItem mi || mi.Tag is not string tag) continue;
             switch (tag)
             {
-                case "openInViewer":     mi.Visibility = canOpenInViewer ? Visibility.Visible : Visibility.Collapsed; break;
-                case "deleteVideoCache": mi.Visibility = canDeleteCache  ? Visibility.Visible : Visibility.Collapsed; break;
+                case "openInViewer": mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
+                case "save":         mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
+                case "deleteCache":  mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
             }
         }
         menu.PlacementTarget = wv;
         menu.Placement       = PlacementMode.MousePoint;
-        menu.Tag             = url;
+        menu.Tag             = new UrlMenuContext(url!, srcUrl!, mediaType);
         menu.IsOpen          = true;
     }
 
     private void UrlCopy_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not MenuItem mi) return;
-        var owner = ItemsControl.ItemsControlFromItemContainer(mi) as ContextMenu
-                  ?? mi.Parent as ContextMenu;
-        if (owner?.Tag is string url && !string.IsNullOrEmpty(url))
-        {
-            try { Clipboard.SetText(url); }
-            catch (Exception ex) { Debug.WriteLine($"[UrlCopy] Clipboard.SetText failed: {ex.Message}"); }
-        }
+        if (UrlMenuOf(sender).Ctx is not { } ctx) return;
+        try { Clipboard.SetText(ctx.Url); }
+        catch (Exception ex) { Debug.WriteLine($"[UrlCopy] Clipboard.SetText failed: {ex.Message}"); }
     }
 
     /// <summary>UrlContextMenu の「ビューアで開く」項目クリック。
-    /// 対象 URL を画像ビューアウィンドウの新タブで開く (動画 URL は viewer.js 側で &lt;video&gt; レンダリング)。</summary>
+    /// 実メディア URL (SrcUrl) を画像ビューアウィンドウの新タブで開く
+    /// (動画 URL は viewer.js 側で &lt;video&gt; レンダリング)。</summary>
     private void OpenInViewer_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not MenuItem mi) return;
-        var owner = ItemsControl.ItemsControlFromItemContainer(mi) as ContextMenu
-                  ?? mi.Parent as ContextMenu;
-        if (owner?.Tag is not string url || string.IsNullOrEmpty(url)) return;
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+        if (UrlMenuOf(sender).Ctx is not { } ctx) return;
+        if (!Uri.TryCreate(ctx.SrcUrl, UriKind.Absolute, out var uri)) return;
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return;
-        if (Application.Current is App app) app.ShowImageInViewer(url);
+        if (Application.Current is App app) app.ShowImageInViewer(ctx.SrcUrl);
     }
 
     // ---- レス番号 (post-no) コンテキストメニュー (Phase 25 で HTML から WPF ネイティブに移行) ----

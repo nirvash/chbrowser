@@ -71,6 +71,10 @@ public sealed class ImageSaver
         var ct when ct.StartsWith("image/gif")  => ".gif",
         var ct when ct.StartsWith("image/webp") => ".webp",
         var ct when ct.StartsWith("image/")     => ".img",
+        var ct when ct.StartsWith("video/mp4")  => ".mp4",
+        var ct when ct.StartsWith("video/webm") => ".webm",
+        var ct when ct.StartsWith("video/quicktime") => ".mov",
+        var ct when ct.StartsWith("video/")     => ".mp4",
         _ => ".bin",
     };
 }
