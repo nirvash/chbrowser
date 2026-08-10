@@ -22,7 +22,8 @@ namespace ChBrowser.Services.Image;
 /// <list type="bullet">
 /// <item>PNG: tEXt / iTXt / zTXt チャンク内の <c>parameters</c> / <c>UserComment</c> / <c>Comment</c> キー。</item>
 /// <item>JPEG / WebP: EXIF UserComment (APP1 セグメント / RIFF EXIF チャンク) 内の SD WebUI infotext。</item>
-/// <item>MP4 / MOV: moov/udta/meta の keys+ilst (ComfyUI SaveVideo の <c>prompt</c> JSON)。</item>
+/// <item>MP4 / MOV: moov/udta/meta の keys+ilst (QuickTime 形式) と ©cmt / ---- (iTunes 形式)。
+///   comment に JSON ラッパー ({"prompt": ..., "workflow": ...}) で包まれた ComfyUI グラフも展開。</item>
 /// <item>WebM / MKV: Matroska Tags の SimpleTag (ComfyUI SaveWEBM の <c>prompt</c> JSON)。</item>
 /// </list>
 /// </para>
@@ -206,6 +207,21 @@ public sealed class AiImageMetadataService
         {
             var meta = TryParseComfyPrompt(comfyPrompt, "PNG", fileSize, w, h);
             if (meta is { HasAiData: true }) return meta;
+        }
+
+        // ---- 戦略 2.5: prompt 以外のチャンク (Comment / UserComment / Description 等) に ComfyUI グラフが
+        //      「生 JSON」「{"prompt": ...} ラッパー」「Prompt: {...} プレフィックス」で入っているケース。
+        //      サードパーティの保存ノード / ffmpeg 系ツールがこの書き方をする (動画側の対策と同じパターン)。
+        if (!chunks.ContainsKey("prompt"))
+        {
+            foreach (var (ck, cv) in chunks)
+            {
+                if (ck.Equals("parameters", StringComparison.OrdinalIgnoreCase)) continue; // SD infotext は戦略 1 の領分
+                var g = TryExtractComfyGraphJson(UnLatin1ToUtf8(cv));
+                if (g is null) continue;
+                var meta = TryParseComfyPrompt(g, "PNG", fileSize, w, h);
+                if (meta is { HasAiData: true }) return meta;
+            }
         }
 
         // ---- 戦略 3: NovelAI tEXt メタ (Software=NovelAI + Comment JSON / Description) ----
@@ -693,6 +709,17 @@ public sealed class AiImageMetadataService
             if (!string.IsNullOrEmpty(uc) && IsSDWebUIInfotext(uc!))
                 return BuildResult(uc, format, fileSize, width, height);
 
+            // 3.5) UserComment に ComfyUI グラフ (生 JSON / {"prompt": ...} ラッパー) が入っているケース。
+            if (!string.IsNullOrEmpty(uc))
+            {
+                var g = TryExtractComfyGraphJson(uc);
+                if (g is not null)
+                {
+                    var meta = TryParseComfyPrompt(g, format, fileSize, width, height);
+                    if (meta is { HasAiData: true }) return meta;
+                }
+            }
+
             // 4) AI 生成として解釈できなかったが EXIF 自体はある。
             //    まず AI 由来の署名 (ComfyUI プレフィックス / 既知ツール名 / infotext 断片) を探し、
             //    見つかればラベル付きの部分結果、無ければ撮影機材等の一般メタデータとして公開する。
@@ -820,6 +847,16 @@ public sealed class AiImageMetadataService
             if (brace < 0) continue;
             var json = raw.Substring(brace);
             var meta = TryParseComfyPrompt(json, format, fileSize, width, height);
+            if (meta is { HasAiData: true }) return meta;
+        }
+
+        // その他の ASCII タグも走査: サードパーティの保存ノードは XPComment / Software 等の別タグに
+        // 生グラフ JSON や {"prompt": ...} ラッパーで書くことがある (動画側の対策と同じパターン)。
+        foreach (var raw in tags.Values)
+        {
+            var g = TryExtractComfyGraphJson(raw);
+            if (g is null) continue;
+            var meta = TryParseComfyPrompt(g, format, fileSize, width, height);
             if (meta is { HasAiData: true }) return meta;
         }
         return null;
@@ -1782,6 +1819,10 @@ public sealed class AiImageMetadataService
     private static AiImageMetadata BuildVideoResult(
         Dictionary<string, string> kv, string format, long fileSize, int w, int h)
     {
+        // ffmpeg / VideoHelperSuite 系は comment 等の汎用キー 1 個に
+        // {"prompt": "<グラフJSON文字列>", "workflow": "..."} という JSON ラッパーで包んで書くことがある。
+        // また生のグラフ JSON をそのままコメントに書くツールもある。どのキーに入っていても展開する。
+        UnwrapNestedVideoMetadata(kv);
         // ---- ComfyUI: key="prompt" (API グラフ JSON) を画像と同じパーサで解釈 ----
         if (kv.TryGetValue("prompt", out var comfyPrompt))
         {
@@ -1805,6 +1846,114 @@ public sealed class AiImageMetadataService
             Format = format, FileSize = fileSize, Width = w, Height = h,
             OtherMetadata = otherMeta,
         };
+    }
+
+    /// <summary>kv のどれかの値が「JSON ラッパー ({"prompt": ..., "workflow": ...})」または
+    /// 「生の ComfyUI グラフ JSON」なら、kv["prompt"] / kv["workflow"] へ昇格させる。
+    /// キー名は問わない (MP4 ©cmt="cmt" / WebM "COMMENT" / "description" 等、書き手によりバラバラなため)。
+    /// 既に kv["prompt"] があれば何もしない (= QuickTime keys 形式の正規経路を優先)。</summary>
+    private static void UnwrapNestedVideoMetadata(Dictionary<string, string> kv)
+    {
+        if (kv.ContainsKey("prompt")) return;
+        foreach (var (k, v) in kv.ToList())
+        {
+            if (string.IsNullOrEmpty(v) || !v.TrimStart().StartsWith("{", StringComparison.Ordinal)) continue;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(SanitizeJsonNonStandardLiterals(v));
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+
+                // (a) ラッパー形式: {"prompt": <文字列 or オブジェクト>, "workflow": ...}
+                if (root.TryGetProperty("prompt", out var p))
+                {
+                    var ps = p.ValueKind switch
+                    {
+                        System.Text.Json.JsonValueKind.String => p.GetString(),
+                        System.Text.Json.JsonValueKind.Object => p.GetRawText(),
+                        _ => null,
+                    };
+                    if (!string.IsNullOrEmpty(ps))
+                    {
+                        kv["prompt"] = ps!;
+                        if (!kv.ContainsKey("workflow") && root.TryGetProperty("workflow", out var wf))
+                        {
+                            var ws = wf.ValueKind switch
+                            {
+                                System.Text.Json.JsonValueKind.String => wf.GetString(),
+                                System.Text.Json.JsonValueKind.Object => wf.GetRawText(),
+                                _ => null,
+                            };
+                            if (!string.IsNullOrEmpty(ws)) kv["workflow"] = ws!;
+                        }
+                        return;
+                    }
+                }
+
+                // (b) 値そのものが生のグラフ ({nodeId: {class_type, ...}, ...}) の形式
+                if (LooksLikeComfyGraphJson(root))
+                {
+                    kv["prompt"] = v;
+                    return;
+                }
+            }
+            catch
+            {
+                // JSON として読めない値 (ただのコメント文字列等) は無視して次のキーへ
+            }
+        }
+    }
+
+    /// <summary>任意のメタデータ値から ComfyUI グラフ JSON を取り出す共通ヘルパ (画像・動画共用)。
+    /// 対応形式:
+    ///   - 生のグラフ JSON ({nodeId: {class_type: ...}})
+    ///   - JSON ラッパー ({"prompt": "&lt;グラフ文字列&gt;"} / {"prompt": {…}})
+    ///   - "Prompt: {...}" のようなプレフィックス付き (最初の '{' から読む)
+    /// 該当しなければ null。</summary>
+    private static string? TryExtractComfyGraphJson(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return null;
+        int brace = value.IndexOf('{');
+        if (brace < 0) return null;
+        var json = value.Substring(brace);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(SanitizeJsonNonStandardLiterals(json));
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            if (LooksLikeComfyGraphJson(root)) return json;
+            if (root.TryGetProperty("prompt", out var p))
+            {
+                // ラッパーの中身がグラフかどうかは呼び出し先の TryParseComfyPrompt が判定する
+                // (NovelAI Comment JSON の "prompt" (= ただのテキスト) はそこで弾かれる)。
+                return p.ValueKind switch
+                {
+                    System.Text.Json.JsonValueKind.String => p.GetString(),
+                    System.Text.Json.JsonValueKind.Object => p.GetRawText(),
+                    _ => null,
+                };
+            }
+            return null;
+        }
+        catch
+        {
+            return null; // JSON として読めない値 (ただのコメント等)
+        }
+    }
+
+    /// <summary>JSON オブジェクトが ComfyUI API グラフ ({nodeId: {class_type: ...}}) に見えるか。
+    /// 先頭から数プロパティだけ確認する軽量判定。</summary>
+    private static bool LooksLikeComfyGraphJson(System.Text.Json.JsonElement root)
+    {
+        var inspected = 0;
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object
+                && prop.Value.TryGetProperty("class_type", out _))
+                return true;
+            if (++inspected >= 20) break;
+        }
+        return false;
     }
 
     /// <summary>start..end の連続ボックスを列挙。type は ASCII 4 文字、code は同 4 バイトの
@@ -1870,7 +2019,15 @@ public sealed class AiImageMetadataService
             }
             else if (typ == "ilst") { ilstStart = s2; ilstLen = l2; }
         }
-        if (ilstStart < 0 || keys.Count == 0) return;
+        if (ilstStart < 0) return;
+
+        // keys ボックスが無い ilst は iTunes 形式 (©cmt / ---- アトム) として読む
+        // (ffmpeg の mp4 muxer 等。ComfyUI VideoHelperSuite / SaveVideo(旧) がこの形式で書く)。
+        if (keys.Count == 0)
+        {
+            ReadItunesIlst(b, ilstStart, ilstLen, kv);
+            return;
+        }
 
         foreach (var (_, code, s2, l2) in Mp4Boxes(b, ilstStart, ilstStart + ilstLen))
         {
@@ -1882,6 +2039,40 @@ public sealed class AiImageMetadataService
                 // data: type indicator(4) + locale(4) + 値。type=1 が UTF-8 テキスト。
                 if (BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(s3, 4)) != 1) continue;
                 var key = keys[idx - 1];
+                if (!kv.ContainsKey(key)) kv[key] = Encoding.UTF8.GetString(b, s3 + 8, l3 - 8);
+            }
+        }
+    }
+
+    /// <summary>iTunes 形式の ilst を読む。子アトムは 2 種:
+    ///   - ©xxx (先頭バイト 0xA9): 定型キー (©cmt=comment / ©too=encoder 等)。残り 3 文字をキー名にする。
+    ///   - "----": カスタムキー。mean(名前空間)/name(キー名)/data(値) の子ボックスを持つ。
+    /// 値は data ボックス (type indicator=1 = UTF-8 テキスト) から取る。</summary>
+    private static void ReadItunesIlst(byte[] b, int start, int len, Dictionary<string, string> kv)
+    {
+        foreach (var (typ, code, s2, l2) in Mp4Boxes(b, start, start + len))
+        {
+            string? key = null;
+            if (typ == "----")
+            {
+                foreach (var (t3, _, s3, l3) in Mp4Boxes(b, s2, s2 + l2))
+                {
+                    // name: ver/flags(4) + キー名
+                    if (t3 == "name" && l3 > 4)
+                        key = Encoding.UTF8.GetString(b, s3 + 4, l3 - 4);
+                }
+            }
+            else if ((code >> 24) == 0xA9)
+            {
+                // ©cmt → "cmt" のように残り 3 文字をキーとして使う (かぶりは AddGeneralMeta 側で許容)
+                key = new string(new[] { (char)((code >> 16) & 0xFF), (char)((code >> 8) & 0xFF), (char)(code & 0xFF) });
+            }
+            if (key is null) continue;
+
+            foreach (var (dt, _, s3, l3) in Mp4Boxes(b, s2, s2 + l2))
+            {
+                if (dt != "data" || l3 < 8) continue;
+                if (BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(s3, 4)) != 1) continue; // UTF-8 テキストのみ
                 if (!kv.ContainsKey(key)) kv[key] = Encoding.UTF8.GetString(b, s3 + 8, l3 - 8);
             }
         }
