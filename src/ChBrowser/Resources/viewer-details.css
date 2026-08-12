@@ -74,6 +74,13 @@ body {
 }
 .prompt-negative { color: #FFB5A8; }
 
+/* 複数シーン (Contex Loop 等) のプロンプト内に C# が挿入する区切り見出し行。
+   本文 (淡い青) と明確に区別するため暖色 + 太字にする。暗背景ペイン用の配色。 */
+.prompt-block .prompt-scene-header {
+    color: #FFCC66;
+    font-weight: bold;
+}
+
 /* 生成設定の key:value grid */
 .params-grid {
     display: grid;

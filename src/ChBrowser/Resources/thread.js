@@ -2436,6 +2436,16 @@
         return el;
     }
 
+    /** プロンプト本文を HTML 化する。Contex Loop 等の複数シーン構成で C# が挿入する
+     *  区切り見出し行 ("── 共通プレフィックス ──" / "── シーン 1/6: id ──") だけ色を変えて、
+     *  本文との境目をひと目で分かるようにする。それ以外は通常のエスケープのみ。 */
+    function renderPromptHtml(text) {
+        return String(text || '').split('\n').map(function (line) {
+            const esc = escapeHtml(line);
+            return line.indexOf('──') === 0 ? '<span class="prompt-scene-header">' + esc + '</span>' : esc;
+        }).join('\n');
+    }
+
     function showAiPopup(targetImg, meta) {
         // 生成元 / モデル名はサムネイル上のバッジで常時表示済みなので、ポップアップには出さない
         // (= 重複排除)。ポップアップはプロンプト系の情報だけを担当し、それが無ければ出さない。
@@ -2446,12 +2456,12 @@
         if (meta.positive) {
             html += '<div class="ai-meta-popup-section">'
                   + '<div class="ai-meta-popup-label">プロンプト</div>'
-                  + '<div class="ai-meta-popup-value ai-meta-popup-prompt">' + escapeHtml(meta.positive) + '</div></div>';
+                  + '<div class="ai-meta-popup-value ai-meta-popup-prompt">' + renderPromptHtml(meta.positive) + '</div></div>';
         }
         if (meta.negative) {
             html += '<div class="ai-meta-popup-section">'
                   + '<div class="ai-meta-popup-label">ネガティブプロンプト</div>'
-                  + '<div class="ai-meta-popup-value ai-meta-popup-negative">' + escapeHtml(meta.negative) + '</div></div>';
+                  + '<div class="ai-meta-popup-value ai-meta-popup-negative">' + renderPromptHtml(meta.negative) + '</div></div>';
         }
         if (!html) return;
 

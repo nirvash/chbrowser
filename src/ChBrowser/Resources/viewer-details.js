@@ -21,6 +21,16 @@
         return div.innerHTML;
     }
 
+    /** プロンプト本文を HTML 化する。Contex Loop 等の複数シーン構成で C# が挿入する
+     *  区切り見出し行 ("── 共通プレフィックス ──" / "── シーン 1/6: id ──") だけ色を変えて、
+     *  本文との境目をひと目で分かるようにする。それ以外は通常のエスケープのみ。 */
+    function renderPromptHtml(text) {
+        return String(text == null ? '' : text).split('\n').map(function (line) {
+            var esc = escapeHtml(line);
+            return line.indexOf('──') === 0 ? '<span class="prompt-scene-header">' + esc + '</span>' : esc;
+        }).join('\n');
+    }
+
     function formatFileSize(bytes) {
         if (bytes == null || isNaN(bytes)) return '-';
         if (bytes < 1024) return bytes + ' B';
@@ -77,13 +87,13 @@
         if (d.positive) {
             html += '<div class="section">' +
                     '<div class="section-header">プロンプト</div>' +
-                    '<div class="prompt-block">' + escapeHtml(d.positive) + '</div>' +
+                    '<div class="prompt-block">' + renderPromptHtml(d.positive) + '</div>' +
                     '</div>';
         }
         if (d.negative) {
             html += '<div class="section">' +
                     '<div class="section-header">ネガティブプロンプト</div>' +
-                    '<div class="prompt-block prompt-negative">' + escapeHtml(d.negative) + '</div>' +
+                    '<div class="prompt-block prompt-negative">' + renderPromptHtml(d.negative) + '</div>' +
                     '</div>';
         }
         if (d.parameters && Object.keys(d.parameters).length > 0) {

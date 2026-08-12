@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -1921,12 +1922,26 @@ public sealed class AiImageMetadataService
         // LLM 生成プロンプトのような「グラフを辿っても静的には得られない実行時確定値」の正本なので、
         // グラフ解析で positive/negative が取れなかったときの補完に使う。
         var (recordedPositive, recordedNegative) = ExtractRecordedTexts(kv);
+
+        // MiniMax H3 Contex Loop (ComfyUI-MiniMaxH3-Contex-Loop) のチェーン動画:
+        // 複数シーンのプロンプトが h3_plan (shots[]) / h3_manifest (segments[]) に記録される。
+        // グラフの prompt 入力はループ状態ノード経由 (= シーンごとに実行時選択) で静的には辿れないため、
+        // これが取れた場合はシーン別ラベル付きの複合テキストを Positive の正本として使う。
+        var (h3Prompts, h3SceneCount) = ExtractH3ChainPrompts(kv);
+
         // ---- ComfyUI: key="prompt" (API グラフ JSON) を画像と同じパーサで解釈 ----
         if (kv.TryGetValue("prompt", out var comfyPrompt))
         {
             var meta = TryParseComfyPrompt(comfyPrompt, format, fileSize, w, h);
             if (meta is { HasAiData: true })
             {
+                // Contex Loop: 全シーンのプロンプト (シーン別ラベル付き) を最優先で採用
+                // (グラフから 1 シーン分だけ取れたとしても、複数シーンの正本の方が完全なため)。
+                if (!string.IsNullOrEmpty(h3Prompts))
+                {
+                    meta = meta with { Positive = h3Prompts };
+                    meta.Parameters?.TryAdd("Scenes", h3SceneCount.ToString());
+                }
                 // グラフから positive/negative が静的に取れないワークフロー (LLM 実行時生成等) は
                 // recorded_texts の実行時記録で補完する。
                 if (string.IsNullOrEmpty(meta.Positive) && !string.IsNullOrEmpty(recordedPositive))
@@ -1937,15 +1952,17 @@ public sealed class AiImageMetadataService
             }
         }
 
-        // グラフが無い / 解釈不能でも recorded_texts に実行時プロンプトが残っていれば ComfyUI として返す。
-        if (!string.IsNullOrEmpty(recordedPositive))
+        // グラフが無い / 解釈不能でも h3_plan / recorded_texts に実行時プロンプトが残っていれば ComfyUI として返す。
+        if (!string.IsNullOrEmpty(h3Prompts) || !string.IsNullOrEmpty(recordedPositive))
         {
             var parameters = new Dictionary<string, string>(StringComparer.Ordinal) { ["Generator"] = "ComfyUI" };
             if (w > 0 && h > 0) parameters["Size"] = $"{w}x{h}";
+            if (!string.IsNullOrEmpty(h3Prompts)) parameters["Scenes"] = h3SceneCount.ToString();
             return new AiImageMetadata
             {
                 Format = format, FileSize = fileSize, Width = w, Height = h,
-                Positive = recordedPositive, Negative = recordedNegative,
+                Positive = !string.IsNullOrEmpty(h3Prompts) ? h3Prompts : recordedPositive,
+                Negative = recordedNegative,
                 Generator = "ComfyUI", Parameters = parameters,
             };
         }
@@ -1966,6 +1983,189 @@ public sealed class AiImageMetadataService
             Format = format, FileSize = fileSize, Width = w, Height = h,
             OtherMetadata = otherMeta,
         };
+    }
+
+    /// <summary>MiniMax H3 Contex Loop のチェーン動画メタから全シーンのプロンプトを取り出し、
+    /// シーン別ラベル付きの複合テキストを組み立てる。ソースは優先順に:
+    ///   1. kv["h3_plan"]     (h3_chain_plan_archive: prompt_prefix + shots[])
+    ///   2. kv["h3_manifest"] (h3_chain_manifest: prompt_prefix + segments[])
+    ///   3. kv["prompt"] グラフ内の MiniMaxH3ChainPlan ノードの plan_json 入力 (エディタ形式 plan)
+    /// 共通プレフィックスは 1 回だけ先頭に出し、各シーンからは重複分を剥がす。
+    /// 取れなければ (null, 0)。</summary>
+    private static (string? Text, int SceneCount) ExtractH3ChainPrompts(Dictionary<string, string> kv)
+    {
+        foreach (var (json, listName) in EnumerateH3PlanCandidates(kv))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(SanitizeJsonNonStandardLiterals(json));
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                if (!root.TryGetProperty(listName, out var shots)
+                    || shots.ValueKind != System.Text.Json.JsonValueKind.Array
+                    || shots.GetArrayLength() == 0) continue;
+
+                var prefix = root.TryGetProperty("prompt_prefix", out var pp) ? JsonTextOrJoinedLines(pp) : null;
+
+                var sb = new StringBuilder();
+                if (!string.IsNullOrWhiteSpace(prefix))
+                {
+                    sb.Append("── 共通プレフィックス ──\n").Append(prefix!.Trim()).Append('\n');
+                }
+
+                int count = shots.GetArrayLength();
+                int emitted = 0;
+
+                // 各シーンが動画内の何秒〜何秒かは delivered_frames の累積 ÷ fps で機械的に決まる
+                // (実測で動画実尺と一致)。generation_start_frame / audio_start_seconds は生成グリッド基準で
+                // 配信タイムラインとはズレる (context 重複分) ので使わない。
+                // 全シーンが delivered_frames を持つときだけ表示する (欠けると以降の累積がずれるため)。
+                var fps = TryGetH3Fps(root);
+                var canTime = fps > 0;
+                if (canTime)
+                {
+                    foreach (var s in shots.EnumerateArray())
+                    {
+                        if (s.ValueKind == System.Text.Json.JsonValueKind.Object
+                            && s.TryGetProperty("delivered_frames", out var dfp)
+                            && dfp.ValueKind == System.Text.Json.JsonValueKind.Number) continue;
+                        canTime = false;
+                        break;
+                    }
+                }
+                double accFrames = 0;
+
+                foreach (var shot in shots.EnumerateArray())
+                {
+                    if (shot.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+
+                    // 区間の算出は本文の有無に関わらず先に行う (= 本文が空のシーンがあっても累積をずらさない)。
+                    double startSec = 0, endSec = 0;
+                    var hasTime = false;
+                    if (canTime
+                        && shot.TryGetProperty("delivered_frames", out var dfv)
+                        && dfv.TryGetDouble(out var frames))
+                    {
+                        startSec   = accFrames / fps;
+                        accFrames += frames;
+                        endSec     = accFrames / fps;
+                        hasTime    = true;
+                    }
+
+                    // 本文: prompt (完全版) 優先、無ければ scene_prompt。
+                    var body = shot.TryGetProperty("prompt", out var pv) ? JsonTextOrJoinedLines(pv) : null;
+                    if (string.IsNullOrWhiteSpace(body)
+                        && shot.TryGetProperty("scene_prompt", out var sv)) body = JsonTextOrJoinedLines(sv);
+                    if (string.IsNullOrWhiteSpace(body)) continue;
+                    body = body!.Trim();
+                    // 各シーンの prompt には共通プレフィックスが複製されていることが多いので剥がす。
+                    if (!string.IsNullOrWhiteSpace(prefix))
+                    {
+                        var p = prefix!.Trim();
+                        if (body.StartsWith(p, StringComparison.Ordinal)) body = body[p.Length..].TrimStart();
+                    }
+
+                    var idx = shot.TryGetProperty("index", out var iv) && iv.ValueKind == System.Text.Json.JsonValueKind.Number
+                        ? iv.GetInt32() : emitted + 1;
+                    var id  = shot.TryGetProperty("id", out var idv) ? idv.GetString() : null;
+
+                    if (sb.Length > 0) sb.Append('\n');
+                    sb.Append("── シーン ").Append(idx).Append('/').Append(count);
+                    if (hasTime)
+                        sb.Append(" [").Append(FormatSceneTime(startSec)).Append('–').Append(FormatSceneTime(endSec)).Append(']');
+                    if (!string.IsNullOrEmpty(id)) sb.Append(": ").Append(id);
+                    sb.Append(" ──\n").Append(body).Append('\n');
+                    emitted++;
+                }
+                if (emitted > 0) return (sb.ToString().TrimEnd(), count);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AiVideoMeta] h3 plan parse failed: {ex.Message}");
+            }
+        }
+        return (null, 0);
+    }
+
+    /// <summary>Contex Loop の plan / manifest から fps を取り出す (compatibility.fps → ルート直下 fps の順)。
+    /// 取れない / 異常値なら 0 (= シーン区間の表示を諦める)。</summary>
+    private static double TryGetH3Fps(System.Text.Json.JsonElement root)
+    {
+        if (root.TryGetProperty("compatibility", out var comp)
+            && comp.ValueKind == System.Text.Json.JsonValueKind.Object
+            && comp.TryGetProperty("fps", out var f1)
+            && f1.ValueKind == System.Text.Json.JsonValueKind.Number
+            && f1.TryGetDouble(out var v1) && v1 > 0) return v1;
+
+        if (root.TryGetProperty("fps", out var f2)
+            && f2.ValueKind == System.Text.Json.JsonValueKind.Number
+            && f2.TryGetDouble(out var v2) && v2 > 0) return v2;
+
+        return 0;
+    }
+
+    /// <summary>シーン区間表示用の時刻フォーマット (例: "0:00.0" / "1:00.4" / 1 時間超は "1:02:03.4")。</summary>
+    private static string FormatSceneTime(double seconds)
+    {
+        if (double.IsNaN(seconds) || seconds < 0) seconds = 0;
+        var total  = (int)Math.Floor(seconds);
+        var tenths = (int)Math.Floor((seconds - total) * 10);
+        var h = total / 3600;
+        var m = (total % 3600) / 60;
+        var s = total % 60;
+        return h > 0
+            ? string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}:{2:00}.{3}", h, m, s, tenths)
+            : string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}.{2}", m, s, tenths);
+    }
+
+    /// <summary>Contex Loop の plan JSON 候補を優先順に列挙する (JSON 文字列, シーン配列のプロパティ名)。</summary>
+    private static IEnumerable<(string Json, string ListName)> EnumerateH3PlanCandidates(Dictionary<string, string> kv)
+    {
+        if (kv.TryGetValue("h3_plan", out var plan) && !string.IsNullOrEmpty(plan))
+            yield return (plan, "shots");
+        if (kv.TryGetValue("h3_manifest", out var mani) && !string.IsNullOrEmpty(mani))
+            yield return (mani, "segments");
+
+        // グラフ内 MiniMaxH3ChainPlan ノードの plan_json 入力 (= エディタ形式 plan: prompt_prefix + shots[])。
+        // h3_plan / h3_manifest キーが剥がされた再エンコード品の救済。
+        if (kv.TryGetValue("prompt", out var graphJson) && !string.IsNullOrEmpty(graphJson)
+            && graphJson.Contains("plan_json", StringComparison.Ordinal))
+        {
+            string? planJson = null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(SanitizeJsonNonStandardLiterals(graphJson));
+                if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    foreach (var prop in doc.RootElement.EnumerateObject())
+                    {
+                        if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                        if (!prop.Value.TryGetProperty("inputs", out var ip)) continue;
+                        if (!ip.TryGetProperty("plan_json", out var pj)
+                            || pj.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+                        planJson = pj.GetString();
+                        break;
+                    }
+                }
+            }
+            catch { /* グラフが読めなければ候補なし */ }
+            if (!string.IsNullOrEmpty(planJson)) yield return (planJson!, "shots");
+        }
+    }
+
+    /// <summary>JSON 値を文字列化する: 文字列はそのまま、文字列配列は改行連結 (Contex Loop の
+    /// 「Prompts may be multiline strings or arrays of lines」仕様に対応)。それ以外は null。</summary>
+    private static string? JsonTextOrJoinedLines(System.Text.Json.JsonElement v)
+    {
+        if (v.ValueKind == System.Text.Json.JsonValueKind.String) return v.GetString();
+        if (v.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            var lines = new List<string>();
+            foreach (var item in v.EnumerateArray())
+                if (item.ValueKind == System.Text.Json.JsonValueKind.String) lines.Add(item.GetString() ?? "");
+            return lines.Count > 0 ? string.Join("\n", lines) : null;
+        }
+        return null;
     }
 
     /// <summary>"recorded_texts" キー ({"prompt": "...", "negative": "...", ...} 形式) から

@@ -682,6 +682,12 @@ body.slot-resizing * {
 }
 .ai-meta-popup-prompt   { color: #1a4080; }
 .ai-meta-popup-negative { color: #803010; }
+/* 複数シーン (Contex Loop 等) のプロンプト内に C# が挿入する区切り見出し行。
+   本文 (青系) と明確に区別するため暖色 + 太字にする。白背景ポップアップ用の配色。 */
+.ai-meta-popup .prompt-scene-header {
+    color: #a35200;
+    font-weight: bold;
+}
 
 /* スレ表示中に出る全ポップアップの文字サイズを 12px に揃える (= 表示領域節約)。
  * `.anchor-popup` (= レス引用 / 返信件数 / ID / ワッチョイ ホバー) と `.ai-meta-popup` (= AI 生成メタ) の
