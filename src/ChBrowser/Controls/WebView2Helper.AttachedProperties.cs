@@ -508,6 +508,31 @@ public static partial class WebView2Helper
     }
 
     // ------------------------------------------------------------
+    // ViewerConfigJson (ビューア WebView2 への setConfig push)
+    //
+    // ThreadConfigJson / PaneConfigJson と同じ発想。ImageViewerViewModel.ConfigJson
+    // (= App が AppConfig 反映時に組み立てる JSON 文字列) を ImageViewerWindow.xaml の
+    // 各タブ WebView2 に bind し、変更があれば viewer.js へ setConfig メッセージとして送る。
+    // ------------------------------------------------------------
+
+    public static readonly DependencyProperty ViewerConfigJsonProperty =
+        DependencyProperty.RegisterAttached(
+            "ViewerConfigJson",
+            typeof(string),
+            typeof(WebView2Helper),
+            new PropertyMetadata(null, OnViewerConfigJsonChanged));
+
+    public static string? GetViewerConfigJson(DependencyObject d) => (string?)d.GetValue(ViewerConfigJsonProperty);
+    public static void    SetViewerConfigJson(DependencyObject d, string? value) => d.SetValue(ViewerConfigJsonProperty, value);
+
+    private static void OnViewerConfigJsonChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not WebView2 wv) return;
+        if (e.NewValue is not string json || string.IsNullOrEmpty(json)) return;
+        _ = PostJsonWhenReadyAsync(wv, json, NavScope.ViewerShell);
+    }
+
+    // ------------------------------------------------------------
     // ImageUrl (Phase 10: ビューアウィンドウの 1 タブ用)
     //
     // 添付プロパティが変更されたら、初回はビューアシェル HTML をロード、

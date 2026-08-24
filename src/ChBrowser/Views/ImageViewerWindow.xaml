@@ -181,6 +181,7 @@
                          HTML ロード前から viewer.css body と同じ暗色を表示することで「白 → 暗」のチラつきを消す。 -->
                     <wv2:WebView2 ctrl:WebView2Helper.ImageUrl="{Binding PlaybackUrl}"
                                   ctrl:WebView2Helper.ZoomModePush="{Binding PendingZoomMode}"
+                                  ctrl:WebView2Helper.ViewerConfigJson="{Binding DataContext.ConfigJson, RelativeSource={RelativeSource AncestorType=Window}}"
                                   DefaultBackgroundColor="#1E1E1E"
                                   WebMessageReceived="ViewerWebView_WebMessageReceived"
                                   Unloaded="ViewerWebView_Unloaded"

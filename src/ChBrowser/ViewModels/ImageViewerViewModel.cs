@@ -20,6 +20,13 @@ public sealed partial class ImageViewerViewModel : ObservableObject
     [ObservableProperty]
     private int _thumbnailSize = 80;
 
+    /// <summary>viewer.js 全タブへ push する setConfig JSON。App が AppConfig 反映時に組み立てる
+    /// (例: videoLoop)。ImageViewerWindow.xaml で各タブ WebView2 の
+    /// WebView2Helper.ViewerConfigJson 添付プロパティにバインドされ、
+    /// 初回 bind を含む変化のたびにシェル準備ができ次第 JS へ送られる。</summary>
+    [ObservableProperty]
+    private string? _configJson;
+
     public IRelayCommand PrevTabCommand          { get; }
     public IRelayCommand NextTabCommand          { get; }
     public IRelayCommand CloseCurrentTabCommand  { get; }

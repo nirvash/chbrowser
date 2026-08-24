@@ -334,6 +334,47 @@ body.slot-resizing * {
     background: rgba(200, 130, 30, 0.9);
 }
 
+/* 動画のループ再生トグル。ネイティブ <video controls> にはループ UI が無いため
+   再生中スロットの右上に重ねる独自ボタン。
+   再生開始時に .video-dl-badge は除去済みなので右上が衝突することはない。
+   active = ループ中。pointerdown 処理済みで slot の再生ハンドラには伝搬しない。 */
+.video-loop-toggle {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 3;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #bbb;
+    font-size: 14px;
+    line-height: 24px;
+    text-align: center;
+    cursor: pointer;
+}
+
+.video-loop-toggle.active {
+    color: #fff;
+    background: #1565c0;
+}
+
+/* fullscreen 中は popover (top layer) に持ち上がり slot 基準の配置が効かなくなるため、
+   UA 既定の popover 装飾 (inset:0 / margin:auto 等) を打ち消して画面右上へ固定する
+   (= 通常表示と同じ「動画の右上」に見える位置)。 */
+.video-loop-toggle:popover-open {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    left: auto;
+    bottom: auto;
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
 /* ファイルサイズラベル (= キャッシュ済動画のみ): スロット左下に半透明黒で表示。
    再生中も残るので動画長さの目安として常時表示できる。 */
 .video-size-label {

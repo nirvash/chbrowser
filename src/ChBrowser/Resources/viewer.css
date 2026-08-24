@@ -68,3 +68,43 @@ video#media {
 #status.visible {
     opacity: 1;
 }
+
+/* 動画のループ再生トグル。ネイティブ <video controls> にはループ UI が無いため
+   stage 右上に置く独自ボタン。動画表示中のみ存在する (viewer.js が管理)。
+   active = ループ中。 */
+.viewer-loop-toggle {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #bbb;
+    font-size: 15px;
+    line-height: 28px;
+    text-align: center;
+    cursor: pointer;
+}
+
+.viewer-loop-toggle.active {
+    color: #fff;
+    background: #1565c0;
+}
+
+/* fullscreen 中は popover (top layer) に持ち上がり stage 基準の配置が効かなくなるため、
+   UA 既定の popover 装飾 (inset:0 / margin:auto 等) を打ち消して画面右上へ固定する
+   (= 通常表示と同じ「stage 右上」に見える位置)。 */
+.viewer-loop-toggle:popover-open {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    left: auto;
+    bottom: auto;
+    margin: 0;
+    padding: 0;
+    border: none;
+}
