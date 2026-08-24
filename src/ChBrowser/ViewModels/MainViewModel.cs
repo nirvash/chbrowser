@@ -749,16 +749,10 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
             config.ThreadTabWidthMode,     config.ThreadTabWidthChars,     config.ThreadTabWidthPx);
 
         // スレ表示 (thread.js) 向け
-        ThreadConfigJson = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            type                  = "setConfig",
-            popularThreshold      = config.PopularThreshold,
-            imageSizeThresholdMb  = config.ImageSizeThresholdMb,
-            idHighlightThreshold  = config.IdHighlightThreshold,
-            metaPopupClickOnly    = config.MetaPopupClickOnly,
-            videoLoop             = config.VideoLoop,
-            debug                 = config.DebugDisableRecovery,
-        });
+        ThreadConfigJson = BuildThreadConfigJson(config);
+
+        // スライダ位置を設定値へ同期 (= 範囲外の保存値はクランプ。同値なら何もしないので再適用ループにはならない)
+        SyncThreadSlotScaleUi(config);
 
         // Phase 11b: 3 ペイン向け。各ペインは自分の JSON だけ受け取り、setConfig.openOnSingleClick を解釈する。
         FavoritesConfigJson  = System.Text.Json.JsonSerializer.Serialize(new
@@ -778,6 +772,71 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         // (= 設定画面でしきい値や接続先を変えた直後にも効く)。
         AiNgThreshold = config.NgAiThreshold;
         if (SelectedThreadTab is { } aiNgTab) StartAiNgFor(aiNgTab);
+    }
+
+    /// <summary>スレ表示 (thread.js) 向け setConfig JSON を組み立てる。
+    /// ApplyConfig (設定反映) とスロットスライダのライブ更新の両方から使う。</summary>
+    private static string BuildThreadConfigJson(AppConfig config)
+        => System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type                  = "setConfig",
+            popularThreshold      = config.PopularThreshold,
+            imageSizeThresholdMb  = config.ImageSizeThresholdMb,
+            idHighlightThreshold  = config.IdHighlightThreshold,
+            metaPopupClickOnly    = config.MetaPopupClickOnly,
+            videoLoop             = config.VideoLoop,
+            slotScale             = config.ThreadSlotScale,
+            debug                 = config.DebugDisableRecovery,
+        });
+
+    /// <summary>スレ上部ツールバーのサムネイルサイズスライダの位置を設定値へ同期。
+    /// 値が変わるときだけ代入する (= OnThreadSlotScaleUiChanged による debounce 再適用ループ防止)。</summary>
+    private void SyncThreadSlotScaleUi(AppConfig config)
+    {
+        var clamped = Math.Clamp(config.ThreadSlotScale, 0.6, 4.5);
+        if (Math.Abs(ThreadSlotScaleUi - clamped) > 0.0001)
+        {
+            ThreadSlotScaleUi = clamped;
+        }
+    }
+
+    // ---- スレ上部ツールバーのサムネイルサイズスライダ ----
+    /// <summary>スレ内メディアスロットの全体既定スケール (240px ベースの倍率 0.6–4.5)。
+    /// スライダの TwoWay 相当の保持先。ドラッグ中はペイン code-behind が
+    /// <see cref="PushThreadSlotScaleLive"/> で軽量 push し、放した時点でここへ確定値が入って
+    /// debounce 後に永続化される。</summary>
+    [ObservableProperty]
+    private double _threadSlotScaleUi = 1.0;
+
+    /// <summary><see cref="ThreadSlotScaleUi"/> 変更の永続化 debounce 用。</summary>
+    private System.Windows.Threading.DispatcherTimer? _slotScalePersistTimer;
+
+    partial void OnThreadSlotScaleUiChanged(double value)
+    {
+        // 永続化は debounce (400ms)。差分が無い場合は UpdateAndPersistConfig 内で何もしない。
+        _slotScalePersistTimer ??= new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(400),
+        };
+        _slotScalePersistTimer.Stop();
+        _slotScalePersistTimer.Tick -= SlotScalePersistTimer_Tick;
+        _slotScalePersistTimer.Tick += SlotScalePersistTimer_Tick;
+        _slotScalePersistTimer.Start();
+    }
+
+    private void SlotScalePersistTimer_Tick(object? sender, EventArgs e)
+    {
+        _slotScalePersistTimer?.Stop();
+        UpdateAndPersistConfig(c => c with { ThreadSlotScale = Math.Clamp(ThreadSlotScaleUi, 0.6, 4.5) });
+    }
+
+    /// <summary>スライダのドラッグ中に呼ぶ軽量反映。VM プロパティ (<see cref="ThreadSlotScaleUi"/>)
+    /// を触らず setConfig JSON の再構築 + push のみ行う (= OneWay バインディングによる
+    /// slider.Value への書き戻しを起こさない)。永続化はドラッグ完了後の通常経路で行う。</summary>
+    public void PushThreadSlotScaleLive(double value)
+    {
+        var clamped = Math.Clamp(Math.Round(value, 2), 0.6, 4.5);
+        ThreadConfigJson = BuildThreadConfigJson(CurrentConfig with { ThreadSlotScale = clamped });
     }
 
     // -----------------------------------------------------------------

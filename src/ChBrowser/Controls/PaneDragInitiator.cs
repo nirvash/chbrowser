@@ -99,6 +99,10 @@ public static class PaneDragInitiator
             if (cur is System.Windows.Controls.Primitives.ButtonBase)  return true;
             if (cur is System.Windows.Controls.Primitives.TextBoxBase) return true;
             if (cur is System.Windows.Controls.PasswordBox)            return true;
+            // Slider / Thumb: ヘッダー内スライダ (= サムネイルサイズ) のドラッグを
+            // ペインドラッグと誤認すると Mouse.Capture を奪われノブが固まるため除外。
+            if (cur is System.Windows.Controls.Slider)                 return true;
+            if (cur is System.Windows.Controls.Primitives.Thumb)       return true;
             cur = VisualTreeHelper.GetParent(cur);
         }
         return false;

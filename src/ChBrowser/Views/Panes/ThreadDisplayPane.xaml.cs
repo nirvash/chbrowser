@@ -1098,6 +1098,102 @@ public partial class ThreadDisplayPane : UserControl
         if (Application.Current is App app) app.ShowImageInViewer(url);
     }
 
+    // ---- スレ上部ツールバー: サムネイルサイズスライダ ----
+    // ネイティブ Thumb のドラッグは PaneDragInitiator (ヘッダーのペインドラッグ) と競合するため、
+    // 押下時にスライダ自身で CaptureMouse して移動量を自前計算する。
+    // ドラッグ中は 100ms 間隔で最新値を PushThreadSlotScaleLive (= 軽量 push, VM 非接触) し、
+    // 放した時点で確定値を VM へ反映 → debounce 後に永続化される。
+
+    /// <summary>スライダがドラッグ中か。ドラッグ中は ValueChanged を throttle 反映に切り替える。</summary>
+    private bool _slotSliderDragging;
+
+    /// <summary>ドラッグ中に確定した最新値。throttle タイマー Tick 時に Main へ軽量 push する。</summary>
+    private double _pendingSlotScale;
+
+    /// <summary>ドラッグ中の反映間隔タイマー (100ms)。</summary>
+    private System.Windows.Threading.DispatcherTimer? _slotSliderThrottleTimer;
+
+    private void SlotSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!_slotSliderDragging) return;
+        if (DataContext is not ThreadPaneGroupViewModel group || group.Main is not { } main) return;
+
+        // ドラッグ中: mousemove ごとには伝播させず 100ms 間隔で最新値のみ軽量 push。
+        _pendingSlotScale = Math.Clamp(Math.Round(e.NewValue, 2), 0.6, 4.5);
+        if (_slotSliderThrottleTimer is null)
+        {
+            _slotSliderThrottleTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(100),
+            };
+            _slotSliderThrottleTimer.Tick += (s, ev) =>
+            {
+                _slotSliderThrottleTimer?.Stop();
+                if (_slotSliderDragging && DataContext is ThreadPaneGroupViewModel g2 && g2.Main is { } m2)
+                {
+                    m2.PushThreadSlotScaleLive(_pendingSlotScale);
+                }
+            };
+        }
+        if (!_slotSliderThrottleTimer.IsEnabled) _slotSliderThrottleTimer.Start();
+    }
+
+    /// <summary>スライダ押下。ネイティブ Track/Thumb のドラッグに任せずスライダ自身で
+    /// CaptureMouse し、以降の移動 / 離しを自前で処理する。</summary>
+    private void SlotSlider_PreviewDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Slider s) return;
+        _slotSliderDragging = true;
+        s.CaptureMouse();
+        UpdateSlotScaleFromPoint(s, e);
+        e.Handled = true; // ネイティブ Track/Thumb のドラッグ開始を抑止 (自前管理に統一)
+    }
+
+    private void SlotSlider_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_slotSliderDragging || sender is not Slider s || !s.IsMouseCaptured) return;
+        UpdateSlotScaleFromPoint(s, e);
+    }
+
+    private void SlotSlider_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_slotSliderDragging && sender is Slider s)
+        {
+            FinalizeSlotScale(s);
+            if (s.IsMouseCaptured) s.ReleaseMouseCapture();
+        }
+    }
+
+    private void SlotSlider_LostCapture(object sender, MouseEventArgs e)
+    {
+        // capture を外部要因で奪われた場合も確定扱いで graceful に終える。
+        if (_slotSliderDragging && sender is Slider s)
+        {
+            FinalizeSlotScale(s);
+        }
+    }
+
+    /// <summary>マウス位置からスライダ値を算出して Value に設定する
+    /// (= ValueChanged 経由で throttle push が走る。VM へは放すまで反映しない)。</summary>
+    private void UpdateSlotScaleFromPoint(Slider s, MouseEventArgs e)
+    {
+        var p     = e.GetPosition(s);
+        var ratio = s.ActualWidth <= 0 ? 0 : Math.Clamp(p.X / s.ActualWidth, 0.0, 1.0);
+        var v     = Math.Round(s.Minimum + (s.Maximum - s.Minimum) * ratio, 2);
+        s.SetValue(Slider.ValueProperty, Math.Clamp(v, s.Minimum, s.Maximum));
+    }
+
+    /// <summary>ドラッグ終了。確定値を Main へ反映 (JS push + 永続化 debounce は Main 側が担う)。</summary>
+    private void FinalizeSlotScale(Slider s)
+    {
+        _slotSliderDragging = false;
+        _slotSliderThrottleTimer?.Stop();
+        if (DataContext is ThreadPaneGroupViewModel group && group.Main is { } main)
+        {
+            main.ThreadSlotScaleUi = Math.Clamp(Math.Round(s.Value, 2), 0.6, 4.5);
+        }
+    }
+
     /// <summary>JS の <c>postOpenUrl</c> から届いた URL クリック通知を捌く。
     /// 5ch.io / bbspink.com のスレ URL なら本アプリの新タブで開き (= スレ間移動の同一アプリ完結)、
     /// それ以外 (画像 / 外部サイト等) は <see cref="Process.Start"/> でシステムブラウザに渡す。</summary>

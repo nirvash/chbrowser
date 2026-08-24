@@ -86,6 +86,63 @@
                       Visibility="Collapsed" />
             <MenuItem Header="リンクをコピー" Click="UrlCopy_Click" />
         </ContextMenu>
+
+        <!-- ツールバー用コンパクトスライダ: 細トラック + 青フィル + 白丸ノブ。
+             既定テーマの Slider は背景が灰色で見にくいため、ヘッダーバー向けに最小構成で再定義する。 -->
+        <Style x:Key="ToolbarMiniSlider" TargetType="Slider">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Background="Transparent" Height="18">
+                            <!-- 溝 (未選択側) -->
+                            <Border Height="4" CornerRadius="2"
+                                    Background="#BFBFBF"
+                                    VerticalAlignment="Center" />
+                            <Track x:Name="PART_Track" VerticalAlignment="Center">
+                                <Track.DecreaseRepeatButton>
+                                    <!-- 選択済み側: 青フィル -->
+                                    <RepeatButton Command="{x:Static Slider.DecreaseLarge}"
+                                                  Focusable="False" IsTabStop="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Grid Background="Transparent" Height="18">
+                                                    <Border Height="4" CornerRadius="2"
+                                                            Background="#1565C0"
+                                                            VerticalAlignment="Center" />
+                                                </Grid>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="{x:Static Slider.IncreaseLarge}"
+                                                  Focusable="False" IsTabStop="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Grid Background="Transparent" Height="18" />
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Width="14" Height="14" Cursor="Hand">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse Fill="#FFFFFF"
+                                                         Stroke="#5A5A5A"
+                                                         StrokeThickness="1" />
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Border BorderBrush="{StaticResource PaneBorderBrush}" BorderThickness="1" Background="White">
@@ -105,6 +162,28 @@
                 BorderThickness="0,0,0,1">
             <DockPanel Margin="4,2">
                 <TextBlock DockPanel.Dock="Left" Text="スレッド表示" Padding="2,2,8,2" VerticalAlignment="Center" FontWeight="SemiBold" />
+
+                <!-- サムネイルサイズスライダ: メディアスロットの全体既定スケール (0.6–4.5)。
+                     ヘッダ左端 (= タイトル直後 / 検索ボックスより左) に固定配置。
+                     ドラッグ中は 100ms 間隔で最新値のみ軽量 push、放した時点で確定値を
+                     VM へ反映 + 永続化する (詳細は code-behind SlotSlider_* 参照)。 -->
+                <StackPanel DockPanel.Dock="Left"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="0,0,10,0">
+                    <TextBlock Text="🖼" FontSize="11" VerticalAlignment="Center" Margin="0,1,4,0" />
+                    <Slider Width="80"
+                            Style="{StaticResource ToolbarMiniSlider}"
+                            Minimum="0.6" Maximum="4.5"
+                            Value="{Binding Main.ThreadSlotScaleUi, Mode=OneWay}"
+                            ValueChanged="SlotSlider_ValueChanged"
+                            PreviewMouseLeftButtonDown="SlotSlider_PreviewDown"
+                            MouseMove="SlotSlider_MouseMove"
+                            MouseLeftButtonUp="SlotSlider_MouseUp"
+                            LostMouseCapture="SlotSlider_LostCapture"
+                            VerticalAlignment="Center" />
+                </StackPanel>
+
                 <!-- ボタン群は右端に固定。SearchBoxToggle を DockPanel の last child (= 残り幅を fill)
                      にすることで、ペイン幅が狭くても × ボタンが画面内に確実に残る。 -->
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"

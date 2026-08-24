@@ -5,7 +5,7 @@
 //   window.setViewMode(mode)                 — 'flat' | 'tree' | 'dedupTree'
 // 受信メッセージ:
 //   { type: 'setConfig', popularThreshold?, imageSizeThresholdMb?, idHighlightThreshold?,
-//     metaPopupClickOnly?, videoLoop?, debug? }       — Phase 11 設定の即時反映
+//     metaPopupClickOnly?, videoLoop?, slotScale?, debug? }        — Phase 11 設定の即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
@@ -3358,14 +3358,28 @@
     //       そこから mousedown でドラッグ → ドラッグ距離に応じて CSS 変数 --slot-scale を
     //       「そのスロット要素自身」に inline style として書き込む。CSS 変数はカスケードするため、
     //       :root の既定値 1 を当該スロットだけが上書きする (= 他スロットには波及しない)。
-    //       スコープは WebView2 セッション内のみ (= タブを閉じて開き直すと既定値 1.0 に戻る)。
+    //       スコープは WebView2 セッション内のみ (= タブを閉じて開き直すと全体既定に戻る)。
+    //       全体既定自体はスレ上部ツールバーのスライダ / setConfig.slotScale で変更でき
+    //       AppConfig.ThreadSlotScale として永続化される。
     //
     // 性能メモ: 触るのは 1 スロットの inline style のみ。リフロー範囲もそのスロットの
     //          ブロックに限定されるので、レス数が多くてもコストは一定。
     // ============================================================
-    const SLOT_SCALE_MIN = 0.3;
-    const SLOT_SCALE_MAX = 3.0;
+    const SLOT_SCALE_MIN = 0.6;
+    const SLOT_SCALE_MAX = 4.5;
     const RESIZE_HANDLE_PX = 14;
+
+    /** 全体既定スケール (:root の --slot-scale) を設定する。
+     *  スレ上部ツールバーのスライダ / setConfig.slotScale から呼ばれる (永続値、全スロット既定)。
+     *  個別ドラッグリサイズで inline style を持つスロットはそちらが優先される (= カスケード順)。
+     *  関数宣言は IIFE 内で巻き上げされるため setConfig ハンドラからも呼べる。 */
+    function applyGlobalSlotScale(v) {
+        const n = Number(v);
+        if (!isFinite(n) || n <= 0) return;
+        const clamped = Math.max(SLOT_SCALE_MIN, Math.min(SLOT_SCALE_MAX, n));
+        document.documentElement.style.setProperty('--slot-scale', clamped.toFixed(3));
+    }
+
     function getSlotScale(slot) {
         // inline style 未設定なら :root の既定値 (= 1) を拾う。
         const v = parseFloat(getComputedStyle(slot).getPropertyValue('--slot-scale'));
@@ -4679,6 +4693,7 @@
                         closeFrom(0);
                     }
                     if (typeof msg.videoLoop === 'boolean') VIDEO_LOOP_PLAYBACK = msg.videoLoop;
+                    if (typeof msg.slotScale === 'number') applyGlobalSlotScale(msg.slotScale);
                     if (typeof msg.debug === 'boolean') DEBUG_DIAG = msg.debug;
                     // 既存スレ表示のスクロールバーは閾値が変わると赤マーカーの集合も変わるので再計算
                     if (typeof updateRichScrollbar === 'function') updateRichScrollbar();

@@ -165,6 +165,12 @@ public sealed record AppConfig
     /// 即時反映 (setConfig メッセージ → thread.js)。</summary>
     public bool MetaPopupClickOnly { get; init; } = true;
 
+    /// <summary>スレ内メディアスロット (画像 / 動画サムネイル) の全体既定スケール。
+    /// 240px ベースの倍率 (0.6–4.5)。スレ上部ツールバーのスライダで随時変更でき、
+    /// 個別ドラッグリサイズ (スロット inline style) をしていないスロットすべてに効く。
+    /// 即時反映 (setConfig メッセージ → thread.js)。</summary>
+    public double ThreadSlotScale { get; init; } = 1.0;
+
     /// <summary>動画再生開始時のループの初期値 (スレ内 / ビューアウィンドウ共通)。
     /// false (既定): 1 回再生で停止する。true: 末尾に達したら先頭に戻って繰り返す。
     /// 個々の動画は再生中のループトグルボタンで都度切替可能。
