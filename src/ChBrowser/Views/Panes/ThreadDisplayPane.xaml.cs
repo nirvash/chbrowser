@@ -122,6 +122,7 @@ public partial class ThreadDisplayPane : UserControl
             case "toggleOwnPost":      HandleToggleOwnPost(sender, payload); break;
             case "postNoContextMenu":  HandlePostNoContextMenu(sender, payload); break;
             case "urlContextMenu":     HandleUrlContextMenu(sender, payload); break;
+            case "refreshThread":      HandleRefreshThread(sender); break;
             case "threadPreviewRequest": HandleThreadPreviewRequest(sender, payload); break;
             case "videoThumbnailCache": HandleVideoThumbnailCache(sender, payload); break;
             case "videoThumbnailCacheFailed":
@@ -831,6 +832,15 @@ public partial class ThreadDisplayPane : UserControl
         var owner = ItemsControl.ItemsControlFromItemContainer(mi) as ContextMenu
                   ?? mi.Parent as ContextMenu;
         return (owner?.Tag as UrlMenuContext, owner);
+    }
+
+    /// <summary>JS から「スレ末尾のリロードボタン (= 旧 最後尾ラベル) がクリックされた」通知を受け、
+    /// 該当タブの RefreshCommand (ツールバーの 🔄 と同じ差分取得) を実行する。</summary>
+    private void HandleRefreshThread(object sender)
+    {
+        if (sender is not WebView2 wv) return;
+        if (wv.DataContext is not ThreadTabViewModel tab) return;
+        if (tab.RefreshCommand is { } cmd && cmd.CanExecute(null)) cmd.Execute(null);
     }
 
     /// <summary>JS から「URL リンクが右クリックされた」通知を受け、UrlContextMenu を開く。

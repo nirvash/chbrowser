@@ -693,8 +693,8 @@ body.slot-resizing * {
 }
 .new-posts-mark-band::before { content: '— 以降新レス —'; }
 
-/* ---- 「最後尾」ラベル ---- */
-/* スレッド末尾 (= 最終レスの後) に常時表示される水平帯。 */
+/* ---- スレ末尾のリロードボタン (旧「最後尾」ラベル) ---- */
+/* スレッド末尾 (= 最終レスの後) に常時表示される水平帯。クリックで差分取得 (ツールバー 🔄 と同じ)。 */
 .thread-end-mark-band {
     margin: 4px 0 6px 0;
     padding: 14px 0;                 /* 上下 padding を 1px→8px へ。font/border と合わせ全体高が約 2 倍 */
@@ -704,8 +704,12 @@ body.slot-resizing * {
     text-align: center;
     background: #a4abdb;            /* solid (= 透過なし) の青黒。Indigo 系をさらに沈めた色 */
     user-select: none;
+    cursor: pointer;                /* クリック可能 (= リロードボタン) を示す */
 }
-.thread-end-mark-band::before { content: '— 最後尾 —'; }
+.thread-end-mark-band:hover {
+    background: #8b93cf;            /* hover でわずかに明るくして押せることを示す */
+}
+.thread-end-mark-band::before { content: '🔄 差分を再読み込み'; }
 
 /* ---- フィルタによる非表示 ---- */
 /* スレッド表示ヘッダの絞り込みテキストボックス (= ThreadTabViewModel.SearchQuery) などのフィルタで

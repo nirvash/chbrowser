@@ -11,6 +11,7 @@
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
 //   { type: 'openUrl', url }                — 外部 URL クリック
 //   { type: 'scrollPosition', postNumber }  — viewport 上端のレス番号 (debounced)
+//   { type: 'refreshThread' }               — スレ末尾のリロードボタンクリック (差分取得)
 //   { type: 'paneActivated' }               — Phase 14: pane 内任意の mousedown (アドレスバー切替用)
 //   { type: 'shortcut', descriptor }        — Phase 16: ショートカット/マウス操作のディスパッチ要求
 //   { type: 'gesture',  descriptor }        — Phase 16: マウスジェスチャー認識結果のディスパッチ要求
@@ -3066,6 +3067,14 @@
         const band = document.createElement('div');
         band.id        = 'thread-end-mark-band';
         band.className = 'thread-end-mark-band';
+        // クリック = 差分取得 (ツールバーの 🔄 と同じ)。C# 側 HandleRefreshThread で RefreshCommand を実行。
+        band.title     = '差分を再読み込み';
+        band.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ type: 'refreshThread' });
+            }
+        });
         root.appendChild(band);
     }
 
