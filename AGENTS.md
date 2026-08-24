@@ -154,9 +154,10 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 ## 既知の制限・落とし穴
 
 - **プロセス停止は PID 指定のみ** (`Stop-Process -Id <pid>`)。自分が `Start-Process` で起動した
-  インスタンスの PID を記録しておき、それだけを止める。
-  `Get-Process -Name ChBrowser | Stop-Process` のような名前指定一括 kill は**禁止** —
-  ユーザが別途起動している Release 版 (Documents\Apps\ChBrowser 等) まで巻き込んで落とす
+  インスタンスの PID を毎回記録し、再ビルド時はその PID だけを止める。
+  `Get-Process -Name ChBrowser | Stop-Process` のような名前指定一括 kill は**禁止**。
+  さらに「列挙して特定 PID だけ除外」する方式も**禁止** — ユーザが自分のインスタンスを
+  再起動すると PID が変わり除外が無効化され、巻き込んで落とす (実害が発生済み)
 - `validate` 相当の機構は無し。JS 変更はビルドで埋め込まれるため、動作確認はビルド後の実行で行う
 - 埋め込み JS の構文エラーは**ペイン全体の描画死**として表面化する (IIFE 全体が死ぬため「スレが真っ白」等)。
   ビルド前に `node --check src/ChBrowser/Resources/<file>.js` で構文検証できる
