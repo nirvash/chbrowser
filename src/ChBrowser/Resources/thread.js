@@ -2424,6 +2424,42 @@
         } });
     }
 
+    /** 再生中動画スロットの viewport 監視。スレッドをスクロールして再生中スロットが
+     *  完全に画面外に出たら video を一時停止する (= 音声が画面外から流れ続けるのを防ぐ)。
+     *  停止は pause のみで再生位置は維持。viewport に戻っても自動再開はしない
+     *  (= ユーザがネイティブコントロールで再開する)。
+     *  監視はスロット単位で継続するので、再度再生してまた画面外に出ても都度停止する。
+     *  スロットが DOM から除去された場合は IntersectionObserver が対象を自動解除するため
+     *  明示的な unobserve は不要。fullscreen 中はスクロールが発生しないため影響しない。 */
+    const playingVideoObserver = new IntersectionObserver(function (entries) {
+        for (const ent of entries) {
+            if (ent.isIntersecting) continue;
+            const v = ent.target.querySelector('video');
+            if (v && !v.paused) v.pause();
+        }
+    });
+
+    /** 他の再生中動画スロット (= except 以外) の <video> をすべて一時停止する。
+     *  同時再生は 1 つに制限するための共通処理。fullscreen 再生ボタン経由でも
+     *  通常のインライン再生と同じく「開始したら他を止める」を保証する。 */
+    function pauseOtherPlayingVideos(exceptSlot) {
+        document.querySelectorAll('.image-slot.playing').forEach(function (other) {
+            if (other === exceptSlot) return;
+            const ov = other.querySelector('video');
+            if (ov && !ov.paused) ov.pause();
+        });
+    }
+
+    // ネイティブ <video controls> のフルスクリーンボタンで全画面化されたときも、
+    // 対象以外の再生中動画を停止する (= ▶ / ⛶ ボタン経由と同じ制御)。
+    // 一時停止中の動画をそのまま全画面化したケースでは fullscreen 中に初めて play されるので
+    // play イベント待ちでは間に合わない。fullscreenchange 側でも拾っておく。
+    document.addEventListener('fullscreenchange', function () {
+        const fs = document.fullscreenElement;
+        if (!fs || fs.tagName !== 'VIDEO') return;
+        pauseOtherPlayingVideos(fs.closest('.image-slot'));
+    });
+
     /** 直リンク動画スロットを実際の <video> 再生要素に置換する。
      *  YouTube はインライン埋め込みすると Error 153 が出るためここでは扱わず、
      *  クリックハンドラ側でデフォルトブラウザに飛ばす。
@@ -2480,9 +2516,17 @@
                 const er = video.error;
                 debugLog('[VideoPlay] ERROR src=' + playSrc + ' code=' + (er && er.code) + ' msg=' + (er && er.message));
             }, { once: true });
+            // 同時再生は 1 つに制限: この動画の再生開始 (= autoplay 初回 / ネイティブコントロールや
+            // ▶ ボタンからの再開を含む全ケース) で、他の再生中動画があれば一時停止する。
+            // playMedia 入口でなく play イベントで拾うのは、手動再開でも同じ制御を効かせるため。
+            video.addEventListener('play', function () {
+                pauseOtherPlayingVideos(slot);
+            });
             slot.appendChild(video);
             slot.classList.add('playing');
             attachVideoLoopToggle(slot, video);
+            // 画面外スクロール時の自動一時停止 (playingVideoObserver 参照)
+            playingVideoObserver.observe(slot);
 
             // 未キャッシュなら並列 DL を kick (完了時に C# が videoCacheState を broadcast)。
             // ユーザの明示クリックなので、先に mediaSlotRetry で全 Kind 失敗状態をリセット
