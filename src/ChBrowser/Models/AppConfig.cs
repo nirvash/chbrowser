@@ -165,6 +165,12 @@ public sealed record AppConfig
     /// 即時反映 (setConfig メッセージ → thread.js)。</summary>
     public bool MetaPopupClickOnly { get; init; } = true;
 
+    /// <summary>動画再生開始時のループの初期値 (スレ内 / ビューアウィンドウ共通)。
+    /// false (既定): 1 回再生で停止する。true: 末尾に達したら先頭に戻って繰り返す。
+    /// 個々の動画は再生中のループトグルボタンで都度切替可能。
+    /// 即時反映 (setConfig メッセージ → thread.js / viewer.js)。</summary>
+    public bool VideoLoop { get; init; } = false;
+
     // ---- 画像 ----
     /// <summary>画像キャッシュ上限 (MB)。即時反映 (ImageCacheService.MaxBytes)。</summary>
     public int CacheMaxMb { get; init; } = 1024;

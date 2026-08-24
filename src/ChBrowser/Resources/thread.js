@@ -4,7 +4,8 @@
 //                                              optional scrollTarget で初回スクロール位置を渡す。
 //   window.setViewMode(mode)                 — 'flat' | 'tree' | 'dedupTree'
 // 受信メッセージ:
-//   { type: 'setConfig', popularThreshold?, imageSizeThresholdMb? } — Phase 11 設定の即時反映
+//   { type: 'setConfig', popularThreshold?, imageSizeThresholdMb?, idHighlightThreshold?,
+//     metaPopupClickOnly?, videoLoop?, debug? }       — Phase 11 設定の即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
@@ -55,6 +56,8 @@
     // 設定 (Phase 11) で動的変更可能。setConfig メッセージで上書きされる。
     let POPULAR_THRESHOLD       = 3;
     let ID_HIGHLIGHT_THRESHOLD  = 5; // 同 ID が >= 5 件で「ID」文字列を赤化 (Phase 22)
+    // スレ内動画の再生を末尾でループさせるか。既定 OFF (= 1 回再生で停止)。setConfig.videoLoop で上書き。
+    let VIDEO_LOOP_PLAYBACK     = false;
 
     // ID / ワッチョイ (xxxx-yyyy) の出現一覧。renderCurrentViewMode / appendPosts 後に再計算する。
     //   id      → [postNumber, postNumber, ...]
@@ -2307,6 +2310,88 @@
         try { video.load(); } catch (_) {}
     }
 
+    /** ネイティブ <video controls> にはループ切替 UI が無いため、動画の右上に独自トグルを重ねる。
+     *  初期状態は設定値 (VIDEO_LOOP_PLAYBACK = setConfig.videoLoop)。クリックでこの要素だけ切替える。
+     *  呼び出しは slot.appendChild(video) の後 (= slot を位置基準にする)。
+     *
+     *  反応は click でなく pointerdown で取る (= fullscreen 中 (popover 状態) のイベント
+     *  ロスを避ける)。stopPropagation で slot / document の再生系ハンドラへ渡さない。
+     *
+     *  fullscreen 対策: ネイティブ全画面ボタンでは video 要素自身が top layer に入り、
+     *  兄弟ノードのボタンは描画されなくなる。popover=manual を付ければ showPopover() で
+     *  同じ top layer に載せられるが、属性を付けたままにすると未オープン時に UA 規定で
+     *  display:none になってしまう (= 通常表示で消える)。そこで属性は fullscreen 中だけ
+     *  動的に付け外しする。 */
+    // トグルごとの window capture / fullscreenchange リスナ解放手続き。
+    // スロット再構築等でボタンが切り離されても自動では外れないため、次回 attach 時点で
+    // 切断済みエントリを一掃してリスナ (と切り離された video への参照) の蓄積を防ぐ。
+    const videoLoopToggleTeardowns = [];
+    function attachVideoLoopToggle(slot, video) {
+        for (let i = videoLoopToggleTeardowns.length - 1; i >= 0; i--) {
+            if (!videoLoopToggleTeardowns[i].btn.isConnected) {
+                videoLoopToggleTeardowns[i].run();
+                videoLoopToggleTeardowns.splice(i, 1);
+            }
+        }
+
+        const btn = document.createElement('button');
+        btn.type        = 'button';
+        btn.className   = 'video-loop-toggle' + (VIDEO_LOOP_PLAYBACK ? ' active' : '');
+        btn.textContent = '↻';
+        btn.title       = 'ループ再生 ON/OFF';
+        btn.addEventListener('pointerdown', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!btn.isConnected || !video.isConnected) return;
+            video.loop = !video.loop;
+            btn.classList.toggle('active', video.loop);
+        });
+        slot.appendChild(btn);
+
+        // fullscreen 中は popover (top layer) 表示になるため、環境によってはヒットテストが
+        // 手前の video 側に落ちてネイティブの再生/停止に奪われることがある。
+        // そこで popover 開状態のときは window キャプチャ段階でボタン矩形内のイベントを
+        // 自前で拾ってしまい、video 側へ届かせない。
+        // 注意: pointerdown を cancel しても click は抑制されない (Pointer Events 仕様) ので、
+        // click 側も別途握りつぶさないとネイティブの pause/play トグルが発火する。
+        const inBtnRect = function (e) {
+            const r = btn.getBoundingClientRect();
+            return e.clientX >= r.left && e.clientX <= r.right &&
+                   e.clientY >= r.top  && e.clientY <= r.bottom;
+        };
+        const onCapturePointerDown = function (e) {
+            if (!btn.matches(':popover-open') || !inBtnRect(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (!btn.isConnected || !video.isConnected) return;
+            video.loop = !video.loop;
+            btn.classList.toggle('active', video.loop);
+        };
+        const onCaptureClick = function (e) {
+            if (!btn.matches(':popover-open') || !inBtnRect(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        window.addEventListener('pointerdown', onCapturePointerDown, true);
+        window.addEventListener('click',      onCaptureClick,      true);
+
+        const syncToFullscreen = function () {
+            if (document.fullscreenElement === video) {
+                btn.setAttribute('popover', 'manual');
+                try { btn.showPopover(); } catch (_) {}
+            } else {
+                try { if (btn.matches(':popover-open')) btn.hidePopover(); } catch (_) {}
+                btn.removeAttribute('popover');
+            }
+        };
+        document.addEventListener('fullscreenchange', syncToFullscreen);
+        videoLoopToggleTeardowns.push({ btn: btn, run: function () {
+            document.removeEventListener('fullscreenchange', syncToFullscreen);
+            window.removeEventListener('pointerdown', onCapturePointerDown, true);
+            window.removeEventListener('click',       onCaptureClick,      true);
+        } });
+    }
+
     /** 直リンク動画スロットを実際の <video> 再生要素に置換する。
      *  YouTube はインライン埋め込みすると Error 153 が出るためここでは扱わず、
      *  クリックハンドラ側でデフォルトブラウザに飛ばす。 */
@@ -2334,7 +2419,7 @@
             video.src = playSrc;
             video.controls = true;
             video.autoplay = true;
-            video.loop     = true;
+            video.loop     = VIDEO_LOOP_PLAYBACK;
             video.playsInline = true;
             // コーデック非対応動画 (= H.265/HEVC など) の検出。
             // loadedmetadata 後に videoWidth/Height が 0 のままなら、コンテナは読めたが
@@ -2349,6 +2434,10 @@
                     if (video.videoWidth === 0 || video.videoHeight === 0) {
                         debugLog('[VideoPlay] codec unsupported (size=0x0) src=' + playSrc);
                         showCodecErrorBadge(slot);
+                        // 再生不能 (= ループも無意味) なのでトグルは外す。
+                        // リスナは次回 attachVideoLoopToggle 時の掃除で解放される。
+                        const tgl = slot.querySelector('.video-loop-toggle');
+                        if (tgl) tgl.remove();
                     }
                 }, 1500);
             }, { once: true });
@@ -2358,6 +2447,7 @@
             }, { once: true });
             slot.appendChild(video);
             slot.classList.add('playing');
+            attachVideoLoopToggle(slot, video);
 
             // 未キャッシュなら並列 DL を kick (完了時に C# が videoCacheState を broadcast)。
             // ユーザの明示クリックなので、先に mediaSlotRetry で全 Kind 失敗状態をリセット
@@ -4483,6 +4573,7 @@
                         // モード切替時は開いているポップアップを一旦全閉じ (= 旧モードで開いた残りを片付ける)。
                         closeFrom(0);
                     }
+                    if (typeof msg.videoLoop === 'boolean') VIDEO_LOOP_PLAYBACK = msg.videoLoop;
                     if (typeof msg.debug === 'boolean') DEBUG_DIAG = msg.debug;
                     // 既存スレ表示のスクロールバーは閾値が変わると赤マーカーの集合も変わるので再計算
                     if (typeof updateRichScrollbar === 'function') updateRichScrollbar();

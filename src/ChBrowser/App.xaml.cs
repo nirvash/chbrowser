@@ -86,6 +86,19 @@ public partial class App : Application
     /// このまま再保存される (= 過去に保存した値を破壊しない)。</summary>
     private ChBrowser.Models.ViewerWindowGeometry? _savedViewerGeometry;
 
+    /// <summary>viewer.js 向け setConfig JSON を組み立て、<see cref="ImageViewerViewModel.ConfigJson"/>
+    /// 経由で全タブの WebView2 へ push する。VM 未生成 (= 一度もビューアを開いていない) なら何もしない
+    /// (= 生成時に呼ぶので初期値はそこで流れる)。</summary>
+    private void UpdateImageViewerJsConfig(bool videoLoop)
+    {
+        if (_imageViewerVm is null) return;
+        _imageViewerVm.ConfigJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type      = "setConfig",
+            videoLoop = videoLoop,
+        });
+    }
+
     /// <summary>MainWindow から呼ばれる。最初の呼び出しで Window と ViewModel を作る (lazy)。
     /// 同じ URL を 2 度送ったら既存タブをアクティブ化、別 URL なら新規タブを追加。</summary>
     public void ShowImageInViewer(string url)
@@ -93,6 +106,7 @@ public partial class App : Application
         if (_imageViewerVm is null)
         {
             _imageViewerVm     = new ImageViewerViewModel();
+            UpdateImageViewerJsConfig(_currentConfig.VideoLoop);
             // 保存処理用に ImageSaver (= ImageCacheService + HttpClient のラッパ) を注入。
             // _imageCache / _monazilla は OnStartup で確実にセットされている。
             var saver = new ImageSaver(_imageCache!, _monazilla!.Http);
@@ -821,6 +835,9 @@ public partial class App : Application
         // ビューアサムネサイズ
         if (_imageViewerVm is not null)
             _imageViewerVm.ThumbnailSize = Math.Clamp(config.ViewerThumbnailSize, 32, 256);
+
+        // ビューア (viewer.js) への setConfig broadcast
+        UpdateImageViewerJsConfig(config.VideoLoop);
 
         // 絵文字フォント利用 ON/OFF。変わったらシェルキャッシュを破棄して各ペインを再構築
         // (= スレ表示は開き直しで反映、3 ペインは即再描画)。

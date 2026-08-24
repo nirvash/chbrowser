@@ -14,6 +14,7 @@
 //
 // C# → JS:
 //   { type: 'setImage', url }
+//   { type: 'setConfig', videoLoop } — 動画ループ再生の即時反映
 //   { type: 'setShortcutBindings', bindings: {...} } — ブリッジ用 (shortcut-bridge.js が直接受信)
 //
 // JS → C#:
@@ -36,6 +37,9 @@
 
     var VIDEO_EXT_RE = /\.(mp4|webm|mov)(?:[?#]|$)/i;
     function isVideoUrl(url) { return VIDEO_EXT_RE.test(url || ''); }
+
+    // 動画を末尾でループさせるか。既定 OFF (= 1 回再生で停止)。setConfig.videoLoop で上書きされる。
+    var VIDEO_LOOP_PLAYBACK = false;
 
     /** 現在の media 要素の自然サイズ。img なら naturalWidth/Height、video なら videoWidth/Height。
      *  まだ load 中で 0 のことがあるので呼び出し側で 0 ガードする。 */
@@ -201,7 +205,7 @@
             next = document.createElement('video');
             next.controls = true;
             next.autoplay = true;
-            next.loop     = true;          // 5ch でよくある短尺ループ動画想定
+            next.loop     = VIDEO_LOOP_PLAYBACK;
             next.playsInline = true;
         } else {
             next = document.createElement('img');
@@ -210,6 +214,87 @@
         next.id = 'media';
         media.replaceWith(next);
         media = next;
+    }
+
+    /** ネイティブ <video controls> にはループ切替 UI が無いため、stage 右上に独自トグルを置く。
+     *  初期状態は設定値 (VIDEO_LOOP_PLAYBACK = setConfig.videoLoop)。クリックでこの動画要素だけ切替える。
+     *  動画以外が表示されているときは既存ボタンを外す。
+     *
+     *  反応は click でなく pointerdown で取る (= fullscreen 中 (popover 状態) のイベント
+     *  ロスを避ける)。stopPropagation 済みなので stage の pan も発動しない。
+     *
+     *  fullscreen 対策: ネイティブ全画面ボタンでは video 要素自身が top layer に入り、
+     *  stage 上のボタンは描画されなくなる。popover=manual を付ければ showPopover() で
+     *  同じ top layer に載せられるが、属性を付けたままにすると未オープン時に UA 規定で
+     *  display:none になる (= 通常表示で消える)。そこで属性は fullscreen 中だけ
+     *  動的に付け外しする。 */
+    // 現在のトグルの window capture / fullscreenchange リスナ解放手続き。
+    // メディア切替のたびにボタンを作り直すため、前のものを明示解放しないと
+    // リスナ (と切り離された video への参照) が溜まり続ける。
+    var LOOP_TOGGLE_TEARDOWN = null;
+    function updateVideoLoopToggle() {
+        if (LOOP_TOGGLE_TEARDOWN) { LOOP_TOGGLE_TEARDOWN(); LOOP_TOGGLE_TEARDOWN = null; }
+        var old = document.querySelector('.viewer-loop-toggle');
+        if (old) old.remove();
+        if (media.tagName !== 'VIDEO') return;
+        var btn = document.createElement('button');
+        btn.type        = 'button';
+        btn.className   = 'viewer-loop-toggle' + (VIDEO_LOOP_PLAYBACK ? ' active' : '');
+        btn.textContent = '↻';
+        btn.title       = 'ループ再生 ON/OFF';
+        btn.addEventListener('pointerdown', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!btn.isConnected || !media.isConnected) return;
+            media.loop = !media.loop;
+            btn.classList.toggle('active', media.loop);
+            flashStatus(media.loop ? 'ループ ON' : 'ループ OFF');
+        });
+        stage.appendChild(btn);
+
+        // fullscreen 中は popover (top layer) 表示になるため、環境によってはヒットテストが
+        // 手前の video 側に落ちてネイティブの再生/停止に奪われることがある。
+        // そこで popover 開状態のときは window キャプチャ段階でボタン矩形内のイベントを
+        // 自前で拾ってしまい、video 側へ届かせない。
+        // 注意: pointerdown を cancel しても click は抑制されない (Pointer Events 仕様) ので、
+        // click 側も別途握りつぶさないとネイティブの pause/play トグルが発火する。
+        var inBtnRect = function (e) {
+            var r = btn.getBoundingClientRect();
+            return e.clientX >= r.left && e.clientX <= r.right &&
+                   e.clientY >= r.top  && e.clientY <= r.bottom;
+        };
+        var onCapturePointerDown = function (e) {
+            if (!btn.matches(':popover-open') || !inBtnRect(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (!btn.isConnected || !media.isConnected) return;
+            media.loop = !media.loop;
+            btn.classList.toggle('active', media.loop);
+            flashStatus(media.loop ? 'ループ ON' : 'ループ OFF');
+        };
+        var onCaptureClick = function (e) {
+            if (!btn.matches(':popover-open') || !inBtnRect(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        window.addEventListener('pointerdown', onCapturePointerDown, true);
+        window.addEventListener('click',      onCaptureClick,      true);
+
+        var syncToFullscreen = function () {
+            if (document.fullscreenElement === media) {
+                btn.setAttribute('popover', 'manual');
+                try { btn.showPopover(); } catch (_) {}
+            } else {
+                try { if (btn.matches(':popover-open')) btn.hidePopover(); } catch (_) {}
+                btn.removeAttribute('popover');
+            }
+        };
+        document.addEventListener('fullscreenchange', syncToFullscreen);
+        LOOP_TOGGLE_TEARDOWN = function () {
+            document.removeEventListener('fullscreenchange', syncToFullscreen);
+            window.removeEventListener('pointerdown', onCapturePointerDown, true);
+            window.removeEventListener('click',       onCaptureClick,      true);
+        };
     }
 
     function setImage(url) {
@@ -221,6 +306,7 @@
         }
         var wantsVideo = isVideoUrl(url);
         ensureMediaElement(wantsVideo);
+        updateVideoLoopToggle();
         resetView();
         // ロード前に媒体を不可視化 (= ビューワー初回オープン時の「原寸 → 縮小」チラつき対策)。
         // fitToStage で transform が適用された後にまとめて visibility: visible に戻す。
@@ -393,6 +479,9 @@
             if (!msg || typeof msg !== 'object' || !msg.type) return;
             if (msg.type === 'setImage') {
                 setImage(msg.url || '');
+            } else if (msg.type === 'setConfig') {
+                // 設定の即時反映 (App → ImageViewerViewModel.ConfigJson → 添付プロパティ push)
+                if (typeof msg.videoLoop === 'boolean') VIDEO_LOOP_PLAYBACK = msg.videoLoop;
             } else if (msg.type === 'setZoom') {
                 // 右クリックメニュー「画像を原寸表示 / ウィンドウに合わせる」からの指示。
                 // メニュー経由はユーザ明示要求なので fit はキャップなし (= 小さい画像も stage いっぱいに広げる)。

@@ -105,6 +105,9 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 - ApplyConfig が生成するのはペイン種別ごとの文字列プロパティ
   (`ThreadConfigJson` / `FavoritesConfigJson` / `BoardListConfigJson` / `ThreadListConfigJson`)。
   「次回起動時反映」項目は ApplyConfig に入れず起動時経路でのみ読む
+- ビューアウィンドウ向けは別経路: App (`ApplyConfigImmediate`) が `ImageViewerViewModel.ConfigJson`
+  を組み立て、ImageViewerWindow.xaml の各タブ WebView2 に bind された
+  `WebView2Helper.ViewerConfigJson` 添付プロパティから viewer.js へ push される
 
 ## ショートカット / マウスジェスチャ
 
@@ -136,6 +139,8 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 ## 既知の制限・落とし穴
 
 - `validate` 相当の機構は無し。JS 変更はビルドで埋め込まれるため、動作確認はビルド後の実行で行う
+- 埋め込み JS の構文エラーは**ペイン全体の描画死**として表面化する (IIFE 全体が死ぬため「スレが真っ白」等)。
+  ビルド前に `node --check src/ChBrowser/Resources/<file>.js` で構文検証できる
 - WebView2 の OOM / クラッシュはノードエラーではなく接続断・タイムアウトとして表面化する
   (`get_logs` / ログウィンドウで確認)
 - API キー類 (LLM / Worker / NG-AI / どんぐり) は config.json に平文保存 (DPAPI 化は未着手)
