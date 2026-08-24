@@ -85,6 +85,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int    _viewerThumbnailSize   = 80;
     [ObservableProperty] private bool   _viewerDetailsPaneDefaultOpen = true;
 
+    // ---- 「保存」カテゴリ — メディアの保存先 (空なら保存時にフォルダ選択ダイアログ) ----
+    [ObservableProperty] private string _imageSaveDir = "";
+    [ObservableProperty] private string _videoSaveDir = "";
+
     // ---- Phase 11b: 3 ペインの 1 クリック設定 ----
     [ObservableProperty] private bool   _favoritesOpenOnSingleClick  = true;
     [ObservableProperty] private bool   _boardListOpenOnSingleClick  = true;
@@ -291,6 +295,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         Categories.Add(new("タブ",         "タブ幅 (スレ一覧タブ / スレッドタブ)"));
         Categories.Add(new("画像",         "キャッシュ上限、キャッシュフォルダを開く、キャッシュクリア"));
         Categories.Add(new("ビューア",     "タブのサムネイルサイズ"));
+        Categories.Add(new("保存",         "画像 / 動画の保存先フォルダ"));
         Categories.Add(new("デザイン編集", "各ペインの CSS をエディタで開いて編集する"));
         SelectedCategory = Categories[0];
 
@@ -337,6 +342,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         CacheMaxMb                   = initial.CacheMaxMb;
         ViewerThumbnailSize          = initial.ViewerThumbnailSize;
         ViewerDetailsPaneDefaultOpen = initial.ViewerDetailsPaneDefaultOpen;
+        ImageSaveDir                 = initial.ImageSaveDir ?? "";
+        VideoSaveDir                 = initial.VideoSaveDir ?? "";
         FavoritesOpenOnSingleClick   = initial.FavoritesOpenOnSingleClick;
         BatchConcurrency             = initial.BatchConcurrency;
         BoardListOpenOnSingleClick   = initial.BoardListOpenOnSingleClick;
@@ -546,6 +553,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         CacheMaxMb                  = CacheMaxMb,
         ViewerThumbnailSize         = ViewerThumbnailSize,
         ViewerDetailsPaneDefaultOpen = ViewerDetailsPaneDefaultOpen,
+        ImageSaveDir                 = ImageSaveDir ?? "",
+        VideoSaveDir                 = VideoSaveDir ?? "",
         FavoritesOpenOnSingleClick  = FavoritesOpenOnSingleClick,
         BatchConcurrency            = BatchConcurrency,
         BoardListOpenOnSingleClick  = BoardListOpenOnSingleClick,

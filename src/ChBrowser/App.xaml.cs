@@ -28,6 +28,10 @@ public partial class App : Application
     /// OnStartup 完了前は null。</summary>
     public ImageCacheService? ImageCacheServiceInstance => _imageCache;
 
+    /// <summary>現在適用中の設定。ペインから保存先フォルダ等を読むのに使う
+    /// (AppConfig は init-only record なので読み取り専用として安全)。</summary>
+    public ChBrowser.Models.AppConfig CurrentConfig => _currentConfig;
+
     private ChBrowser.Services.Media.VideoDownloadManager? _videoDownloadManager;
     /// <summary>動画本体のバックグラウンドダウンロード管理 (Phase 4)。
     /// スレッド側 / ビューワ側からの「DL 要求」を URL 単位でコアレスし、完了/失敗イベントを発火する。

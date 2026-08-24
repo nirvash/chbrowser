@@ -171,6 +171,15 @@ public sealed record AppConfig
     /// 即時反映 (setConfig メッセージ → thread.js / viewer.js)。</summary>
     public bool VideoLoop { get; init; } = false;
 
+    // ---- 保存 ----
+    /// <summary>画像の既定の保存先フォルダ (サムネイル右クリック「保存」)。
+    /// 空文字 (未設定) の場合は保存のたびにフォルダ選択ダイアログを出す
+    /// (= 選択結果を設定に記憶することはしない)。即時反映 (保存実行時に参照)。</summary>
+    public string ImageSaveDir { get; init; } = "";
+
+    /// <summary>動画の既定の保存先フォルダ。挙動は <see cref="ImageSaveDir"/> と同じ。</summary>
+    public string VideoSaveDir { get; init; } = "";
+
     // ---- 画像 ----
     /// <summary>画像キャッシュ上限 (MB)。即時反映 (ImageCacheService.MaxBytes)。</summary>
     public int CacheMaxMb { get; init; } = 1024;

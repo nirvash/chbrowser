@@ -1,0 +1,54 @@
+<UserControl x:Class="ChBrowser.Views.Settings.SavePanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}">
+    <StackPanel>
+
+        <TextBlock Text="画像の保存先" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <TextBlock TextWrapping="Wrap"
+                   Foreground="#666"
+                   Margin="0,0,0,4">
+            サムネイル右クリック「保存」で画像を保存するフォルダです。
+            未設定の場合は「名前を付けて保存」ダイアログが出ます (選択結果は記憶されません)。
+        </TextBlock>
+        <DockPanel Margin="0,0,0,16">
+            <!-- Dock は宣言順に内側へ積まれるので、先頭の「クリア」が一番右になる -->
+            <Button DockPanel.Dock="Right"
+                    Content="クリア"
+                    Padding="10,3"
+                    Margin="4,0,0,0"
+                    Click="ClearImageDir_Click" />
+            <Button DockPanel.Dock="Right"
+                    Content="参照..."
+                    Padding="10,3"
+                    Margin="8,0,0,0"
+                    Click="BrowseImageDir_Click" />
+            <TextBox Text="{Binding ImageSaveDir, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}" />
+        </DockPanel>
+
+        <TextBlock Text="動画の保存先" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <TextBlock TextWrapping="Wrap"
+                   Foreground="#666"
+                   Margin="0,0,0,4">
+            動画の保存先フォルダです。挙動は画像と同じです。
+            未ダウンロードの動画はキャッシュを経由せず直接このフォルダへダウンロードします。
+        </TextBlock>
+        <DockPanel>
+            <Button DockPanel.Dock="Right"
+                    Content="クリア"
+                    Padding="10,3"
+                    Margin="4,0,0,0"
+                    Click="ClearVideoDir_Click" />
+            <Button DockPanel.Dock="Right"
+                    Content="参照..."
+                    Padding="10,3"
+                    Margin="8,0,0,0"
+                    Click="BrowseVideoDir_Click" />
+            <TextBox Text="{Binding VideoSaveDir, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}" />
+        </DockPanel>
+
+    </StackPanel>
+</UserControl>

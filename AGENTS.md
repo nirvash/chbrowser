@@ -91,6 +91,10 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 
 - 画像は URL 単位で `cache/images/` にキャッシュ。スロットには `data-cache-state` が付き、
   cached / deferred (サイズしきい値 `ImageSizeThresholdMb` 以上はクリックまで取得しない) を区別
+- サムネイル右クリック「保存」(`ThreadDisplayPane.SaveMediaToConfiguredDirAsync`) は設定の
+  `ImageSaveDir` / `VideoSaveDir` へ無ダイアログ保存 (同名は `_1` 連番退避)。未設定時は
+  「名前を付けて保存」ダイアログ (= 従来動作、選択結果は記憶しない)。キャッシュ済みはコピー、
+  未 DL は SaveDirectAsync で直接 DL
 - 動画はクリック時に `VideoDownloadManager` が並列 DL を kick。ヒット時は仮想ホスト
   `https://chbrowser-cache.local/videos/...` 経由でローカル再生 (`PlaybackUrl`)
 - AI 生成画像メタデータは `Services/Image/AiImageMetadataService.cs` (NuGet 依存ゼロの手製パーサ):
@@ -106,8 +110,8 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 - 設定 1 件のタッチポイント: ① `Models/AppConfig.cs` ② `ViewModels/SettingsViewModel.cs`
   ([ObservableProperty] 宣言 / 初期値流し込み / 保存用匿名オブジェクトの 3 箇所)
   ③ `Views/Settings/` の該当 Panel.xaml (スレ系=`ThreadPanel.xaml`、画像系=`ImagePanel.xaml`、
-  AI 系=`AiPanel.xaml`/`AiNgPanel.xaml`) ④ 即時反映なら `ApplyConfig` の setConfig JSON へ追加
-  ⑤ 対象 JS の setConfig ハンドラ
+  AI 系=`AiPanel.xaml`/`AiNgPanel.xaml`、保存系=`SavePanel.xaml`) ④ 即時反映なら `ApplyConfig` の setConfig JSON へ追加
+  ⑤ 対象 JS の setConfig ハンドラ。カテゴリ追加は `Categories.Add` + `SettingsWindow.xaml` の DataTemplate/DataTrigger も必要
 - ApplyConfig が生成するのはペイン種別ごとの文字列プロパティ
   (`ThreadConfigJson` / `FavoritesConfigJson` / `BoardListConfigJson` / `ThreadListConfigJson`)。
   「次回起動時反映」項目は ApplyConfig に入れず起動時経路でのみ読む

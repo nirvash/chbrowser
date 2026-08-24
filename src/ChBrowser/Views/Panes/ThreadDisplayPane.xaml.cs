@@ -509,28 +509,111 @@ public partial class ThreadDisplayPane : UserControl
         mgr.Request(url);
     }
 
+    /// <summary>保存種別 (画像 / 動画) は URL 拡張子で判定する (= thread.js の isVideoUrl と同じ基準)。
+    /// スロットから渡される mediaType を経由しないのは、URL 本体のほうが確実だから。
+    /// クエリ / fragment 付き URL (.mp4?t=.. 等) も受理する。</summary>
+    private static bool IsVideoUrlForSave(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return false;
+        var clean = url.Split('?', '#')[0];
+        return clean.EndsWith(".mp4",  StringComparison.OrdinalIgnoreCase)
+            || clean.EndsWith(".webm", StringComparison.OrdinalIgnoreCase)
+            || clean.EndsWith(".mov",  StringComparison.OrdinalIgnoreCase)
+            || clean.EndsWith(".m4v",  StringComparison.OrdinalIgnoreCase)
+            || clean.EndsWith(".mkv",  StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>UrlContextMenu「保存」項目クリック (画像 / 動画共通)。
+    /// 設定で保存先フォルダが決まっていればそこへ無ダイアログで保存、
+    /// 未設定 / フォルダ設定が不正なら「名前を付けて保存」ダイアログへフォールバックする。
     /// キャッシュ済ならキャッシュファイルをコピー、未キャッシュならキャッシュを経由せず直接 DL 保存する。</summary>
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         if (UrlMenuOf(sender).Ctx is not { } ctx) return;
-        _ = SaveMediaWithDialogAsync(ctx.SrcUrl, ctx.MediaType);
+        _ = SaveMediaToConfiguredDirAsync(ctx.SrcUrl);
     }
 
-    private async Task SaveMediaWithDialogAsync(string url, string mediaType)
+    /// <summary>UrlContextMenu「名前を付けて保存」項目クリック。設定に関係なく必ず
+    /// SaveFileDialog を出す (= 保存先 / ファイル名を都度ユーザが指定する従来動作)。</summary>
+    private void SaveAs_Click(object sender, RoutedEventArgs e)
     {
-        var isVideo = mediaType == "video";
+        if (UrlMenuOf(sender).Ctx is not { } ctx) return;
+        _ = SaveMediaWithDialogAsync(ctx.SrcUrl);
+    }
+
+    private async Task SaveMediaToConfiguredDirAsync(string url)
+    {
+        var isVideo  = IsVideoUrlForSave(url);
+        var ownerWin = Window.GetWindow(this);
+        var suggestedName = ImageSaver.SuggestFileName(url, isVideo ? "video/mp4" : "image/jpeg");
+
+        // ---- 保存先フォルダの決定: 設定値を絶対パスに正規化し、無ければ作る ----
+        // 手入力された相対パスや存在しないパスでも、ここで絶対化 + 作成しておかないと
+        // File.Copy / DL 先がプロセス CWD 相対の見知らぬ場所に化ける。
+        string? directDir = null;
+        var configuredDir = "";
+        if (Application.Current is App app)
+        {
+            configuredDir = isVideo ? app.CurrentConfig.VideoSaveDir : app.CurrentConfig.ImageSaveDir;
+        }
+        if (!string.IsNullOrWhiteSpace(configuredDir))
+        {
+            try
+            {
+                var full = System.IO.Path.GetFullPath(configuredDir);
+                System.IO.Directory.CreateDirectory(full); // 無ければ作る (= 新規フォルダ名の手入力も許容)
+                directDir = full;
+            }
+            catch (Exception ex)
+            {
+                ChBrowser.Services.Logging.LogService.Instance.Write(
+                    $"[mediaSave] 保存先フォルダ設定が不正 ('{configuredDir}'): {ex.Message} → 名前を付けて保存にフォールバック");
+            }
+        }
+
+        string destPath;
+        if (directDir is not null)
+        {
+            // 同名ファイルがある場合は name_1.ext / name_2.ext ... と連番で退避する。
+            destPath = BuildUniqueFilePath(directDir, suggestedName);
+        }
+        else
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                FileName = suggestedName,
+                Filter   = isVideo
+                    ? "動画ファイル (*.mp4;*.webm;*.mov;*.m4v;*.mkv)|*.mp4;*.webm;*.mov;*.m4v;*.mkv|すべてのファイル (*.*)|*.*"
+                    : "画像ファイル (*.jpg;*.png;*.gif;*.webp)|*.jpg;*.png;*.gif;*.webp|すべてのファイル (*.*)|*.*",
+                Title    = isVideo ? "動画を保存" : "画像を保存",
+            };
+            if (dlg.ShowDialog(ownerWin) != true) return;
+            destPath = dlg.FileName;
+        }
+
+        await SaveMediaCoreAsync(url, destPath, isVideo, ownerWin);
+    }
+
+    private async Task SaveMediaWithDialogAsync(string url)
+    {
+        var isVideo  = IsVideoUrlForSave(url);
+        var ownerWin = Window.GetWindow(this);
         var dlg = new Microsoft.Win32.SaveFileDialog
         {
             FileName = ImageSaver.SuggestFileName(url, isVideo ? "video/mp4" : "image/jpeg"),
             Filter   = isVideo
                 ? "動画ファイル (*.mp4;*.webm;*.mov;*.m4v;*.mkv)|*.mp4;*.webm;*.mov;*.m4v;*.mkv|すべてのファイル (*.*)|*.*"
                 : "画像ファイル (*.jpg;*.png;*.gif;*.webp)|*.jpg;*.png;*.gif;*.webp|すべてのファイル (*.*)|*.*",
-            Title    = isVideo ? "動画を保存" : "画像を保存",
+            Title    = isVideo ? "名前を付けて動画を保存" : "名前を付けて画像を保存",
         };
-        var ownerWin = Window.GetWindow(this);
         if (dlg.ShowDialog(ownerWin) != true) return;
 
+        await SaveMediaCoreAsync(url, dlg.FileName, isVideo, ownerWin);
+    }
+
+    /// <summary>保存の共通本体: キャッシュ済みならコピー、未キャッシュ (= 未DL 含む) なら直接 DL。</summary>
+    private static async Task SaveMediaCoreAsync(string url, string destPath, bool isVideo, System.Windows.Window? ownerWin)
+    {
         try
         {
             if (Application.Current is not App app) return;
@@ -540,25 +623,41 @@ public partial class ThreadDisplayPane : UserControl
                                : ChBrowser.Services.Image.CacheKind.Image;
             if (app.ImageCacheServiceInstance is { } cache && cache.TryGet(url, out var hit, kind))
             {
-                System.IO.File.Copy(hit.FilePath, dlg.FileName, overwrite: true);
+                System.IO.File.Copy(hit.FilePath, destPath, overwrite: false);
                 ChBrowser.Services.Logging.LogService.Instance.Write(
-                    $"[mediaSave] キャッシュから保存: {dlg.FileName}");
+                    $"[mediaSave] キャッシュから保存: {destPath}");
                 return;
             }
 
             // 未キャッシュ → キャッシュを経由せず保存先へ直接ダウンロード
             // (SaveDirectAsync はブラウザ UA / 長タイムアウトの DL 用クライアント。画像にもそのまま使える)。
             if (app.VideoDownloadManagerInstance is not { } mgr) return;
-            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 直接ダウンロード開始: {url}");
-            await mgr.SaveDirectAsync(url, dlg.FileName);
-            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 保存完了: {dlg.FileName}");
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 直接ダウンロード開始: {url} → {destPath}");
+            await mgr.SaveDirectAsync(url, destPath);
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 保存完了: {destPath}");
         }
         catch (Exception ex)
         {
-            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 保存失敗: {ex.Message}");
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 保存失敗: {ex.Message} (dest={destPath})");
             MessageBox.Show(ownerWin ?? Application.Current.MainWindow!,
                 $"保存に失敗しました: {ex.Message}", "ChBrowser",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>dir + fileName の保存先パスを作る。同名が既にある場合は base_1.ext / base_2.ext ... と
+    /// 連番を付けて衝突しないパスを返す (既存ファイルは決して上書きしない)。</summary>
+    private static string BuildUniqueFilePath(string dir, string fileName)
+    {
+        var path   = System.IO.Path.Combine(dir, fileName);
+        if (!System.IO.File.Exists(path)) return path;
+
+        var baseName = System.IO.Path.GetFileNameWithoutExtension(fileName);
+        var ext      = System.IO.Path.GetExtension(fileName);
+        for (var n = 1; ; n++)
+        {
+            path = System.IO.Path.Combine(dir, $"{baseName}_{n}{ext}");
+            if (!System.IO.File.Exists(path)) return path;
         }
     }
 
@@ -757,6 +856,7 @@ public partial class ThreadDisplayPane : UserControl
             {
                 case "openInViewer": mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
                 case "save":         mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
+                case "saveAs":       mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
                 case "deleteCache":  mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
             }
         }

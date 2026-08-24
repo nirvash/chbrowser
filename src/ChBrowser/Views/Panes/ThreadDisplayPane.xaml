@@ -67,11 +67,16 @@
                       Tag="openInViewer"
                       Click="OpenInViewer_Click"
                       Visibility="Collapsed" />
-            <!-- 保存 (画像/動画共通): キャッシュ済ならキャッシュからコピー、
-                 未キャッシュならキャッシュを経由せず直接 DL 保存。 -->
+            <!-- 保存 (画像/動画共通): 設定の保存先へ無ダイアログ保存
+                 (未設定なら「名前を付けて保存」にフォールバック)。 -->
             <MenuItem Header="保存"
                       Tag="save"
                       Click="Save_Click"
+                      Visibility="Collapsed" />
+            <!-- 名前を付けて保存 (画像/動画共通): 設定に関係なく必ず SaveFileDialog を出す。 -->
+            <MenuItem Header="名前を付けて保存"
+                      Tag="saveAs"
+                      Click="SaveAs_Click"
                       Visibility="Collapsed" />
             <!-- キャッシュ削除 (画像/動画共通): 動画は VideoThumb + Video + DL 失敗状態、
                  画像は Image キャッシュ + 取得失敗状態をクリアする。 -->

@@ -63,6 +63,7 @@
         <DataTemplate x:Key="TabTemplate">           <settings:TabPanel /> </DataTemplate>
         <DataTemplate x:Key="ImageTemplate">      <settings:ImagePanel /> </DataTemplate>
         <DataTemplate x:Key="ViewerTemplate">     <settings:ViewerPanel /> </DataTemplate>
+        <DataTemplate x:Key="SaveTemplate">       <settings:SavePanel /> </DataTemplate>
         <DataTemplate x:Key="DesignTemplate">     <settings:DesignPanel /> </DataTemplate>
 
         <!-- 未実装カテゴリ用 placeholder -->
@@ -204,6 +205,9 @@
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding SelectedCategory.Name}" Value="ビューア">
                                         <Setter Property="ContentTemplate" Value="{StaticResource ViewerTemplate}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding SelectedCategory.Name}" Value="保存">
+                                        <Setter Property="ContentTemplate" Value="{StaticResource SaveTemplate}" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding SelectedCategory.Name}" Value="デザイン編集">
                                         <Setter Property="ContentTemplate" Value="{StaticResource DesignTemplate}" />
