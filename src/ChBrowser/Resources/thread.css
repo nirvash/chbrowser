@@ -133,6 +133,13 @@ a.anchor.missing {
     z-index: 5;
 }
 
+/* 再生中スロットでは右上のループトグル (.video-loop-toggle) とバッジ行が干渉するため、
+   行の最大幅をトグル分だけ縮める (= はみ出すモデル名は既存の ellipsis で省略される)。
+   再生前サムネイルはトグルが無いので従来幅のまま。 */
+.image-slot.playing .image-slot-badge-row {
+    max-width: calc(100% - 44px);
+}
+
 .image-slot-generator-badge {
     flex: 0 0 auto;
     background: #2C5F2C;
@@ -159,6 +166,34 @@ a.anchor.missing {
     overflow: hidden;
     text-overflow: ellipsis;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* プロンプト表示ボタン (バッジ行の先頭 = サムネイル左上コーナーに固定)。
+   ホバーによる AI メタポップアップの代替で、クリックするとサムネイルの空き領域に
+   プロンプトポップアップを出す。行は pointer-events:none だがボタン単体は
+   クリックを受けるため auto に戻す。
+   サイズは再生中スロット右上のループトグル (.video-loop-toggle) と同じ 24px 円形
+   (= 押しやすさ統一)。 */
+.ai-prompt-button {
+    pointer-events: auto;
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #FFFFFF;
+    /* タグバッジと同じ bold。通常ウェイトだと細線が AA で薄く見えるため */
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 24px;
+    text-align: center;
+    cursor: pointer;
+}
+
+.ai-prompt-button:hover {
+    background: rgba(21, 101, 192, 0.9);
 }
 
 /* HEAD 待ち / 結果待ちのスロット (空) は無地の灰色枠 */
@@ -349,8 +384,10 @@ body.slot-resizing * {
     border: none;
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.55);
-    color: #bbb;
+    color: #FFFFFF;
+    /* 細線グリフが AA で薄く見えるためバッジと同じ bold */
     font-size: 14px;
+    font-weight: bold;
     line-height: 24px;
     text-align: center;
     cursor: pointer;
@@ -461,6 +498,11 @@ body.slot-resizing * {
 
 .video-play-actions button:hover {
     background: rgba(21, 101, 192, 0.9);
+}
+
+/* ⛶ は細線グリフなので AA で薄く見える。P / ↻ ボタンと同じく bold で濃度を揃える */
+.video-play-actions button.video-play-fullscreen {
+    font-weight: bold;
 }
 
 .image-slot .image-placeholder-text {

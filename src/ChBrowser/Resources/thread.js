@@ -1993,6 +1993,7 @@
         const cached = aiMetaCache.get(url);
         if (cached && cached !== 'pending' && cached !== 'no-data') {
             applyGeneratorBadge(slot, cached);
+            ensureAiPromptButton(slot, cached);
         } else if (cached !== 'no-data' && cached !== 'pending') {
             img.addEventListener('load', function () {
                 setTimeout(function () { requestAiMetaForBadge(url); }, 500);
@@ -2000,13 +2001,24 @@
         }
     }
 
+    /** slot 左上のバッジ行 (.image-slot-badge-row) を無ければ作って返す (冪等)。
+     *  generator / model バッジとプロンプト表示ボタンの共通コンテナ。 */
+    function ensureBadgeRow(slot) {
+        let row = slot.querySelector(':scope > .image-slot-badge-row');
+        if (!row) {
+            row = document.createElement('span');
+            row.className = 'image-slot-badge-row';
+            slot.appendChild(row);
+        }
+        return row;
+    }
+
     /** generator バッジ (+ 取得できていればモデル名バッジ) を slot 左上に overlay。
      *  既に貼ってあるなら何もしない (idempotent)。生成元ラベルの右にモデル名を並べる。 */
     function applyGeneratorBadge(slot, meta) {
         if (!meta || !meta.generator) return;
-        if (slot.querySelector(':scope > .image-slot-badge-row')) return;
-        const row = document.createElement('span');
-        row.className = 'image-slot-badge-row';
+        const row = ensureBadgeRow(slot);
+        if (row.querySelector(':scope > .image-slot-generator-badge')) return;
 
         const gen = document.createElement('span');
         gen.className   = 'image-slot-generator-badge';
@@ -2021,12 +2033,28 @@
             model.title       = meta.model;
             row.appendChild(model);
         }
+    }
 
-        slot.appendChild(row);
+    /** プロンプト表示ボタンをバッジ行の先頭 (= サムネイル左上コーナー) に差し込む (冪等)。
+     *  ホバーで開いていた AI メタポップアップの代替。positive / negative のどちらかが
+     *  あるメタでのみ出す (= 無い画像は何も出さない)。行内バッジは pointer-events:none
+     *  だがボタンのみ CSS で auto に戻してクリックを受け付ける。
+     *  モデル名バッジの長さに位置を左右されないよう、常に先頭に置いて左上に固定する。 */
+    function ensureAiPromptButton(slot, meta) {
+        if (!meta || (!meta.positive && !meta.negative)) return;
+        const row = ensureBadgeRow(slot);
+        if (row.querySelector(':scope > .ai-prompt-button')) return;
+
+        const btn = document.createElement('button');
+        btn.type        = 'button';
+        btn.className   = 'ai-prompt-button';
+        btn.textContent = 'P';
+        btn.title       = 'プロンプトを表示';
+        row.insertBefore(btn, row.firstChild);
     }
 
     /** バッジ用に AI メタデータを要求 (まだ pending/取得済みでないなら)。
-     *  通常の hover popup と同じ aiMetadataRequest を投げ、レスポンスは onAiMetadataResponse 内で
+     *  プロンプト表示ボタンと同じ aiMetadataRequest を投げ、レスポンスは onAiMetadataResponse 内で
      *  該当 slot を全 querySelectorAll で見つけてバッジを当てる。 */
     function requestAiMetaForBadge(url) {
         if (!url) return;
@@ -2557,51 +2585,33 @@
     }
 
     // ============================================================
-    // AI 生成画像メタ (Stable Diffusion WebUI infotext) のホバーポップアップ
+    // AI 生成画像メタ (Stable Diffusion WebUI infotext) のプロンプト表示ボタン
     //
     // 動作概要:
-    //   - インライン画像 (.image-slot.loaded > img.inline-image) にマウスが乗る
-    //   - JS が { type:'aiMetadataRequest', url } を C# に送信
-    //   - C# がキャッシュ済み画像から PNG/JPEG/WebP のメタを抽出し
+    //   - メタにプロンプト (positive / negative) がある画像・動画スロットは、
+    //     バッジ行右端に「P」ボタンが出る (= ホバーでは開かない)
+    //   - ボタン クリックで { type:'aiMetadataRequest', url } を C# に送信
+     //   - C# がキャッシュ済み画像から PNG/JPEG/WebP のメタを抽出し
     //     { type:'aiMetadata', url, hasData, model, positive, negative } で返す
-    //   - hasData=true なら画像の近くにポップアップを表示。データ無しなら何もしない。
+    //   - hasData=true ならサムネイルの空き領域にポップアップを表示。再クリック /
+    //     外側クリック / スクロール / リサイズで閉じる。
     //
     // 結果は url -> ('pending'|'no-data'|{model,positive,negative}) で in-memory キャッシュ。
-    // 同じ画像に何度ホバーしても要求は 1 回。
+    // 同じ画像に何度押しても要求は 1 回。
     // ============================================================
     const aiMetaCache  = new Map();      // url → 'pending' | 'no-data' | {model, positive, negative}
     let   aiPopupEl    = null;
-    let   aiHoverUrl   = null;           // 現在ホバー中の画像 URL (= レスポンス到着時に当該URLなら表示)
-    let   aiHoverImg   = null;           // 現在ホバー中の <img> 要素 (= ポップアップ位置決め用)
-    let   aiPopupHideTimer = null;       // 「画像離脱 → ポップアップ離脱」を許容するための遅延 hide タイマー
-
-    /** N ミリ秒後に hide を予約 (= 画像から離れた瞬間に hide すると、ポップアップに乗り移る前に消えてしまう)。
-     *  既にタイマーが走っていれば張り直す。 */
-    function scheduleHideAiPopup(delayMs) {
-        if (aiPopupHideTimer) clearTimeout(aiPopupHideTimer);
-        aiPopupHideTimer = setTimeout(function () {
-            aiPopupHideTimer = null;
-            hideAiPopup();
-        }, delayMs);
-    }
-
-    /** 予約済の hide をキャンセル (= ポップアップに乗り移った / 別画像にホバーし直した)。 */
-    function cancelHideAiPopup() {
-        if (aiPopupHideTimer) {
-            clearTimeout(aiPopupHideTimer);
-            aiPopupHideTimer = null;
-        }
-    }
+    // 開いているポップアップのアンカー URL (= ボタン再クリックでのトグル判定用)。
+    let   aiOpenAnchorUrl = null;
+    // メタ未取得のままボタンを押されたスロット。レスポンス到着時にアンカーが生きていれば開く。
+    let   aiPendingClickUrl  = null;
+    let   aiPendingClickSlot = null;
 
     function ensureAiPopup() {
         if (aiPopupEl) return aiPopupEl;
         const el = document.createElement('div');
         el.className = 'ai-meta-popup';
         el.style.display = 'none';
-        // ポップアップ自身に乗り移ったら hide をキャンセル → 内部テキストを選択してコピペできる。
-        // ポップアップから離れたら 150ms 遅延で hide (画像へ戻る経路に対するヒステリシス)。
-        el.addEventListener('mouseenter', cancelHideAiPopup);
-        el.addEventListener('mouseleave', function () { scheduleHideAiPopup(150); });
         document.body.appendChild(el);
         aiPopupEl = el;
         return el;
@@ -2698,43 +2708,32 @@
 
     function hideAiPopup() {
         if (aiPopupEl) aiPopupEl.style.display = 'none';
-        aiHoverUrl = null;
-        aiHoverImg = null;
+        aiOpenAnchorUrl = null;
     }
 
-    /** mouseover (delegation) で .inline-image / 動画スロット (.image-slot.video) に到達したら呼ばれる。
-     *  img にはインライン画像 <img> または動画スロット要素そのものが渡る (= aiHoverAnchorFrom 参照)。
-     *  キャッシュ命中なら即座にポップアップ表示、未取得なら C# に問い合わせる
-     *  (動画は未 DL でも C# が HTTP Range でコンテナメタを取得して返す)。 */
-    function onImageHoverEnter(img) {
-        // ポップアップから画像に戻ってきた経路で残存 hide タイマーを必ず止める。
-        // 初回ホバーや別画像へ移った場合でも cancel するだけなら無害なので無条件で呼ぶ。
-        cancelHideAiPopup();
-
-        const slot = (img.closest && img.closest('.image-slot.loaded'))
-                  || (img.closest && img.closest('.image-slot.video'));
+    /** プロンプト表示ボタン (.ai-prompt-button) のクリック処理。開閉トグル。
+     *  メタがまだ取得済みでない (= ボタンが出た直後でレスポンス未到着など) なら
+     *  C# に要求して、レスポンス到着時にアンカーが生きていればその場で開く。 */
+    function toggleAiPromptPopup(btn) {
+        const slot = btn.closest && btn.closest('.image-slot');
         if (!slot) return;
-        // dataset.src は (resolvedUrl で上書き済の) 実体画像 URL。これがローカルキャッシュのキー。
         const url = slot.dataset.src;
         if (!url) return;
 
-        aiHoverUrl = url;
-        aiHoverImg = img;
+        if (aiOpenAnchorUrl === url && aiPopupEl && aiPopupEl.style.display !== 'none') {
+            hideAiPopup();
+            return;
+        }
 
         const cached = aiMetaCache.get(url);
-        if (cached === 'no-data' || cached === 'pending') return;
-        if (cached) { showAiPopup(img, cached); return; }
-
-        aiMetaCache.set(url, 'pending');
-        if (window.chrome && window.chrome.webview) {
-            window.chrome.webview.postMessage({ type: 'aiMetadataRequest', url: url });
+        if (!cached || cached === 'pending' || cached === 'no-data') {
+            aiPendingClickUrl  = url;
+            aiPendingClickSlot = slot;
+            requestAiMetaForBadge(url);
+            return;
         }
-    }
-
-    /** mouseout (delegation) で .inline-image を離れたら 200ms 後に hide を予約。
-     *  ポップアップに乗り移ればその間に cancel される (= 表示継続)。 */
-    function onImageHoverLeave(img) {
-        if (aiHoverImg === img) scheduleHideAiPopup(200);
+        showAiPopup(slot, cached);
+        aiOpenAnchorUrl = url;
     }
 
     /** C# からの aiMetadata レスポンスを処理。 */
@@ -2748,7 +2747,6 @@
             } else {
                 aiMetaCache.delete(msg.url);
                 // 表示中のサムネがある間は 1.5s 後に 1 度だけ自動リトライ (= バッジを諦めず取りに行く)。
-                // hover popup は元から「次のホバーで再試行」設計なので、ここではバッジ専用の retry を入れる。
                 setTimeout(function () { requestAiMetaForBadge(msg.url); }, 1500);
             }
             return;
@@ -2761,40 +2759,24 @@
         };
         aiMetaCache.set(msg.url, meta);
 
-        // まだ同じ画像にホバー中なら即時表示 (= 既に別の画像へ移っていれば何もしない、
-        // そちらは別途自分のリクエストを発行している)。
-        if (aiHoverUrl === msg.url && aiHoverImg) showAiPopup(aiHoverImg, meta);
-
-        // 該当 URL の slot 全件に generator バッジを overlay (同 URL が複数貼られる流用に対応)。
-        // 画像 (.loaded) に加え、動画スロット (ComfyUI 生成動画のサムネ) にも同じバッジを貼る。
-        if (meta.generator) {
-            document.querySelectorAll('.image-slot.loaded, .image-slot.video').forEach(function (slot) {
-                if (slot.dataset.src === msg.url) applyGeneratorBadge(slot, meta);
-            });
+        // メタ未取得のまま押されていたプロンプトボタンがあれば、その場で開く。
+        if (aiPendingClickUrl === msg.url && aiPendingClickSlot && aiPendingClickSlot.isConnected) {
+            showAiPopup(aiPendingClickSlot, meta);
+            aiOpenAnchorUrl = msg.url;
         }
+        aiPendingClickUrl  = null;
+        aiPendingClickSlot = null;
+
+        // 該当 URL の slot 全件に generator バッジ + プロンプト表示ボタンを overlay
+        // (同 URL が複数貼られる流用に対応)。画像 (.loaded) に加え、動画スロット (ComfyUI
+        // 生成動画のサムネ) も対象。
+        document.querySelectorAll('.image-slot.loaded, .image-slot.video').forEach(function (slot) {
+            if (slot.dataset.src !== msg.url) return;
+            if (meta.generator) applyGeneratorBadge(slot, meta);
+            ensureAiPromptButton(slot, meta);
+        });
     }
 
-    /** AI メタポップアップのアンカー要素を mouseover/mouseout の target から解決する。
-     *  - インライン画像: <img class="inline-image"> 自身。
-     *  - 動画スロット: サムネ <img class="video-thumb"> は pointer-events:none のため
-     *    イベントは受けられない (= target は常にスロット側)。そこでスロット要素そのものを
-     *    アンカーにする (サムネはスロット全面を占めるので popup 位置は同じ。サムネ到着前後で
-     *    アンカーが変わらないので enter/leave の対応も安定する)。
-     *    再生中 (= <video> プレーヤー化した後) もスロットが target 側の祖先に居るので同様に対象
-     *    (ポップアップはスロットの外側 [下 or 上] に出るため再生コントロールは隠さない)。 */
-    function aiHoverAnchorFrom(t) {
-        if (!t || !t.closest) return null;
-        if (t.tagName === 'IMG' && t.classList.contains('inline-image')) return t;
-        return t.closest('.image-slot.video');
-    }
-    document.addEventListener('mouseover', function (e) {
-        const anchor = aiHoverAnchorFrom(e.target);
-        if (anchor) onImageHoverEnter(anchor);
-    });
-    document.addEventListener('mouseout', function (e) {
-        const anchor = aiHoverAnchorFrom(e.target);
-        if (anchor) onImageHoverLeave(anchor);
-    });
     // スクロール / ウィンドウサイズ変更でもポップアップは消す (位置がずれるため)。
     window.addEventListener('scroll', hideAiPopup, { passive: true });
     window.addEventListener('resize', hideAiPopup);
@@ -3486,6 +3468,22 @@
     }, true);
 
     document.addEventListener('click', function (e) {
+        // AI メタポップアップが開いているときの「外側クリック」で閉じる。
+        // ポップアップ自身 / ボタン自身は対象外 (ボタンはトグル分岐で処理)。他ハンドラは妨げない。
+        if (aiPopupEl && aiPopupEl.style.display !== 'none' &&
+            !(e.target.closest && (e.target.closest('.ai-meta-popup') || e.target.closest('.ai-prompt-button')))) {
+            hideAiPopup();
+        }
+
+        // プロンプト表示ボタン (= バッジ行右端の P)。ホバー廃止に伴いクリックで開閉する。
+        const promptBtn = e.target.closest && e.target.closest('.ai-prompt-button');
+        if (promptBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleAiPromptPopup(promptBtn);
+            return;
+        }
+
         // .post-no 左クリック → C# にコンテキストメニュー表示要求。anchor/URL ロジックより先に拾って早期 return。
         // 右クリックは別 listener (contextmenu) で同じ要求を出している (= どちらでもメニューが出る)。
         const postNo = e.target.closest && e.target.closest('.post-no');

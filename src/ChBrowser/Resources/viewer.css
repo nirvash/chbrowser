@@ -83,8 +83,10 @@ video#media {
     border: none;
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.55);
-    color: #bbb;
+    color: #FFFFFF;
+    /* 細線グリフが AA で薄く見えるためバッジと同じ bold */
     font-size: 15px;
+    font-weight: bold;
     line-height: 28px;
     text-align: center;
     cursor: pointer;

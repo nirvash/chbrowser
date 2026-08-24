@@ -95,7 +95,8 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   `https://chbrowser-cache.local/videos/...` 経由でローカル再生 (`PlaybackUrl`)
 - AI 生成画像メタデータは `Services/Image/AiImageMetadataService.cs` (NuGet 依存ゼロの手製パーサ):
   PNG tEXt/XMP/LSB ステルス、JPEG EXIF、WebP XMP、MP4/WebM コンテナ (未キャッシュ動画は HTTP Range で
-  メタ部のみ取得)。ComfyUI workflow グラフ解析込み。結果はホバーポップアップ / ビューア詳細ペインに表示
+  メタ部のみ取得)。ComfyUI workflow グラフ解析込み。結果はサムネイル左上バッジ行の
+  「P」ボタン (プロンプトがあるときのみ表示) クリックでポップアップ表示 / ビューア詳細ペインに表示
 
 ## 設定システムの流れ
 
