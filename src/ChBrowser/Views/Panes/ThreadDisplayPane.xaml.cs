@@ -123,6 +123,12 @@ public partial class ThreadDisplayPane : UserControl
             case "postNoContextMenu":  HandlePostNoContextMenu(sender, payload); break;
             case "urlContextMenu":     HandleUrlContextMenu(sender, payload); break;
             case "refreshThread":      HandleRefreshThread(sender); break;
+            case "jsDebug":
+            {
+                var text = payload.TryGetProperty("text", out var tp) ? tp.GetString() : "";
+                ChBrowser.Services.Logging.LogService.Instance.Write(text ?? "");
+                break;
+            }
             case "threadPreviewRequest": HandleThreadPreviewRequest(sender, payload); break;
             case "videoThumbnailCache": HandleVideoThumbnailCache(sender, payload); break;
             case "videoThumbnailCacheFailed":
@@ -1111,13 +1117,13 @@ public partial class ThreadDisplayPane : UserControl
     // ---- スレ上部ツールバー: サムネイルサイズスライダ ----
     // ネイティブ Thumb のドラッグは PaneDragInitiator (ヘッダーのペインドラッグ) と競合するため、
     // 押下時にスライダ自身で CaptureMouse して移動量を自前計算する。
-    // ドラッグ中は 100ms 間隔で最新値を PushThreadSlotScaleLive (= 軽量 push, VM 非接触) し、
-    // 放した時点で確定値を VM へ反映 → debounce 後に永続化される。
+    // ドラッグ中は値をアプリへ反映せずノブのプレビューのみに留め、放した時点 (LostCapture 含む)
+    // で ApplyThreadSlotScale により一括適用 + 永続化する (= ドラッグ中の表示ジャンプ根絶)。
 
-    /// <summary>スライダがドラッグ中か。ドラッグ中は ValueChanged を throttle 反映に切り替える。</summary>
+    /// <summary>スライダがドラッグ中か。ドラッグ中は 100ms 間隔の軽量反映に切り替える。</summary>
     private bool _slotSliderDragging;
 
-    /// <summary>ドラッグ中に確定した最新値。throttle タイマー Tick 時に Main へ軽量 push する。</summary>
+    /// <summary>ドラッグ中に確定した最新値。throttle タイマー Tick 時に軽量 push する。</summary>
     private double _pendingSlotScale;
 
     /// <summary>ドラッグ中の反映間隔タイマー (100ms)。</summary>
@@ -1125,11 +1131,20 @@ public partial class ThreadDisplayPane : UserControl
 
     private void SlotSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (!_slotSliderDragging) return;
-        if (DataContext is not ThreadPaneGroupViewModel group || group.Main is not { } main) return;
+        var v = Math.Clamp(Math.Round(e.NewValue, 2), 0.6, 4.5);
 
-        // ドラッグ中: mousemove ごとには伝播させず 100ms 間隔で最新値のみ軽量 push。
-        _pendingSlotScale = Math.Clamp(Math.Round(e.NewValue, 2), 0.6, 4.5);
+        if (!_slotSliderDragging)
+        {
+            // キーボード等キャプチャなし経路: 即時一括適用。
+            if (DataContext is ThreadPaneGroupViewModel g && g.Main is { } m0) m0.ApplyThreadSlotScale(v);
+            return;
+        }
+
+        // ドラッグ中: mousemove ごとには伝播させず 100ms 間隔で最新値のみ軽量 push
+        // (= PushThreadSlotScaleLive。VM 非接触なので書き戻し衝突は起きない)。
+        // 各ステップは JS 側のスクロール保持 (適用前の可視投稿のどれかを必ず画面内に残す)
+        // を通るため、小刻み適用では表示位置の飛びは出ない。
+        _pendingSlotScale = v;
         if (_slotSliderThrottleTimer is null)
         {
             _slotSliderThrottleTimer = new System.Windows.Threading.DispatcherTimer
@@ -1184,7 +1199,7 @@ public partial class ThreadDisplayPane : UserControl
     }
 
     /// <summary>マウス位置からスライダ値を算出して Value に設定する
-    /// (= ValueChanged 経由で throttle push が走る。VM へは放すまで反映しない)。</summary>
+    /// (= ノブ / トラックの見た目更新のみ。VM へは放すまで反映しない)。</summary>
     private void UpdateSlotScaleFromPoint(Slider s, MouseEventArgs e)
     {
         var p     = e.GetPosition(s);
@@ -1193,14 +1208,13 @@ public partial class ThreadDisplayPane : UserControl
         s.SetValue(Slider.ValueProperty, Math.Clamp(v, s.Minimum, s.Maximum));
     }
 
-    /// <summary>ドラッグ終了。確定値を Main へ反映 (JS push + 永続化 debounce は Main 側が担う)。</summary>
+    /// <summary>ドラッグ終了。確定値を一括適用 (JS push + VM 反映 + 永続化 debounce)。</summary>
     private void FinalizeSlotScale(Slider s)
     {
         _slotSliderDragging = false;
-        _slotSliderThrottleTimer?.Stop();
         if (DataContext is ThreadPaneGroupViewModel group && group.Main is { } main)
         {
-            main.ThreadSlotScaleUi = Math.Clamp(Math.Round(s.Value, 2), 0.6, 4.5);
+            main.ApplyThreadSlotScale(s.Value);
         }
     }
 

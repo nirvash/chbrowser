@@ -1,11 +1,11 @@
-// ChBrowser thread view renderer.
+﻿// ChBrowser thread view renderer.
 // Public API exposed on window (C# → JS):
 //   window.appendPosts(batch, scrollTarget?) — レスを末尾に追加。スレ表示の唯一の描画チャネル。
 //                                              optional scrollTarget で初回スクロール位置を渡す。
 //   window.setViewMode(mode)                 — 'flat' | 'tree' | 'dedupTree'
 // 受信メッセージ:
 //   { type: 'setConfig', popularThreshold?, imageSizeThresholdMb?, idHighlightThreshold?,
-//     metaPopupClickOnly?, videoLoop?, slotScale?, debug? }        — Phase 11 設定の即時反映
+//     metaPopupClickOnly?, videoLoop?, slotScale?, debug? }              — Phase 11 設定の即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
@@ -3381,12 +3381,50 @@
     /** 全体既定スケール (:root の --slot-scale) を設定する。
      *  スレ上部ツールバーのスライダ / setConfig.slotScale から呼ばれる (永続値、全スロット既定)。
      *  個別ドラッグリサイズで inline style を持つスロットはそちらが優先される (= カスケード順)。
-     *  関数宣言は IIFE 内で巻き上げされるため setConfig ハンドラからも呼べる。 */
+     *
+     *  スクロールアンカー: サイズ変更は全スロットの高さを変えるため、そのままでは表示中の
+     *  投稿がスクロールアウトする。そこで「画面中央の線を含む / 直後にある投稿」をアンカーに
+     *  選び、適用前後でその投稿上端の移動量だけ scrollY を補正する (= 同期計測)。 */
     function applyGlobalSlotScale(v) {
         const n = Number(v);
         if (!isFinite(n) || n <= 0) return;
         const clamped = Math.max(SLOT_SCALE_MIN, Math.min(SLOT_SCALE_MAX, n));
+
+        const sy      = window.scrollY;
+        const vh      = window.innerHeight;
+        const probe   = sy + vh * 0.5; // 画面中央を基準線にする
+        const postsRoot = document.getElementById('posts');
+
+        let anchor    = null;
+        let beforeTop = null;
+        if (postsRoot) {
+            for (const p of postsRoot.querySelectorAll('.post')) {
+                const r = p.getBoundingClientRect();
+                if (r.height === 0) continue; // filter-hidden 等はスキップ
+                if (r.top + sy + r.height >= probe) { anchor = p; break; }
+            }
+            // 全投稿が probe より上 (= スレ最下部表示中) なら最終レスをアンカーにする
+            if (anchor === null) {
+                const all = postsRoot.querySelectorAll('.post');
+                for (let i = all.length - 1; i >= 0; i--) {
+                    if (all[i].getBoundingClientRect().height > 0) { anchor = all[i]; break; }
+                }
+            }
+            if (anchor !== null) {
+                const r = anchor.getBoundingClientRect();
+                beforeTop = r.top + window.scrollY;
+            }
+        }
+
         document.documentElement.style.setProperty('--slot-scale', clamped.toFixed(3));
+        if (anchor === null || beforeTop === null) return;
+
+        // 適用直後の強制リフローで再計測し、アンカー上端の移動量だけ即スクロール補正 (同期)。
+        // ※ Chromium のネイティブスクロールアンカーは overflow-anchor:none で無効化済み
+        //   (= 有効だと二重補正になり表示位置が飛ぶ)。
+        const afterTop = anchor.getBoundingClientRect().top + window.scrollY;
+        const delta = afterTop - beforeTop;
+        if (Math.abs(delta) >= 1) window.scrollTo(window.scrollX, window.scrollY + delta);
     }
 
     function getSlotScale(slot) {

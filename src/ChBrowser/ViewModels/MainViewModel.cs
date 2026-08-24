@@ -775,7 +775,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     }
 
     /// <summary>スレ表示 (thread.js) 向け setConfig JSON を組み立てる。
-    /// ApplyConfig (設定反映) とスロットスライダのライブ更新の両方から使う。</summary>
+    /// ApplyConfig (設定反映) とスロットスライダの単発反映の両方から使う。</summary>
     private static string BuildThreadConfigJson(AppConfig config)
         => System.Text.Json.JsonSerializer.Serialize(new
         {
@@ -802,9 +802,8 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
 
     // ---- スレ上部ツールバーのサムネイルサイズスライダ ----
     /// <summary>スレ内メディアスロットの全体既定スケール (240px ベースの倍率 0.6–4.5)。
-    /// スライダの TwoWay 相当の保持先。ドラッグ中はペイン code-behind が
-    /// <see cref="PushThreadSlotScaleLive"/> で軽量 push し、放した時点でここへ確定値が入って
-    /// debounce 後に永続化される。</summary>
+    /// スライダ位置の保持先。ドラッグ中は値を反映せずノブのプレビューのみで、
+    /// 放した時点で <see cref="ApplyThreadSlotScale"/> により一括適用 + 永続化される。</summary>
     [ObservableProperty]
     private double _threadSlotScaleUi = 1.0;
 
@@ -830,13 +829,25 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         UpdateAndPersistConfig(c => c with { ThreadSlotScale = Math.Clamp(ThreadSlotScaleUi, 0.6, 4.5) });
     }
 
+    /// <summary>スライダ確定値 (放す / キーボード) を適用する。JS 側 applyGlobalSlotScale が
+    /// 「適用前に見えていた投稿のうち少なくとも 1 つが画面内に残る」スクロール位置へ補正する
+    /// (= サイズ変更に伴う移動は最小化されるが、ゼロにはならない)。</summary>
+    public void ApplyThreadSlotScale(double targetValue)
+    {
+        var clamped = Math.Clamp(Math.Round(targetValue, 2), 0.6, 4.5);
+        ThreadConfigJson = BuildThreadConfigJson(
+            CurrentConfig with { ThreadSlotScale = clamped });
+        SyncThreadSlotScaleUi(CurrentConfig with { ThreadSlotScale = clamped });
+    }
+
     /// <summary>スライダのドラッグ中に呼ぶ軽量反映。VM プロパティ (<see cref="ThreadSlotScaleUi"/>)
     /// を触らず setConfig JSON の再構築 + push のみ行う (= OneWay バインディングによる
-    /// slider.Value への書き戻しを起こさない)。永続化はドラッグ完了後の通常経路で行う。</summary>
+    /// slider.Value への書き戻しを起こさない)。永続化は放した後の <see cref="ApplyThreadSlotScale"/> 経路で行う。</summary>
     public void PushThreadSlotScaleLive(double value)
     {
         var clamped = Math.Clamp(Math.Round(value, 2), 0.6, 4.5);
-        ThreadConfigJson = BuildThreadConfigJson(CurrentConfig with { ThreadSlotScale = clamped });
+        ThreadConfigJson = BuildThreadConfigJson(
+            CurrentConfig with { ThreadSlotScale = clamped });
     }
 
     // -----------------------------------------------------------------

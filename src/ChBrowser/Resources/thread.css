@@ -26,6 +26,13 @@ body.preview-mode {
 }
 body.preview-mode #richScrollbar,
 body.preview-mode #scrollThumb,
+/* ネイティブのスクロールアンカーを無効化。
+   スライダのスケール変更時は JS 側が独自にアンカー補正しているため、
+   Chromium の自動補正が同時に働くと 2 重補正で表示位置が飛ぶ。 */
+html, body {
+    overflow-anchor: none;
+}
+
 body.preview-mode .thread-end-mark-band,
 body.preview-mode .new-posts-mark-band {
     display: none;
