@@ -2057,6 +2057,35 @@
         }
     }
 
+    /** 再生前 (= サムネイル / プレースホルダ表示中) 動画スロットのアクションボタン列を
+     *  無ければ差し込む (冪等)。
+     *   ▶ = スロット内再生 (サムネイル本体クリックと同じ / 従来動作)
+     *   ⛶ = スロット内再生した上で video をフルスクリーン化
+     *  テンプレートには含めずここで注入するのは、ボタンの出現タイミングを「サムネイルが
+     *  載る状態 (= videoCacheState 到着後)」に揃えるため。retrySlot 等で innerHTML を
+     *  作り直されたスロットにも C# 再応答経由で再度呼ばれるので自ずと復活する。 */
+    function ensureVideoPlayActions(slot) {
+        if (slot.querySelector(':scope > .video-play-actions')) return;
+        const row = document.createElement('span');
+        row.className = 'video-play-actions';
+
+        const inlineBtn = document.createElement('button');
+        inlineBtn.type        = 'button';
+        inlineBtn.className   = 'video-play-inline';
+        inlineBtn.textContent = '▶';
+        inlineBtn.title       = 'スロット内で再生';
+
+        const fullBtn = document.createElement('button');
+        fullBtn.type        = 'button';
+        fullBtn.className   = 'video-play-fullscreen';
+        fullBtn.textContent = '⛶';
+        fullBtn.title       = 'フルスクリーンで再生';
+
+        row.appendChild(inlineBtn);
+        row.appendChild(fullBtn);
+        slot.appendChild(row);
+    }
+
     /** C# からの <c>videoCacheState</c> 受信時、URL が一致する全動画スロットに状態を反映する (Phase 5)。
      *
      *   hasThumb     → スロット内に <img class="video-thumb" src=thumbUrl> を埋める (or 既存差し替え)
@@ -2086,6 +2115,9 @@
             }
             // 再生中スロット (playing class) は触らない (= サムネ表示や未DLバッジ更新は不要)
             if (slot.classList.contains('playing')) return;
+
+            // 再生前状態なのでアクションボタン列を保証 (冪等)
+            ensureVideoPlayActions(slot);
 
             // 1) サムネ画像更新
             if (state.hasThumb && state.thumbUrl) {
@@ -2394,7 +2426,9 @@
 
     /** 直リンク動画スロットを実際の <video> 再生要素に置換する。
      *  YouTube はインライン埋め込みすると Error 153 が出るためここでは扱わず、
-     *  クリックハンドラ側でデフォルトブラウザに飛ばす。 */
+     *  クリックハンドラ側でデフォルトブラウザに飛ばす。
+     *  戻り値: 生成した <video> 要素 (対象外 / 開始失敗時は undefined。フルスクリーン再生ボタンが
+     *  requestFullscreen() を続行するかどうかの判定に使う)。 */
     function playMedia(slot) {
         if (slot.classList.contains('playing')) return;
         const mediaType = slot.dataset.mediaType;
@@ -2411,8 +2445,9 @@
             const playSrc     = cached ? cacheUrl : originalUrl;
             if (!playSrc) return;
 
-            // 既存 thumb / icon / badge / placeholder は除去 (= スロット内を空にして <video> だけにする)
-            slot.querySelectorAll('img.video-thumb, .media-play-icon, .video-dl-badge, .image-placeholder-text')
+            // 既存 thumb / icon / badge / placeholder / アクションボタンは除去
+            // (= スロット内を空にして <video> だけにする)
+            slot.querySelectorAll('img.video-thumb, .media-play-icon, .video-dl-badge, .image-placeholder-text, .video-play-actions')
                 .forEach(function (el) { el.remove(); });
 
             const video = document.createElement('video');
@@ -2464,7 +2499,9 @@
                     video.play().catch(function () { /* それでも失敗時は諦め */ });
                 }, { once: true });
             });
+            return video;
         }
+        return undefined;
     }
 
     /** 同じ URL を持つ全 deferred スロットに HEAD 結果を一括適用。 */
@@ -3413,6 +3450,32 @@
             e.stopPropagation();
             const n = parseInt(postNo.dataset.number, 10);
             if (!isNaN(n)) postPostNoContextMenu(n);
+            return;
+        }
+
+        // 動画スロット再生前のアクションボタン (= サムネイル状態で出る ▶ / ⛶)。
+        // スロット本体クリック分岐より先に処理する。stopPropagation でスロット側の
+        // 「即再生」二重発火を防ぐ。
+        const actionBtn = e.target.closest && e.target.closest('.video-play-actions button');
+        if (actionBtn) {
+            const actSlot = actionBtn.closest('.image-slot');
+            if (actSlot && actSlot.dataset.mediaType === 'video' &&
+                !actSlot.classList.contains('playing')) {
+                e.preventDefault();
+                e.stopPropagation();
+                hideAiPopup();
+                if (actionBtn.classList.contains('video-play-fullscreen')) {
+                    // スロット内再生と同一経路 (= playMedia) で <video> を生成してから全画面化。
+                    // クリックハンドラ内 = ユーザジェスチャ中なので requestFullscreen が成立する。
+                    // 失敗した場合はスロット内再生のまま続行 (= フォールバック)。
+                    const v = playMedia(actSlot);
+                    if (v && v.requestFullscreen) {
+                        v.requestFullscreen().catch(function () { /* 全画面化失敗時はそのまま */ });
+                    }
+                } else {
+                    playMedia(actSlot);
+                }
+            }
             return;
         }
 

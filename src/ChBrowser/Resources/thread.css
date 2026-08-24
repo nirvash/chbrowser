@@ -434,6 +434,35 @@ body.slot-resizing * {
     border-bottom: 12px solid transparent;
 }
 
+/* 再生前動画スロットのアクションボタン列 (右下): スロット内再生 / フルスクリーン再生。
+   左下は .video-size-label、右上は .video-dl-badge の領域なので右下に置く。
+   ボタン自体は pointer-events を持つが、スロット本体クリック (= 即再生) との二重発火は
+   JS 側の委譲ハンドラで stopPropagation して防いでいる。 */
+.video-play-actions {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    display: flex;
+    gap: 8px;
+    z-index: 2;
+}
+
+.video-play-actions button {
+    min-width: 44px;
+    padding: 8px 14px;
+    border: none;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.video-play-actions button:hover {
+    background: rgba(21, 101, 192, 0.9);
+}
+
 .image-slot .image-placeholder-text {
     position: absolute;
     left: 0;
