@@ -103,9 +103,11 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   「P」ボタン (プロンプトがあるときのみ表示) クリックでポップアップ表示 / ビューア詳細ペインに表示
 
 - スレ上部ツールバーの 🖼 スライダ (`ThreadDisplayPane.xaml` / `MainViewModel.ThreadSlotScaleUi`) は
-  メディアスロットの全体既定スケールを調整する。150ms debounce 後に `UpdateAndPersistConfig`
-  (`AppConfig.ThreadSlotScale` 永続化) + `ApplyConfig` (setConfig.slotScale → thread.js が
-  `:root` の `--slot-scale` を更新) で全ペインへ反映。個別ドラッグリサイズ (inline style) が優先される
+  メディアスロットの全体既定スケールを調整する。ドラッグ中は 100ms 間隔で軽量 push
+  (`PushThreadSlotScaleLive`、VM 非接触)、放した時点で `UpdateAndPersistConfig`
+  (`AppConfig.ThreadSlotScale` 永続化)。JS 側 `applyGlobalSlotScale` はスケール変更の前後で
+  「ビューポート上端付近の投稿」をアンカーに scrollY を補正する (= 視線位置を固定)。
+  個別ドラッグリサイズ (inline style) が優先される
 
 ## 設定システムの流れ
 
@@ -153,6 +155,13 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 
 ## 既知の制限・落とし穴
 
+- **不具合対応の基本**: 修正の前に**ログを取って現象を再現・確認し、原因を特定する**。
+  推測だけで修正を重ねると別問題を生み長時間溶ける (実害例: スライダ表示ジャンプは
+  「JS 内未定義変数の例外」「PaneDragInitiator によるキャプチャ横取り」「Chromium ネイティブ
+  スクロールアンカーとの二重補正」の 3 因子の重なりだった)。JS 側は
+  `postMessage({ type:'jsDebug', text })` → C# の LogService 出力という計装が有効
+- **ビルド成否は必ず `$LASTEXITCODE` / エラー出力で明示確認する**。失敗に気づかず古い exe を
+  起動すると「修正したのに直らない」という別の不具合に見える (実害が発生済み)
 - **プロセス停止は PID 指定のみ** (`Stop-Process -Id <pid>`)。自分が `Start-Process` で起動した
   インスタンスの PID を毎回記録し、再ビルド時はその PID だけを止める。
   `Get-Process -Name ChBrowser | Stop-Process` のような名前指定一括 kill は**禁止**。
