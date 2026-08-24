@@ -102,6 +102,11 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   メタ部のみ取得)。ComfyUI workflow グラフ解析込み。結果はサムネイル左上バッジ行の
   「P」ボタン (プロンプトがあるときのみ表示) クリックでポップアップ表示 / ビューア詳細ペインに表示
 
+- スレ上部ツールバーの 🖼 スライダ (`ThreadDisplayPane.xaml` / `MainViewModel.ThreadSlotScaleUi`) は
+  メディアスロットの全体既定スケールを調整する。150ms debounce 後に `UpdateAndPersistConfig`
+  (`AppConfig.ThreadSlotScale` 永続化) + `ApplyConfig` (setConfig.slotScale → thread.js が
+  `:root` の `--slot-scale` を更新) で全ペインへ反映。個別ドラッグリサイズ (inline style) が優先される
+
 ## 設定システムの流れ
 
 `AppConfig` (init-only record) → `SettingsViewModel` (UI ミラー) → `MainViewModel.ApplyConfig` →
@@ -148,6 +153,10 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 
 ## 既知の制限・落とし穴
 
+- **プロセス停止は PID 指定のみ** (`Stop-Process -Id <pid>`)。自分が `Start-Process` で起動した
+  インスタンスの PID を記録しておき、それだけを止める。
+  `Get-Process -Name ChBrowser | Stop-Process` のような名前指定一括 kill は**禁止** —
+  ユーザが別途起動している Release 版 (Documents\Apps\ChBrowser 等) まで巻き込んで落とす
 - `validate` 相当の機構は無し。JS 変更はビルドで埋め込まれるため、動作確認はビルド後の実行で行う
 - 埋め込み JS の構文エラーは**ペイン全体の描画死**として表面化する (IIFE 全体が死ぬため「スレが真っ白」等)。
   ビルド前に `node --check src/ChBrowser/Resources/<file>.js` で構文検証できる
