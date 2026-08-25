@@ -161,6 +161,13 @@ public partial class ThreadDisplayPane : UserControl
                     && app.VideoDownloadManagerInstance is { } failMgr)
                 {
                     failMgr.MarkThumbFailed(failUrl);
+                    // CORS proxy が 404/410 を検出済み (= MarkGone 済み) の場合は最新状態を再 push し、
+                    // スロットをクリックなしで 404 アートへ置き換える。404 以外の抽出失敗
+                    // (= CORS taint 等) では downloadFailed=false のままなので影響はない。
+                    if (app.ImageCacheServiceInstance is { } failCache)
+                    {
+                        PushVideoCacheStateTo(sender, failCache, failUrl);
+                    }
                 }
                 break;
             }

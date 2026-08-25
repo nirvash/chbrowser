@@ -213,7 +213,12 @@ public partial class App : Application
 
         // Phase 4: 動画本体の並列 DL マネージャ。
         // 内部で動画 DL 専用のブラウザ UA HttpClient を生成する (= 外部 CDN が UA で挙動を変える対策)。
-        _videoDownloadManager = new ChBrowser.Services.Media.VideoDownloadManager(_imageCache, _mediaAcquisitionTracker);
+        // failureStorePath は確定失敗 (HTTP 404/410) URL の永続ストア (= スレ再オープン時に
+        // 削除済み動画を 未DL でなく取得失敗として即表示するため)。cache/ 配下なので
+        // キャッシュ消去で記録も消え、次回表示時に自然に再プローブされる。
+        _videoDownloadManager = new ChBrowser.Services.Media.VideoDownloadManager(
+            _imageCache, _mediaAcquisitionTracker,
+            System.IO.Path.Combine(paths.CacheVideosDir, "failed_urls.json"));
 
         // ウィンドウ/ペインサイズの永続化
         var layoutStorage = new LayoutStorage(paths);

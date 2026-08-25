@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using ChBrowser.Services.Image;
@@ -41,6 +43,16 @@ public sealed class VideoDownloadManager
     /// 同じ URL の Request() は同じ Task を共有するためコアレスが成立する。</summary>
     private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _inFlight = new(StringComparer.Ordinal);
 
+    // ---- 確定的 DL 失敗 (HTTP 404 / 410) の永続ストア ----
+    // セッションをまたいで「削除済み動画」を記憶する (= スレ再オープン時に 未DL ではなく
+    // 取得失敗として即表示するため)。タイムアウト / 5xx 等の一時失敗は従来どおり in-memory
+    // tracker のみに留め、再起動後の自動再試行余地を残す。ユーザの明示再試行 (クリック →
+    // mediaSlotRetry → Request) や DL 成功時にストアから除去する (= 自己修復)。
+    private readonly string? _failureStorePath;
+    private readonly object _failureStoreLock = new();
+    private HashSet<string> _persistedFailures = new(StringComparer.Ordinal);
+    private bool _failureStoreLoaded;
+
     /// <summary>ダウンロードが正常完了したとき発火 (URL のみペイロード)。
     /// 引数は <see cref="ImageCacheService"/> にコミット済の状態で渡される (= 直後の Contains/TryGet で即取得可)。
     /// 既にキャッシュ済の URL に対する Request() でも同じイベントが (Task.Run 経由で) 発火する。</summary>
@@ -50,10 +62,11 @@ public sealed class VideoDownloadManager
     /// HTTP エラー / ストリームエラー / SaveAsync 失敗のすべてで発火する。</summary>
     public event EventHandler<VideoDownloadEventArgs>? DownloadFailed;
 
-    public VideoDownloadManager(ImageCacheService cache, MediaAcquisitionTracker tracker)
+    public VideoDownloadManager(ImageCacheService cache, MediaAcquisitionTracker tracker, string? failureStorePath = null)
     {
-        _cache   = cache;
-        _tracker = tracker;
+        _cache            = cache;
+        _tracker          = tracker;
+        _failureStorePath = failureStorePath;
         // 動画は数 MB 〜数十 MB あり得るので 5 分タイムアウト (= MonazillaClient の 30 秒では切れる)。
         // AutomaticDecompression は動画 (.mp4) 用途では不要だが、サーバが万一 Transfer-Encoding で
         // 圧縮を入れてくる場合に備えて有効化。
@@ -104,9 +117,10 @@ public sealed class VideoDownloadManager
         _ = Task.Run(async () =>
         {
             bool ok = false;
+            bool gone = false;
             try
             {
-                ok = await DownloadAsync(url).ConfigureAwait(false);
+                (ok, gone) = await DownloadAsync(url).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -118,11 +132,14 @@ public sealed class VideoDownloadManager
                 tcs.TrySetResult(ok);
                 if (ok)
                 {
+                    // 再試行が成功したら確定失敗記録を解消 (= 削除済み動画の復活に追従)。
+                    ClearPersistedFailure(url);
                     DownloadCompleted?.Invoke(this, new VideoDownloadEventArgs(url));
                 }
                 else
                 {
                     _tracker.MarkFailed(url, MediaAcquisitionKind.VideoDownload);
+                    if (gone) MarkPersistedFailure(url);
                     DownloadFailed?.Invoke(this, new VideoDownloadEventArgs(url));
                 }
             }
@@ -155,13 +172,35 @@ public sealed class VideoDownloadManager
         }
     }
 
-    /// <summary>指定 URL が過去 (= このセッション中) に DL 失敗済か (404 / 5xx / ネットワークエラー等)。
-    /// UI バッジ「取得失敗」表示の判定に使う。アプリ再起動でクリアされる。</summary>
-    public bool IsFailed(string url) => _tracker.IsFailed(url, MediaAcquisitionKind.VideoDownload);
+    /// <summary>指定 URL が過去に DL 失敗済か (404 / 5xx / ネットワークエラー等)。
+    /// in-memory tracker (セッション内) に加え、確定失敗 (404/410) の永続ストアも参照する
+    /// (= アプリ再起動後も「削除済み動画」を取得失敗として即表示できる)。
+    /// UI バッジ「取得失敗」/ 404 アート表示の判定に使う。</summary>
+    public bool IsFailed(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return false;
+        if (_tracker.IsFailed(url, MediaAcquisitionKind.VideoDownload)) return true;
+        lock (_failureStoreLock) { return EnsureFailureStoreLoaded().Contains(url); }
+    }
 
     /// <summary>指定 URL の失敗状態をクリアする (= キャッシュ削除メニュー等から呼ばれる)。
-    /// 次回 Request() で再 DL が試みられる。</summary>
-    public void ResetFailedState(string url) => _tracker.Reset(url, MediaAcquisitionKind.VideoDownload);
+    /// 永続ストアの確定失敗記録も併せて解消する。次回 Request() で再 DL が試みられる。</summary>
+    public void ResetFailedState(string url)
+    {
+        _tracker.Reset(url, MediaAcquisitionKind.VideoDownload);
+        ClearPersistedFailure(url);
+    }
+
+    /// <summary>確定的削除 (HTTP 404 / 410) を DL 経路以外 (= CORS proxy で載るサムネ抽出の
+    /// hidden <video> リクエスト) から記録する。セッション tracker と永続ストアの両方に載せる
+    /// (= <see cref="IsFailed"/> が即ヒットし、スレッド表示時の先読み時点でクリックなしに
+    /// 取得失敗 (404 アート) 表示になる)。ユーザの明示再試行や DL 成功で解消される。</summary>
+    public void MarkGone(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return;
+        _tracker.MarkFailed(url, MediaAcquisitionKind.VideoDownload);
+        MarkPersistedFailure(url);
+    }
 
     /// <summary>サムネ抽出失敗状態を記憶する。
     /// thread.js / viewer.js の抽出失敗メッセージ受信時に呼ばれる。
@@ -175,15 +214,23 @@ public sealed class VideoDownloadManager
     /// ユーザの明示クリック (= videoDownloadStart) で「再試行したい」意思があるとみなして呼ばれる。</summary>
     public void ResetThumbFailedState(string url) => _tracker.Reset(url, MediaAcquisitionKind.VideoThumb);
 
-    private async Task<bool> DownloadAsync(string url)
+    /// <summary>DL 本体。戻り値は (成功, 確定的削除) の組。
+    /// 確定的削除 (= HTTP 404 / 410) のみ永続ストアに記録する。その他の失敗
+    /// (= 5xx / タイムアウト / ネットワーク断 / SaveAsync 上限超過) は一時的とみなし
+    /// セッション内の tracker にのみ記録する (= 再起動後に自動再試行の余地を残す)。</summary>
+    private async Task<(bool Ok, bool Gone)> DownloadAsync(string url)
     {
         try
         {
             using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
-                Debug.WriteLine($"[VideoDownload] HTTP {(int)resp.StatusCode} url={url}");
-                return false;
+                var code = (int)resp.StatusCode;
+                Debug.WriteLine($"[VideoDownload] HTTP {code} url={url}");
+                // 確定判定: 404/410 (削除) + 403 (catbox litter 等は削除済みファイルに 403 を返す)。
+                // 403 はホットリンク防止等の可能性もあるが、その場合もアプリからは取得不能なので
+                // 取得失敗扱いで問題ない (= クリック再試行で再判定され、復活していれば記録は解消される)。
+                return (false, code == 403 || code == 404 || code == 410);
             }
             var contentType = resp.Content.Headers.ContentType?.MediaType;
             if (string.IsNullOrEmpty(contentType))
@@ -197,12 +244,74 @@ public sealed class VideoDownloadManager
 
             // SaveAsync は MaxFileBytes 超過などで silently skip することがあるので、
             // 最終的にキャッシュに乗ったかを Contains で再確認 (= 上限超過時は失敗扱い)。
-            return _cache.Contains(url, CacheKind.Video);
+            return (_cache.Contains(url, CacheKind.Video), false);
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[VideoDownload] failed url={url}: {ex.Message}");
-            return false;
+            return (false, false);
+        }
+    }
+
+    // ---- 確定失敗 (404/410) 永続ストアの読み書き ----
+    // JSON 形式は単純な文字列配列 1 枚 ("[url, ...]")。書き込みは tmp + move のアトミック置換。
+
+    /// <summary>永続ストアを lazy ロードする (_failureStoreLock 保持から呼ぶこと。lock は再入可能)。</summary>
+    private HashSet<string> EnsureFailureStoreLoaded()
+    {
+        if (_failureStoreLoaded) return _persistedFailures;
+        _failureStoreLoaded = true;
+        if (_failureStorePath is null) return _persistedFailures;
+        try
+        {
+            if (File.Exists(_failureStorePath))
+            {
+                var urls = JsonSerializer.Deserialize<string[]>(File.ReadAllText(_failureStorePath));
+                if (urls is not null) _persistedFailures = new HashSet<string>(urls, StringComparer.Ordinal);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VideoDownload] failure store load failed: {ex.Message}");
+        }
+        return _persistedFailures;
+    }
+
+    /// <summary>ストアを現在の set 内容でアトミックに書き出す (_failureStoreLock 保持から呼ぶこと)。</summary>
+    private void PersistFailureStore()
+    {
+        if (_failureStorePath is null) return;
+        try
+        {
+            var dir = Path.GetDirectoryName(_failureStorePath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            var tmp = _failureStorePath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(new List<string>(_persistedFailures)));
+            File.Move(tmp, _failureStorePath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VideoDownload] failure store save failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>確定失敗 (404/410) をストアに記録する。既に記録済みなら書き込まない (= 書き込み最小化)。</summary>
+    private void MarkPersistedFailure(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return;
+        lock (_failureStoreLock)
+        {
+            if (EnsureFailureStoreLoaded().Add(url)) PersistFailureStore();
+        }
+    }
+
+    /// <summary>確定失敗記録をストアから除去する (DL 成功 / 明示リセット時)。無ければ書き込まない。</summary>
+    private void ClearPersistedFailure(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return;
+        lock (_failureStoreLock)
+        {
+            if (EnsureFailureStoreLoaded().Remove(url)) PersistFailureStore();
         }
     }
 }

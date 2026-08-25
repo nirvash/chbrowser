@@ -214,6 +214,13 @@ public static partial class WebView2Helper
     private static ImageCacheService? _imageCache;
     private static readonly ConditionalWeakTable<WebView2, object> _resourceHandlersInstalled = new();
 
+    /// <summary>テーマフォルダ仮想ホスト名。<c>data/themes/&lt;ActiveThemeName&gt;/</c> を
+    /// <c>https://chbrowser-theme.local/</c> でマウントする (thread.js の load-failed placeholder
+    /// 画像 <c>image-404.png</c> 等が参照)。シェルは NavigateToString の opaque origin で
+    /// file:// 直参照ができないため仮想ホスト経由とする。JS 側 (thread.js THEME_IMAGE_404_URL)
+    /// と文字列を揃えているので変更する場合は両方を修正すること。</summary>
+    internal const string ThemeVirtualHostName = "chbrowser-theme.local";
+
     /// <summary>App.OnStartup で 1 度だけ呼ぶ。画像キャッシュ機能を有効化する。</summary>
     public static void RegisterImageCache(ImageCacheService cache) => _imageCache = cache;
 
@@ -293,6 +300,27 @@ public static partial class WebView2Helper
         catch (Exception ex)
         {
             Debug.WriteLine($"[VirtualHost] mapping setup failed: {ex.Message}");
+        }
+
+        // テーマフォルダも仮想ホスト化する (テーマ同梱メディアの外部参照用)。
+        // https://chbrowser-theme.local/image-404.png → data/themes/<ActiveThemeName>/image-404.png
+        // ファイルが無い場合は JS 側でテキスト placeholder へフォールバックするため、
+        // ここではディレクトリの存在保証だけ行う (画像の自動生成はしない)。
+        try
+        {
+            var themeDir = _themeService?.ThemeFolderPath;
+            if (!string.IsNullOrEmpty(themeDir))
+            {
+                Directory.CreateDirectory(themeDir);
+                core.SetVirtualHostNameToFolderMapping(
+                    ThemeVirtualHostName,
+                    themeDir,
+                    CoreWebView2HostResourceAccessKind.Allow);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VirtualHost] theme mapping setup failed: {ex.Message}");
         }
 
         // <img> や CSS background-image などブラウザが画像として要求する全リソースを対象にする。
@@ -379,6 +407,9 @@ public static partial class WebView2Helper
                 if (!contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) return;
 
                 var url = e.Request.Uri;
+                // テーマ仮想ホストのリソースは画像キャッシュに取り込まない
+                // (= アプリ管理アセットが LRU prune 対象になる二重管理を避ける)。
+                if (url.StartsWith("https://" + ThemeVirtualHostName + "/", StringComparison.OrdinalIgnoreCase)) return;
                 if (cache.Contains(url)) return; // 既にキャッシュ済み
 
                 Stream? stream;
@@ -440,6 +471,21 @@ public static partial class WebView2Helper
 
             resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
             ChBrowser.Services.Logging.LogService.Instance.Write($"[CorsProxy] response status={(int)resp.StatusCode} url={url}");
+
+            // サムネ抽出 (crossOrigin=anonymous の hidden <video>) 経路で 403/404/410 を検出したら
+            // 動画の確定削除として記録する (catbox litter 等は削除済みファイルに 403 を返す)。
+            // 再生本体の <video> は crossOrigin 無しでこの proxy を通らないため、ここでの失敗は
+            // 抽出用リクエスト (= スレッド表示時の先読み) のもの。
+            // 記録された状態は videoThumbnailCacheFailed 受信時に再 push され、スレッド表示中に
+            // クリックなしで 404 アートへ置き換わる。
+            var corsStatus = (int)resp.StatusCode;
+            if (corsStatus == 403 || corsStatus == 404 || corsStatus == 410)
+            {
+                if (Application.Current is App goneApp && goneApp.VideoDownloadManagerInstance is { } goneMgr)
+                {
+                    goneMgr.MarkGone(url);
+                }
+            }
 
             // ヘッダを構築 (CRLF 区切り、CreateWebResourceResponse の仕様)。
             // upstream の Access-Control-* は捨てて C# 側で必ず * を付け直す (= 確実に CORS-clean)。

@@ -1813,6 +1813,11 @@
     // 設定 (Phase 11) で動的変更可能。setConfig メッセージで上書きされる。
     let IMAGE_SIZE_THRESHOLD = 5 * 1024 * 1024;
 
+    // load-failed スロットのテーマ代替画像 (image-404.png) を参照する仮想ホスト URL。
+    // C# 側 WebView2Helper が data/themes/<theme>/ を chbrowser-theme.local にマウントしており、
+    // ファイルが未配置の場合は <img> の error から従来テキスト placeholder へフォールバックする。
+    const THEME_IMAGE_404_URL = 'https://chbrowser-theme.local/image-404.png';
+
     // url → { ok, size } の HEAD 結果キャッシュ (セッション内)。
     const imageMetaCache = new Map();
 
@@ -1892,10 +1897,7 @@
         if (meta.imageLoadFailed) {
             slot.classList.remove('deferred');
             slot.classList.add('load-failed');
-            const text = document.createElement('span');
-            text.className = 'image-placeholder-text';
-            text.textContent = '画像取得失敗 — クリックで再試行';
-            slot.appendChild(text);
+            showLoadFailedPlaceholder(slot, '画像取得失敗 — クリックで再試行');
             return;
         }
 
@@ -1954,6 +1956,27 @@
         postImageMetaRequest(url);
     }
 
+    /** load-failed スロットの共通プレースホルダ。
+     *  テーマフォルダ (data/themes/default/) に image-404.png が置かれていれば仮想ホスト
+     *  経由でそれを表示し、画像自身の読み込み失敗 (= ファイル未配置) なら従来のテキスト
+     *  表示へフォールバックする。画像は CSS で pointer-events:none のためスロットクリック
+     *  (= retrySlot での再試行) は従来どおり機能する。 */
+    function showLoadFailedPlaceholder(slot, fallbackText) {
+        slot.innerHTML = '';
+        const img = document.createElement('img');
+        img.className = 'image-404';
+        img.alt = '';
+        img.addEventListener('error', function () {
+            if (img.parentNode === slot) slot.removeChild(img);
+            const text = document.createElement('span');
+            text.className = 'image-placeholder-text';
+            text.textContent = fallbackText;
+            slot.appendChild(text);
+        }, { once: true });
+        img.src = THEME_IMAGE_404_URL;
+        slot.appendChild(img);
+    }
+
     /** スロット内に <img> を生成して実際に画像を読み込む。
      *  画像のロードに失敗した (= 404 / network error / DNS 失敗 等) 場合は load-failed クラスを付け、
      *  「クリックで再試行」プレースホルダを表示する (= 自動リトライはしない、ユーザがクリックで明示再要求)。 */
@@ -1975,11 +1998,7 @@
         img.addEventListener('error', function () {
             slot.classList.remove('loaded');
             slot.classList.add('load-failed');
-            slot.innerHTML = '';
-            const text = document.createElement('span');
-            text.className = 'image-placeholder-text';
-            text.textContent = '画像読み込み失敗 — クリックで再試行';
-            slot.appendChild(text);
+            showLoadFailedPlaceholder(slot, '画像読み込み失敗 — クリックで再試行');
             // C# 側 MediaAcquisitionTracker に Image kind 失敗を記録 (= 次回スレッド表示で自動 GET 抑止)。
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage({ type: 'imageLoadFailed', url: url });
@@ -2141,22 +2160,38 @@
         if (!url) return;
         const slots = document.querySelectorAll('.image-slot.video[data-media-type="video"][data-src="' + cssEscape(url) + '"]');
         slots.forEach(function (slot) {
-            // downloadFailed の場合は再生中スロットでもエラーバッジを overlay 表示する。
-            // (playMedia でバッジ要素が削除されている可能性があるので、無ければ新規生成)
+            // downloadFailed の場合は状態を反映する。
+            // 再生中スロットは <video> の死活で分岐する: ストリーミング再生が生きている
+            // (= video.error 未発生 / 並列 DL だけ失敗したケース) なら従来どおり「取得失敗」
+            // バッジの overlay のみ。死んでいる (= 404 で黒画面プレイヤーのまま) なら
+            // 再生ボタン同様無意味なので 404 アートに置き換える。
+            // 再生前スロットは常に 404 アートへ置き換える (= 再生ボタンを出す意味がない)。
             if (state.downloadFailed) {
-                let badge = slot.querySelector('.video-dl-badge');
-                if (!badge) {
-                    badge = document.createElement('span');
-                    badge.className = 'video-dl-badge';
-                    slot.appendChild(badge);
-                }
-                badge.textContent = '取得失敗';
-                badge.style.display = '';
                 slot.dataset.cacheState = 'failed';
+                const v = slot.querySelector('video');
+                if (slot.classList.contains('playing') && v && !v.error) {
+                    let badge = slot.querySelector('.video-dl-badge');
+                    if (!badge) {
+                        badge = document.createElement('span');
+                        badge.className = 'video-dl-badge';
+                        slot.appendChild(badge);
+                    }
+                    badge.textContent = '取得失敗';
+                    badge.style.display = '';
+                    return;
+                }
+                slot.classList.remove('playing');
+                slot.classList.add('load-failed');
+                showLoadFailedPlaceholder(slot, '動画取得失敗 — クリックで再試行');
                 return;
             }
             // 再生中スロット (playing class) は触らない (= サムネ表示や未DLバッジ更新は不要)
             if (slot.classList.contains('playing')) return;
+
+            // 過去に DL 失敗表示 (404 アート) だったスロットが再試行で復帰したケースの掃除。
+            slot.classList.remove('load-failed');
+            const failedArt = slot.querySelector('.image-404');
+            if (failedArt) failedArt.remove();
 
             // 再生前状態なのでアクションボタン列を保証 (冪等)
             ensureVideoPlayActions(slot);
@@ -2523,10 +2558,12 @@
             const playSrc     = cached ? cacheUrl : originalUrl;
             if (!playSrc) return;
 
-            // 既存 thumb / icon / badge / placeholder / アクションボタンは除去
-            // (= スロット内を空にして <video> だけにする)
-            slot.querySelectorAll('img.video-thumb, .media-play-icon, .video-dl-badge, .image-placeholder-text, .video-play-actions')
+            // 既存 thumb / icon / badge / placeholder / 404 アート / アクションボタンは除去
+            // (= スロット内を空にして <video> だけにする)。load-failed クラスも外す
+            // (= 再試行中は失敗表示の透過背景スタイルを解除)。
+            slot.querySelectorAll('img.video-thumb, .media-play-icon, .video-dl-badge, .image-placeholder-text, .image-404, .video-play-actions')
                 .forEach(function (el) { el.remove(); });
+            slot.classList.remove('load-failed');
 
             const video = document.createElement('video');
             video.src = playSrc;
@@ -2557,6 +2594,15 @@
             video.addEventListener('error', function () {
                 const er = video.error;
                 debugLog('[VideoPlay] ERROR src=' + playSrc + ' code=' + (er && er.code) + ' msg=' + (er && er.message));
+                // DL 失敗 (videoCacheState downloadFailed) が video error より先に届いていると
+                // applyVideoCacheState 側は「再生中 + error 未発生」を見てバッジのみにしている。
+                // ここでプレイヤーの死が確定したので、その場合は 404 アートへ置き換える
+                // (= 黒画面プレイヤーの放置を防ぐ。逆順は applyVideoCacheState 側の v.error 参照で吸収)。
+                if (slot.dataset.cacheState === 'failed') {
+                    slot.classList.remove('playing');
+                    slot.classList.add('load-failed');
+                    showLoadFailedPlaceholder(slot, '動画取得失敗 — クリックで再試行');
+                }
             }, { once: true });
             // 同時再生は 1 つに制限: この動画の再生開始 (= autoplay 初回 / ネイティブコントロールや
             // ▶ ボタンからの再開を含む全ケース) で、他の再生中動画があれば一時停止する。
@@ -3709,6 +3755,13 @@ function findReadProgressMaxNumber() {
         if (slot) {
             // 失敗スロット (展開失敗 / 画像読み込み失敗) は明示クリックで再試行。
             if (slot.classList.contains('expand-failed') || slot.classList.contains('load-failed')) {
+                // DL 失敗済み動画の明示クリックは再試行 (= playMedia が mediaSlotRetry で
+                // C# 側失敗状態を解消してから DL を再 kick する)。
+                if ((slot.dataset.mediaType || 'image') === 'video') {
+                    hideAiPopup();
+                    playMedia(slot);
+                    return;
+                }
                 retrySlot(slot);
                 return;
             }

@@ -534,6 +534,27 @@ body.slot-resizing * {
     pointer-events: none;
 }
 
+/* load-failed スロットはテーマ代替画像 (image-404.png、透過 PNG 想定) をレス背景に
+ * 溶け込ませるため枠/背景を消す。hover で枠を表示し、クリック可能 (= 再試行) ことを示す。
+ * テーマ画像未配置でテキスト fallback の場合も透過のままで問題ない。 */
+.image-slot.load-failed {
+    background: transparent;
+    border-color: transparent;
+}
+
+/* load-failed スロットのテーマ代替画像 (data/themes/default/image-404.png)。
+ * 仮想ホスト chbrowser-theme.local 経由で参照する。ファイルが未配置の場合は
+ * JS 側 (showLoadFailedPlaceholder) がテキスト placeholder へフォールバックする。
+ * スロットクリック (= 再試行) を阻害しないよう pointer-events は無効。 */
+.image-slot .image-404 {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+}
+
 /* スロット内に挿入される実画像 */
 .image-slot .inline-image {
     display: block;
