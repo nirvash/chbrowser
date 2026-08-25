@@ -3,6 +3,14 @@
 コード変更時のための実装メモ。利用者向け情報は README.md を参照。
 本書はコードリーディングで判明した基本設計・内部構造の知識ベースであり、後続の改修で再利用することを意図する。
 
+## LOCAL.md について
+
+リポジトリ直下の `LOCAL.md` は**このマシン固有の情報を置くファイル**で、`.gitignore` 対象
+(commit 禁止)。デイリー利用 exe の配置先など、環境依存の作業メモが書かれる。
+エージェントは存在すれば読んで作業の参考にしてよいが、内容を main へ commit してはならない。
+本書 (AGENTS.md) に書くのは「このプロジェクト共通で永続したい知識」のみとし、
+特定マシンにしか当てはまらない情報 (絶対パス等) は LOCAL.md の方へ置く。
+
 ## 実装手順
 
 機能追加・改修は次の流れで行う:
@@ -37,6 +45,20 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 ```
 
 出力: `src/ChBrowser/bin/Release/net8.0-windows/win-x64/publish/ChBrowser.exe`
+
+## 配布テーマフォルダ (`themes/`)
+
+- リポジトリ直下 `themes/` は**配布用テーマファイルの置き場所**。埋め込みリソース外で version 管理
+  し、`data/themes/` と同じ構造をミラーする (現状 `themes/default/image-404.png` のみ)
+- `image-404.png` のオリジナル (1254x1254) はリポジトリ外で管理し、配布には 512x512 縮小版を使う
+- アプリはこのフォルダを参照しない (= 純配布物)。不足時の自動補充等も無く、
+  反映は手動で `<配置先>\data\themes\default\` へコピーする (配置先パスは LOCAL.md 参照)
+
+デイリー利用環境への反映手順 (手動):
+
+1. ChBrowser プロセスが起動していないことを確認する
+2. publish 出力の `ChBrowser.exe` を配置先へ上書きコピー
+3. `themes/default/` 配下を `<配置先>\data\themes\default\` へコピー
 
 ## 全体構成
 
