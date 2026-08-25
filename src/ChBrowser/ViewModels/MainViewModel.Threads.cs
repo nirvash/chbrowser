@@ -522,7 +522,7 @@ public sealed partial class MainViewModel
     /// 永続化された既読位置 (idx.json) と VM 上の動的状態 (Mark / Own / HasReplyToOwn) も注入。</summary>
     private ThreadToolset BuildToolsetForTab(ThreadTabViewModel? tab)
     {
-        var (openThread, openBoard, openThreadList) = BuildOpenInAppCallbacks();
+        var (openThread, openBoard, openThreadList, showPost) = BuildOpenInAppCallbacks();
         var dataLoader = BuildThreadDataLoader();
         if (tab is null)
         {
@@ -545,7 +545,30 @@ public sealed partial class MainViewModel
             attachedLastRead:         savedIdx?.LastReadPostNumber,
             attachedMarkPostNumber:   tab.MarkPostNumber,
             attachedOwnPostNumbers:   tab.OwnPostNumbers,
-            attachedHasReplyToOwn:    tab.HasReplyToOwn);
+            attachedHasReplyToOwn:    tab.HasReplyToOwn,
+            getNavSide:               isPrev => ReadNavSideForTool(tab, isPrev),
+            navMutationAsync:         req => ApplyNavMutationForToolAsync(tab, req),
+            getAttachedLive:          () => new AttachedLiveState(
+                                          tab.Posts,
+                                          tab.MarkPostNumber,
+                                          _threadIndex.Load(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey)?.LastReadPostNumber),
+            refreshAttachedAsync:     () => RefreshThreadViaToolAsync(tab),
+            showPostInAppAsync:       showPost);
+    }
+
+    /// <summary>ツール経由の差分取得 (<c>RefreshThreadAsync</c> のラッパ)。
+    /// ネットワーク失敗は RefreshThreadAsync 内部で StatusMessage に吸収されるため、
+    /// 呼び出し元には結果サマリを文字列で返す。</summary>
+    internal async Task<string> RefreshThreadViaToolAsync(ThreadTabViewModel tab)
+    {
+        if (tab.IsBusy)
+            return "更新スキップ: 他の取得処理が実行中です";
+        var before = tab.Posts.Count;
+        await RefreshThreadAsync(tab).ConfigureAwait(true);
+        var delta = tab.Posts.Count - before;
+        return delta > 0
+            ? $"差分取得しました: +{delta} レス (計 {tab.Posts.Count} 件)"
+            : $"差分取得結果: {tab.StatusMessage}";
     }
 
     /// <summary>AI チャットウィンドウの「タイトル領域」用文字列。attached あれば そのスレタイ、無ければ汎用ラベル。</summary>
@@ -601,7 +624,8 @@ public sealed partial class MainViewModel
     private (
         Func<string, Task<string>>                                               openThread,
         Func<string, Task<string>>                                               openBoard,
-        Func<string, IReadOnlyList<AiSearchResultEntry>, Task<string>>           openThreadList)
+        Func<string, IReadOnlyList<AiSearchResultEntry>, Task<string>>           openThreadList,
+        Func<string, int, Task<string>>                                          showPost)
         BuildOpenInAppCallbacks()
     {
         Func<string, Task<string>> openThread = async url =>
@@ -646,7 +670,24 @@ public sealed partial class MainViewModel
                 return $"検索結果タブを開けませんでした: {ex.Message}";
             }
         };
-        return (openThread, openBoard, openThreadList);
+        // show_post_in_app 用: 未オープンならオープン、既存ならアクティブ化した上で
+        // 指定レス番号までスクロール (PendingScrollToPost → JS scrollToPost push)。
+        Func<string, int, Task<string>> showPost = async (url, postNumber) =>
+        {
+            var t = AddressBarParser.Parse(url);
+            if (t.Kind != AddressBarTargetKind.Thread)
+                return $"thread_url の解釈に失敗: {url}";
+            try
+            {
+                await OpenThreadByUrlAsync(t.Host, t.Directory, t.ThreadKey, postNumber).ConfigureAwait(true);
+                return $">>{postNumber} をスレ表示ペインに表示しました";
+            }
+            catch (Exception ex)
+            {
+                return $"レスを表示できませんでした: {ex.Message}";
+            }
+        };
+        return (openThread, openBoard, openThreadList, showPost);
     }
 
     /// <summary>AI からの「複数スレッドを 1 タブに並べて見せる」要求を受けて新規スレ一覧タブを作る。

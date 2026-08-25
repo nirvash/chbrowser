@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using ChBrowser.Models;
+using ChBrowser.Services.Llm;
 using ChBrowser.Services.Storage;
 using ChBrowser.Services.Url;
 
@@ -272,9 +273,20 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>兄弟タブ由来の推論候補を自タブへ統合する。既存候補に無ければ先頭に高スコアで追加し、
-    /// 該当側の採用 key が未決の場合だけ採用する (= 通常解決が見つけられなかった場合の救済)。</summary>
+    /// 該当側の採用 key が未決の場合だけ採用する (= 通常解決が見つけられなかった場合の救済)。
+    /// ただしユーザが除外登録 (🚫 / <c>NavExcludedKeys</c>) した key は採り込まない
+    /// (= 除外の恒久性を保証。さもないと再解決のたびに除外候補が蘇る)。</summary>
     private void MergeSiblingCandidate(ThreadTabViewModel tab, bool isPrev, ThreadTabViewModel other)
     {
+        var index = _threadIndex.Load(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey);
+        if (index?.NavExcludedKeys is { Length: > 0 } excludedArr &&
+            excludedArr.Contains(other.ThreadKey))
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[threadNav] sibling infer skip (excluded): {tab.ThreadKey} {(isPrev ? "prev" : "next")} = {other.ThreadKey}");
+            return;
+        }
+
         IReadOnlyList<ThreadNavCandidate> cur = isPrev
             ? tab.PrevNavCandidates ?? Array.Empty<ThreadNavCandidate>()
             : tab.NextNavCandidates ?? Array.Empty<ThreadNavCandidate>();
@@ -718,8 +730,17 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>右クリック候補メニューからの選択。その場で採用 + 確定 + オープンする
-    /// (= 「まちがってたら次候補を選択できるフローを繰り返す」の 1 ステップ)。</summary>
+    /// (= 「まちがってたら次候補を選択できるフローを繰り返す」の 1 ステップ)。
+    /// UI 経路は従来どおりオープンの完了を待たない。完了を待って結果を取得したい経路
+    /// (set_nav_target ツール等) は <see cref="AdoptNavCandidateAndOpenAsync"/> を直接 await する。</summary>
     public void AdoptNavCandidate(ThreadTabViewModel tab, bool isPrev, ThreadNavCandidate candidate)
+        => _ = AdoptNavCandidateAndOpenAsync(tab, isPrev, candidate);
+
+    /// <summary>候補の「採用 + 確定 + オープン」の本体。右クリックメニュー / 手動 URL /
+    /// set_nav_target(action="adopt") の共通経路。オープンの完了を待ち、成功 / 失敗を
+    /// メッセージ文字列として返す (= ツール経路では開くのに失敗したことが呼び出し元に伝わる)。
+    /// 採用と確定はオープンの成否に関わらず先に行う (= 従来動作)。</summary>
+    internal async Task<string> AdoptNavCandidateAndOpenAsync(ThreadTabViewModel tab, bool isPrev, ThreadNavCandidate candidate)
     {
         UpdateNavIndex(tab, existing => existing with
         {
@@ -729,7 +750,18 @@ public sealed partial class MainViewModel
         ApplyNavResult(tab, isPrev, candidate.Key, candidate.Title, confirmed: true,
             isPrev ? tab.PrevNavCandidates ?? Array.Empty<ThreadNavCandidate>()
                    : tab.NextNavCandidates ?? Array.Empty<ThreadNavCandidate>());
-        _ = OpenNavTargetAsync(tab, isPrev);
+        try
+        {
+            // ApplyNavResult 済みなので OpenNavTargetAsync が候補 key を開く (ログも共通経路で出る)。
+            await OpenNavTargetAsync(tab, isPrev).ConfigureAwait(true);
+            return $"{(isPrev ? "前" : "次")}スレとして採用して開きました: [{candidate.Key}]";
+        }
+        catch (Exception ex)
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[threadNav] adopt open failed: src={tab.ThreadKey} key={candidate.Key}: {ex.Message}");
+            return $"{(isPrev ? "前" : "次")}スレとして採用しましたが、オープンに失敗しました: [{candidate.Key}] ({ex.Message})";
+        }
     }
 
     /// <summary>🚫 除外ボタン。指定 key を NavExcludedKeys に追加して永続化し、再解決する。
@@ -820,6 +852,60 @@ public sealed partial class MainViewModel
     {
         _navLogKeysCache.Remove((tab.Board.Host, tab.Board.DirectoryName));
         _ = ResolveThreadChainAsync(tab, force);
+    }
+
+    // -----------------------------------------------------------------
+    // AI / MCP ツール公開 (ThreadToolset の get_nav_state / open_next_thread /
+    // open_prev_thread / set_nav_target から呼ばれる)
+    // -----------------------------------------------------------------
+
+    /// <summary>ツール層 (<see cref="ThreadToolset"/>) 向けに片側ナビ状態のライブ読み取りを行う。
+    /// スナップショットでなく都度読みにするのは、ツール連鎖 (採用 → オープン等) の間に
+    /// 状態が更新されても常に最新を見せるため。UI スレッド前提 (= ObservableProperty 直読み)。</summary>
+    internal NavSideState ReadNavSideForTool(ThreadTabViewModel tab, bool isPrev)
+        => isPrev
+            ? new NavSideState(tab.PrevNavKey, tab.PrevNavTitle ?? "", tab.IsPrevNavConfirmed,
+                               ToNavCandidateInfos(tab.PrevNavCandidates))
+            : new NavSideState(tab.NextNavKey, tab.NextNavTitle ?? "", tab.IsNextNavConfirmed,
+                               ToNavCandidateInfos(tab.NextNavCandidates));
+
+    private static IReadOnlyList<NavCandidateInfo> ToNavCandidateInfos(IReadOnlyList<ThreadNavCandidate>? cands)
+        => cands is null || cands.Count == 0
+            ? Array.Empty<NavCandidateInfo>()
+            : cands.Select(c => new NavCandidateInfo(c.Key, c.Title, c.PostCount, c.Score)).ToArray();
+
+    /// <summary>set_nav_target の実体。action は "adopt" / "exclude" / "clear" / "confirm"
+    /// (adopt / exclude の key・方向検証は ThreadToolset 側で済んでいる前提)。
+    /// ユーザ向けメッセージ文字列を返す。UI スレッド前提。</summary>
+    internal async Task<string> ApplyNavMutationForToolAsync(ThreadTabViewModel tab, NavMutationRequest req)
+    {
+        switch (req.Action)
+        {
+            case "confirm":
+                ConfirmNavigation(tab);
+                return $"前後スレを確定しました (前={tab.PrevNavKey ?? "-"} / 次={tab.NextNavKey ?? "-"})";
+
+            case "exclude":
+                await ExcludeNavCandidateAsync(tab, req.Key!).ConfigureAwait(true);
+                return $"候補 [{req.Key}] を除外登録して再解決しました";
+
+            case "clear":
+                await ClearNavOverrideAsync(tab, req.IsPrev).ConfigureAwait(true);
+                return $"{(req.IsPrev ? "前" : "次")}スレの確定を解除しました (自動推測に戻します)";
+
+            case "adopt":
+            {
+                // 候補メニュー選択と同じ経路: 採用 + 確定 + オープンし、タイトル不明分を再解決で補う。
+                // オープン完了を待ってから応答する (= 失敗時はその旨が LLM/MCP 呼び出し元へ伝わる)。
+                var openMsg = await AdoptNavCandidateAndOpenAsync(
+                    tab, req.IsPrev, new ThreadNavCandidate(req.Key!, "", 0, 0)).ConfigureAwait(true);
+                KickNavResolve(tab, force: true);
+                return openMsg;
+            }
+
+            default:
+                return $"未知の action: {req.Action}";
+        }
     }
 }
 
