@@ -22,4 +22,14 @@ namespace ChBrowser.Models;
 public sealed record ThreadIndex(
     int?   LastReadPostNumber,
     int?   LastFetchedPostCount,
-    int[]? OwnPostNumbers = null);
+    int[]? OwnPostNumbers = null,
+    /// <summary>復元時の追加スクロール量 (px)。LastReadPostNumber の下端を viewport 下端に
+    /// 揃えたあと、さらに下へスクロールしていた量 (= 投稿内の細かい読み位置)。
+    /// null / 0 は従来どおり境界ぴったりの復元。ズームやレイアウト変化で多少ずれうる近似値。</summary>
+    double? ScrollOffsetPx = null,
+    /// <summary>保存時の絶対 scrollY (px)。保存時とスロットスケール / ページズーム / ドキュメント高さが
+    /// すべて一致する場合にのみ使われる完全復元用の値。</summary>
+    double? ScrollY = null,
+    double? DocHeight = null,
+    double? EnvSlotScale = null,
+    double? EnvPageZoom = null);

@@ -549,6 +549,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         OpenTabsStorage   openTabsStorage,
         ChBrowser.Services.Llm.LlmClient llmClient)
     {
+        Current          = this; // 静的参照 (WebView2Helper から環境値を参照)。単一インスタンス前提。
         _bbsmenuClient   = bbsmenuClient;
         _subjectClient   = subjectClient;
         _settingClient   = settingClient;
@@ -800,6 +801,10 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         }
     }
 
+    /// <summary>このアプリは単一 MainViewModel なので静参照を公開する
+    /// (WebView2Helper の静的コンテキストから現環境値を参照するため)。</summary>
+    public static MainViewModel? Current { get; private set; }
+
     // ---- スレ上部ツールバーのサムネイルサイズスライダ ----
     /// <summary>スレ内メディアスロットの全体既定スケール (240px ベースの倍率 0.6–4.5)。
     /// スライダ位置の保持先。ドラッグ中は値を反映せずノブのプレビューのみで、
@@ -827,6 +832,34 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     {
         _slotScalePersistTimer?.Stop();
         UpdateAndPersistConfig(c => c with { ThreadSlotScale = Math.Clamp(ThreadSlotScaleUi, 0.6, 4.5) });
+    }
+
+    // ---- スレ表示のページズーム (Ctrl+ホイール) ----
+    /// <summary>ページズーム永続化の debounce 用。</summary>
+    private System.Windows.Threading.DispatcherTimer? _pageZoomSaveTimer;
+
+    /// <summary>ページズームを指定値へ設定する。CurrentConfig 即時更新 + ディスク保存を
+    /// debounce (400ms) で行う。倍率ステップの計算は呼び出し元 (ペイン) が行う。</summary>
+    public void SetThreadPageZoom(double zoom)
+    {
+        var z = Math.Clamp(Math.Round(zoom, 2), 0.5, 3.0);
+        if (Math.Abs(CurrentConfig.ThreadPageZoom - z) < 0.001) return;
+
+        CurrentConfig = CurrentConfig with { ThreadPageZoom = z };
+        _pageZoomSaveTimer ??= new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(400),
+        };
+        _pageZoomSaveTimer.Stop();
+        _pageZoomSaveTimer.Tick -= PageZoomSaveTimer_Tick;
+        _pageZoomSaveTimer.Tick += PageZoomSaveTimer_Tick;
+        _pageZoomSaveTimer.Start();
+    }
+
+    private void PageZoomSaveTimer_Tick(object? sender, EventArgs e)
+    {
+        _pageZoomSaveTimer?.Stop();
+        PersistConfigCallback?.Invoke(CurrentConfig);
     }
 
     /// <summary>スライダ確定値 (放す / キーボード) を適用する。JS 側 applyGlobalSlotScale が

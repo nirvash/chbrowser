@@ -593,6 +593,12 @@ public sealed partial class MainViewModel
         var savedIndex = _threadIndex.Load(board.Host, board.DirectoryName, info.Key);
         if (savedIndex?.LastReadPostNumber is int savedPos)
             tab.ScrollTargetPostNumber = savedPos;
+        if (savedIndex?.ScrollOffsetPx is double savedOff && savedOff > 0)
+            tab.ScrollTargetOffsetPx = savedOff;
+        if (savedIndex?.ScrollY is double savedY) tab.ScrollTargetScrollY   = savedY;
+        if (savedIndex?.DocHeight is double savedH) tab.ScrollTargetDocHeight = savedH;
+        tab.ScrollEnvSlotScale = savedIndex?.EnvSlotScale;
+        tab.ScrollEnvPageZoom  = savedIndex?.EnvPageZoom;
         if (savedIndex?.OwnPostNumbers is { Length: > 0 } savedOwn)
         {
             foreach (var n in savedOwn) tab.OwnPostNumbers.Add(n);

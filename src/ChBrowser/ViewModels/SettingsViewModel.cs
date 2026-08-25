@@ -81,6 +81,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int    _idHighlightThreshold  = 5;
     [ObservableProperty] private bool   _metaPopupClickOnly    = true;
     [ObservableProperty] private double _threadSlotScale       = 1.0;
+    [ObservableProperty] private double _threadPageZoom        = 1.0;
     [ObservableProperty] private bool   _videoLoop             = false;
     [ObservableProperty] private int    _cacheMaxMb            = 1024;
     [ObservableProperty] private int    _viewerThumbnailSize   = 80;
@@ -340,6 +341,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         IdHighlightThreshold         = initial.IdHighlightThreshold;
         MetaPopupClickOnly           = initial.MetaPopupClickOnly;
         ThreadSlotScale              = initial.ThreadSlotScale;
+        ThreadPageZoom               = initial.ThreadPageZoom;
         VideoLoop                    = initial.VideoLoop;
         CacheMaxMb                   = initial.CacheMaxMb;
         ViewerThumbnailSize          = initial.ViewerThumbnailSize;
@@ -552,6 +554,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         IdHighlightThreshold        = IdHighlightThreshold,
         MetaPopupClickOnly          = MetaPopupClickOnly,
         ThreadSlotScale             = ThreadSlotScale,
+        ThreadPageZoom              = ThreadPageZoom,
         VideoLoop                   = VideoLoop,
         CacheMaxMb                  = CacheMaxMb,
         ViewerThumbnailSize         = ViewerThumbnailSize,

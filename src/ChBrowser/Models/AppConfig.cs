@@ -171,6 +171,11 @@ public sealed record AppConfig
     /// 即時反映 (setConfig メッセージ → thread.js)。</summary>
     public double ThreadSlotScale { get; init; } = 1.0;
 
+    /// <summary>スレ表示 WebView2 のページズーム倍率 (Ctrl+ホイールで変更、0.5–3.0)。
+    /// スライダのサムネイルスケール (<see cref="ThreadSlotScale"/>) とは独立で、
+    /// テキスト等も含めた全体拡大。即時反映 + 永続化。</summary>
+    public double ThreadPageZoom { get; init; } = 1.0;
+
     /// <summary>動画再生開始時のループの初期値 (スレ内 / ビューアウィンドウ共通)。
     /// false (既定): 1 回再生で停止する。true: 末尾に達したら先頭に戻って繰り返す。
     /// 個々の動画は再生中のループトグルボタンで都度切替可能。

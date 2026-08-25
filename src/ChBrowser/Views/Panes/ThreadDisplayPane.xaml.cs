@@ -123,6 +123,7 @@ public partial class ThreadDisplayPane : UserControl
             case "postNoContextMenu":  HandlePostNoContextMenu(sender, payload); break;
             case "urlContextMenu":     HandleUrlContextMenu(sender, payload); break;
             case "refreshThread":      HandleRefreshThread(sender); break;
+            case "threadPageZoomDelta": HandleThreadPageZoomDelta(sender, payload); break;
             case "jsDebug":
             {
                 var text = payload.TryGetProperty("text", out var tp) ? tp.GetString() : "";
@@ -241,6 +242,14 @@ public partial class ThreadDisplayPane : UserControl
     private void HandleThreadReady(object sender)
     {
         if (sender is not WebView2 wv) return;
+
+        // 永続化済みページズーム (Ctrl+ホイール) を適用
+        if (Application.Current is App appReady)
+        {
+            var z = Math.Clamp(appReady.CurrentConfig.ThreadPageZoom, 0.5, 3.0);
+            if (Math.Abs(wv.ZoomFactor - z) > 0.001) wv.ZoomFactor = z;
+        }
+
         if (!_seenInitialReady.TryGetValue(wv, out _))
         {
             _seenInitialReady.Add(wv, new object());
@@ -849,6 +858,24 @@ public partial class ThreadDisplayPane : UserControl
         if (tab.RefreshCommand is { } cmd && cmd.CanExecute(null)) cmd.Execute(null);
     }
 
+    /// <summary>JS 側が Ctrl+ホイールを捕捉 (= 標準ズームは preventDefault 済み) して送ってきた
+    /// ステップ分だけページズームを変更する。表示はこのペインの ZoomFactor 即時設定、
+    /// 永続化は MainViewModel 経由で debounce 保存。</summary>
+    private void HandleThreadPageZoomDelta(object sender, JsonElement payload)
+    {
+        if (sender is not WebView2 wv) return;
+        if (DataContext is not ThreadPaneGroupViewModel group || group.Main is null) return;
+        var dir = payload.TryGetProperty("delta", out var dp) ? dp.GetDouble() : 0.0;
+        if (dir == 0) return;
+
+        // 倍率ステップは乗算 ×1.1 (= WebView2 標準ズームと同じ感覚)。単一ソースは Main.CurrentConfig。
+        var baseZ  = group.Main.CurrentConfig.ThreadPageZoom;
+        var factor = dir > 0 ? 1.1 : (1.0 / 1.1);
+        var next   = Math.Clamp(Math.Round(baseZ * factor, 2), 0.5, 3.0);
+        if (Math.Abs(wv.ZoomFactor - next) > 0.001) wv.ZoomFactor = next;
+        group.Main.SetThreadPageZoom(next);
+    }
+
     /// <summary>JS から「URL リンクが右クリックされた」通知を受け、UrlContextMenu を開く。
     /// mediaType が "image" / "video" の場合は「ビューアで開く / 保存 / キャッシュ削除」を表示
     /// (テキストリンクや youtube は「リンクをコピー」のみ)。
@@ -1271,9 +1298,15 @@ public partial class ThreadDisplayPane : UserControl
         if (!payload.TryGetProperty("postNumber", out var numProp)) return;
         if (numProp.ValueKind != JsonValueKind.Number) return;
         if (!numProp.TryGetInt32(out var num)) return;
-        // 受信値を in-memory に保持するだけ (= idx.json への書き出しはタブクローズ / アプリ終了時に
-        // MainViewModel.FlushScrollPositionToDisk で一括して行う設計)。
-        main.UpdateScrollPosition(tab.Board, tab.ThreadKey, num);
+
+        // 投稿内オフセット (= アンカー投稿下端から viewport 下端までの px) と
+        // 完全復元用の絶対位置 (scrollY / ドキュメント高さ) を添えて送る。
+        double offPx = 0;
+        if (payload.TryGetProperty("offsetPx", out var offProp) && offProp.ValueKind == JsonValueKind.Number)
+            offPx = Math.Max(0, offProp.GetDouble());
+        double scrollY = payload.TryGetProperty("scrollY", out var syProp) && syProp.ValueKind == JsonValueKind.Number ? syProp.GetDouble() : 0;
+        double docH    = payload.TryGetProperty("docH",    out var dhProp) && dhProp.ValueKind == JsonValueKind.Number ? dhProp.GetDouble() : 0;
+        main.UpdateScrollPosition(tab.Board, tab.ThreadKey, num, offPx, scrollY, docH);
     }
 
     private void HandleImageMetaRequest(object sender, JsonElement payload)

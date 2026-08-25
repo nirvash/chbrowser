@@ -196,6 +196,12 @@ public sealed partial class MainViewModel
         var savedIndex = _threadIndex.Load(board.Host, board.DirectoryName, info.Key);
         if (savedIndex?.LastReadPostNumber is int savedPos)
             tab.ScrollTargetPostNumber = savedPos;
+        if (savedIndex?.ScrollOffsetPx is double savedOff && savedOff > 0)
+            tab.ScrollTargetOffsetPx = savedOff;
+        if (savedIndex?.ScrollY is double savedY) tab.ScrollTargetScrollY   = savedY;
+        if (savedIndex?.DocHeight is double savedH) tab.ScrollTargetDocHeight = savedH;
+        tab.ScrollEnvSlotScale = savedIndex?.EnvSlotScale;
+        tab.ScrollEnvPageZoom  = savedIndex?.EnvPageZoom;
         if (savedIndex?.OwnPostNumbers is { Length: > 0 } savedOwn)
         {
             foreach (var n in savedOwn) tab.OwnPostNumbers.Add(n);
@@ -1038,10 +1044,15 @@ public sealed partial class MainViewModel
     ///
     /// 引数の <paramref name="readMaxPostNumber"/> は JS の <c>findReadProgressMaxNumber</c> が算定する
     /// 「先頭から連番が途切れず下端まで見終えた最大番号」(= 読了 prefix の最大番号)。 </summary>
-    public void UpdateScrollPosition(Board board, string threadKey, int readMaxPostNumber)
+    public void UpdateScrollPosition(Board board, string threadKey, int readMaxPostNumber, double offsetPx, double scrollY, double docHeight)
     {
         var tab = FindThreadTab(board, threadKey);
-        if (tab is not null) tab.ScrollTargetPostNumber = readMaxPostNumber;
+        if (tab is null) return;
+        tab.ScrollTargetPostNumber = readMaxPostNumber;
+        tab.ScrollTargetOffsetPx   = offsetPx;
+        tab.ScrollTargetScrollY    = scrollY;
+        tab.ScrollTargetDocHeight  = docHeight;
+        // 環境値は保存時 (Flush) に CurrentConfig から stamp する
     }
 
     /// <summary>タブの最新の <see cref="ThreadTabViewModel.ScrollTargetPostNumber"/> を idx.json に書き出す。
@@ -1056,8 +1067,18 @@ public sealed partial class MainViewModel
         {
             var existing = _threadIndex.Load(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey);
             // 既存値と同じなら disk write を省略 (= 単なる cosmetic IO 抑止)
-            if (existing?.LastReadPostNumber == n) return;
-            var updated = (existing ?? new ThreadIndex(null, null)) with { LastReadPostNumber = n };
+            if (existing?.LastReadPostNumber == n
+                && existing?.ScrollOffsetPx == (tab.ScrollTargetOffsetPx ?? 0)
+                && existing?.ScrollY == (tab.ScrollTargetScrollY ?? 0)) return;
+            var updated = (existing ?? new ThreadIndex(null, null)) with
+            {
+                LastReadPostNumber = n,
+                ScrollOffsetPx     = tab.ScrollTargetOffsetPx ?? 0,
+                ScrollY            = tab.ScrollTargetScrollY ?? 0,
+                DocHeight          = tab.ScrollTargetDocHeight ?? 0,
+                EnvSlotScale       = CurrentConfig.ThreadSlotScale,
+                EnvPageZoom        = CurrentConfig.ThreadPageZoom,
+            };
             _threadIndex.Save(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey, updated);
         }
         catch (System.Exception ex)
