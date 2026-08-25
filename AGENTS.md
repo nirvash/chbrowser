@@ -19,7 +19,9 @@
    (**どちらを使うかはユーザが判断する**):
    - **PR レビュー** — ブランチを push して `gh pr create` で PR を出し
      (base = 自フォーク `nirvash/chbrowser` の main)、レビュー指摘に対応してからマージする
-   - **ローカルマージ** — ローカルで `git merge --squash <branch>` + 単一コミットで
+   - **ローカルマージ** — 先に `git fetch origin` して main を最新化してから
+     (`git pull --ff-only`。ローカル main が古いと squash 差分に他変更が混入する
+     — 実害が発生済み)、ローカルで `git merge --squash <branch>` + 単一コミットで
      main に取り込んで push する
    いずれの経路でも Squash and merge 相当とし、マージコミットを履歴に残さない
    (= main のコミット履歴は機能 1 件 = コミット 1 件の一直線を保つ)
