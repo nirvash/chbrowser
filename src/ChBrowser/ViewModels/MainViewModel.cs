@@ -341,6 +341,19 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         // NG 判定 AI: 選択タブが変わったら、そのタブの既判定分を即反映 + 未判定レスの判定を (再) 開始する。
         // 実装は MainViewModel.AiNg.cs。
         StartAiNgFor(value);
+
+        // 前後スレナビ: このタブで解決が一度も完了していない (= 両サイドの候補リストが null。
+        // 起動時復元タブで解決がスキップ / 失敗したケース) なら、選択されたこのタイミングで再解決する。
+        // 解決が「完走して候補ゼロ」の場合は候補リストが空配列で入るので、null 判定とは区別され再解決は起きない。
+        // IsBusy 中 (= 初期取得のストリーミング中) は発火させない: 先頭バッチ (10 レス) だけで
+        // 部分解決 → 完走キャッシュ化すると、フル取得後に次スレが永久に検出されなくなるため
+        // (= 取得完了フック側の KickNavResolve が確実に担当する)。
+        if (value is { NavResolving: false, IsBusy: false } navTab &&
+            navTab.PrevNavCandidates is null && navTab.NextNavCandidates is null &&
+            navTab.Posts.Count > 0)
+        {
+            KickNavResolve(navTab);
+        }
     }
 
     private void OnActiveThreadTabPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

@@ -184,6 +184,58 @@
                             VerticalAlignment="Center" />
                 </StackPanel>
 
+                <!-- 前スレ / 次スレナビゲーション (⏮ ⏭ 🚫 ✅)。
+                     解決ロジックは MainViewModel.ThreadNav.cs、メニュー構築は code-behind
+                     (NavButton_RightClick / NavExcludeButton_Click) 参照。
+                     ⏮ ⏭ : 採用中 target へ移動 (右クリックで候補一覧)。target 不明時は個別に無効。
+                     🚫    : 荒らし / 間違い候補の除外登録メニュー。
+                     ✅    : 現採用 target を「本物」として確定 (idx.json へ永続化)。 -->
+                <StackPanel DockPanel.Dock="Left"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="0,0,10,0">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedTab}" Value="{x:Null}">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+
+                    <Button Style="{StaticResource ToolbarIconButton}"
+                            Command="{Binding SelectedTab.GoPrevThreadCommand}"
+                            IsEnabled="{Binding SelectedTab.HasPrevNav, FallbackValue=False}"
+                            ToolTip="{Binding SelectedTab.PrevNavToolTip, FallbackValue='前スレ'}"
+                            MouseRightButtonUp="NavPrevButton_RightClick">
+                        <TextBlock Text="前" FontSize="11" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
+                    <Button Style="{StaticResource ToolbarIconButton}"
+                            Command="{Binding SelectedTab.GoNextThreadCommand}"
+                            IsEnabled="{Binding SelectedTab.HasNextNav, FallbackValue=False}"
+                            ToolTip="{Binding SelectedTab.NextNavToolTip, FallbackValue='次スレ'}"
+                            MouseRightButtonUp="NavNextButton_RightClick">
+                        <TextBlock Text="次" FontSize="11" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
+                    <Button Style="{StaticResource ToolbarIconButton}"
+                            Click="NavExcludeButton_Click"
+                            IsEnabled="{Binding SelectedTab.HasNavCandidates, FallbackValue=False}"
+                            ToolTip="荒らし / 間違いリンクの候補を除外登録する (対象を選んで実行)">
+                        <TextBlock Text="🚫" FontSize="11"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
+                    <Button Style="{StaticResource ToolbarIconButton}"
+                            Click="NavConfirmButton_Click"
+                            IsEnabled="{Binding SelectedTab.CanConfirmNavigation, FallbackValue=False}"
+                            ToolTip="{Binding SelectedTab.ConfirmNavToolTip, FallbackValue='確定'}">
+                        <TextBlock Text="✅" FontSize="11"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
+                </StackPanel>
+
                 <!-- ボタン群は右端に固定。SearchBoxToggle を DockPanel の last child (= 残り幅を fill)
                      にすることで、ペイン幅が狭くても × ボタンが画面内に確実に残る。 -->
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"

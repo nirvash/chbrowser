@@ -306,6 +306,8 @@ public sealed partial class MainViewModel
         finally
         {
             tab.IsBusy = false;
+            // 前後スレナビの自動解決 (404 fallback でタブ削除済みの場合はスキップ)。
+            if (AllThreadTabs.Contains(tab)) KickNavResolve(tab);
         }
     }
 
@@ -344,6 +346,8 @@ public sealed partial class MainViewModel
         finally
         {
             tab.IsBusy = false;
+            // 新着の後半に次スレリンクが張られた可能性があるのでナビを再解決する。
+            KickNavResolve(tab);
         }
     }
 
@@ -1349,7 +1353,9 @@ public sealed partial class MainViewModel
             refreshCallback:        t => _ = RefreshThreadAsync(t),
             addToFavoritesCallback: t => ToggleThreadFavorite(t),
             writeCallback:          t => OpenPostDialog(t),
-            aiChatCallback:         t => OpenAiChat(t));
+            aiChatCallback:         t => OpenAiChat(t),
+            goPrevThreadCallback:   t => _ = OpenNavTargetAsync(t, isPrev: true),
+            goNextThreadCallback:   t => _ = OpenNavTargetAsync(t, isPrev: false));
 
         tab.ViewMode = CurrentConfig.DefaultThreadViewMode switch
         {

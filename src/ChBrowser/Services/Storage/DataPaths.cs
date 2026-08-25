@@ -89,6 +89,11 @@ public sealed class DataPaths
     /// ユーザがメモ帳等で同時編集できるよう、書込時のみ open → 即 close する運用。</summary>
     public string KakikomiTxtPath => Path.Combine(Root, "kakikomi.txt");
 
+    /// <summary>ログペイン内容のファイル出力先 (= LogService のファイルシンク)。
+    /// エージェントやサポート時の事後解析用。UTF-8 append、2MB 超で .old へ 1 世代退避
+    /// (= 常時最大約 4MB、長期運転でも肥大化しない)。</summary>
+    public string LogTxtPath => Path.Combine(Root, "chbrowser.log");
+
     /// <summary>板の保存ディレクトリ。host から root domain を判定。</summary>
     public string BoardDir(string host, string directoryName)
     {

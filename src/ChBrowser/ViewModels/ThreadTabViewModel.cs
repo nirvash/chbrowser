@@ -42,6 +42,14 @@ public sealed class ScrollToPostRequest
     public ScrollToPostRequest(int number) => Number = number;
 }
 
+/// <summary>前スレ / 次スレナビゲーションの候補 1 件。ツールバー ⏮ ⏭ ボタンの右クリックメニューや
+/// 🚫 除外メニューに並べる。解決ロジック本体は MainViewModel.ThreadNav.cs 参照。</summary>
+/// <param name="Key">候補スレの key (= スレ立て epoch 秒)。</param>
+/// <param name="Title">候補スレのタイトル (subject.txt 由来。不明なら空文字)。</param>
+/// <param name="PostCount">subject.txt 上のレス数 (不明なら 0)。</param>
+/// <param name="Score">ranking スコア (大きいほど有力。算出方法は ThreadNavResolver 参照)。</param>
+public sealed record ThreadNavCandidate(string Key, string Title, int PostCount, double Score);
+
 /// <summary>
 /// 1 スレッド = 1 タブ。WebView2 へは Posts (Post 列) を Bind し、HTML 構築は JS 側で行う。
 /// 表示モード (Flat / Tree / DedupTree) はすべて JS 側で実装済 (thread.js)、
@@ -64,6 +72,122 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     public IRelayCommand WriteCommand           { get; }
     /// <summary>ツールバー「AI」ボタン用。このスレの内容を文脈に LLM チャットウィンドウを開く。</summary>
     public IRelayCommand AiChatCommand          { get; }
+    /// <summary>ツールバー ⏮ (前スレへ) ボタン用。MainViewModel.OpenNavTargetAsync への橋渡し。</summary>
+    public IRelayCommand GoPrevThreadCommand    { get; }
+    /// <summary>ツールバー ⏭ (次スレへ) ボタン用。</summary>
+    public IRelayCommand GoNextThreadCommand    { get; }
+
+    // ---- 前スレ / 次スレナビゲーション状態 ----
+    //
+    // 解決ロジック本体は MainViewModel.ThreadNav.cs。ここは「解決結果を UI に見せる」だけの受け皿。
+    // idx.json の PrevThreadKey / NextThreadKey / NavExcludedKeys (= 確定・除外の永続値) を
+    // MainViewModel が読み、解決結果と合わせて以下の ObservableProperty に流し込む。
+
+    /// <summary>前スレ候補一覧 (有力順)。⏮ 右クリックメニュー / 🚫 除外メニューの素。</summary>
+    [ObservableProperty]
+    private IReadOnlyList<ThreadNavCandidate>? _prevNavCandidates;
+
+    /// <summary>次スレ候補一覧 (有力順)。</summary>
+    [ObservableProperty]
+    private IReadOnlyList<ThreadNavCandidate>? _nextNavCandidates;
+
+    /// <summary>現在採用中の前スレ key (= ⏮ で開く先)。自動推測 / 確定値どちらか。null = 不明でボタン無効。</summary>
+    [ObservableProperty]
+    private string? _prevNavKey;
+
+    /// <summary><see cref="PrevNavKey"/> のスレタイトル (ToolTip 表示用。不明なら空文字)。</summary>
+    [ObservableProperty]
+    private string? _prevNavTitle;
+
+    /// <summary>前スレがユーザ操作で確定済 (✅ / 候補選択 / 手動 URL) か。true なら自動推測で上書きしない。</summary>
+    [ObservableProperty]
+    private bool _isPrevNavConfirmed;
+
+    /// <summary>現在採用中の次スレ key (= ⏭ で開く先)。null = 不明でボタン無効。</summary>
+    [ObservableProperty]
+    private string? _nextNavKey;
+
+    /// <summary><see cref="NextNavKey"/> のスレタイトル。</summary>
+    [ObservableProperty]
+    private string? _nextNavTitle;
+
+    /// <summary>次スレが確定済か。<see cref="IsPrevNavConfirmed"/> の次スレ版。</summary>
+    [ObservableProperty]
+    private bool _isNextNavConfirmed;
+
+    /// <summary>前後スレナビの自動解決 (<see cref="MainViewModel.ResolveThreadChainAsync"/>) 実行中フラグ。
+    /// PropertyChanged 不要 (= 内部排他制御のみ)。OpenThreadAsync / RefreshThreadAsync の完了フックが
+    /// 重なって同時実行するのを防ぐ。</summary>
+    public bool NavResolving { get; set; }
+
+    /// <summary>最後にナビ解決が「完走」したときの <see cref="Posts"/> 件数。
+    /// 同一件数なら本文は不変 (= 前スレリンクはレス 1〜5、次スレは既走査範囲に含まれる) なので
+    /// 解決をスキップして結果を再利用する。新着で件数が増えたときだけ再解析。
+    /// ユーザ操作 (確定 / 除外 / 手動設定) 経由の解決は force で回るのでこの値に関係なく実行される。
+    /// 解決が例外で中断した場合は更新されない (= 失敗はキャッシュしない)。</summary>
+    public int NavResolvedAtPostCount { get; set; } = -1;
+
+    partial void OnPrevNavCandidatesChanged(IReadOnlyList<ThreadNavCandidate>? value) => NotifyNavDerived();
+    partial void OnNextNavCandidatesChanged(IReadOnlyList<ThreadNavCandidate>? value) => NotifyNavDerived();
+    partial void OnPrevNavKeyChanged(string? value)      => NotifyNavDerived();
+    partial void OnPrevNavTitleChanged(string? value)    => NotifyNavDerived();
+    partial void OnIsPrevNavConfirmedChanged(bool value) => NotifyNavDerived();
+    partial void OnNextNavKeyChanged(string? value)      => NotifyNavDerived();
+    partial void OnNextNavTitleChanged(string? value)    => NotifyNavDerived();
+    partial void OnIsNextNavConfirmedChanged(bool value) => NotifyNavDerived();
+
+    /// <summary>ナビ系の派生プロパティ / ToolTip をまとめて再通知する
+    /// (= 個々の ObservableProperty 変更から共通で呼ぶ)。</summary>
+    private void NotifyNavDerived()
+    {
+        OnPropertyChanged(nameof(HasPrevNav));
+        OnPropertyChanged(nameof(HasNextNav));
+        OnPropertyChanged(nameof(CanConfirmNavigation));
+        OnPropertyChanged(nameof(HasNavCandidates));
+        OnPropertyChanged(nameof(PrevNavToolTip));
+        OnPropertyChanged(nameof(NextNavToolTip));
+        OnPropertyChanged(nameof(ConfirmNavToolTip));
+    }
+
+    /// <summary>前スレが確定している (= ⏮ が押せる)。XAML IsEnabled bind 用。</summary>
+    public bool HasPrevNav => !string.IsNullOrEmpty(PrevNavKey);
+
+    /// <summary>次スレが確定している (= ⏭ が押せる)。</summary>
+    public bool HasNextNav => !string.IsNullOrEmpty(NextNavKey);
+
+    /// <summary>✅ 確定ボタンが押せるか = 「未確定の採用 target」が少なくとも片方ある。
+    /// 両サイド確定済みなら押す意味がないので無効。</summary>
+    public bool CanConfirmNavigation =>
+        (HasPrevNav && !IsPrevNavConfirmed) || (HasNextNav && !IsNextNavConfirmed);
+
+    /// <summary>🚫 除外ボタンが押せるか = 候補リストが 1 件でも存在する。</summary>
+    public bool HasNavCandidates =>
+        (PrevNavCandidates?.Count ?? 0) > 0 || (NextNavCandidates?.Count ?? 0) > 0;
+
+    /// <summary>⏮ ボタンの ToolTip 文字列 (採用中スレタイトル + 確定/推測表示)。</summary>
+    public string PrevNavToolTip => HasPrevNav
+        ? $"前スレへ移動: {PrevNavTitle} [{ShortKey(PrevNavKey)}]{(IsPrevNavConfirmed ? " (確定)" : " (自動推測)")} — 右クリックで候補一覧"
+        : "前スレ: 不明 (レス 1〜5 にリンクが無く、板でも推測できません)";
+    /// <summary>⏭ ボタンの ToolTip 文字列。</summary>
+    public string NextNavToolTip => HasNextNav
+        ? $"次スレへ移動: {NextNavTitle} [{ShortKey(NextNavKey)}]{(IsNextNavConfirmed ? " (確定)" : " (自動推測)")} — 右クリックで候補一覧"
+        : "次スレ: 未検出 (後半レスにリンクが無く、板でも推測できません)";
+    /// <summary>✅ 確定ボタンの ToolTip 文字列。</summary>
+    public string ConfirmNavToolTip
+    {
+        get
+        {
+            if (!CanConfirmNavigation) return "前後スレの確定 (未確定の target がありません)";
+            var parts = new List<string>();
+            if (HasPrevNav && !IsPrevNavConfirmed) parts.Add($"前={PrevNavTitle} [{ShortKey(PrevNavKey)}]");
+            if (HasNextNav && !IsNextNavConfirmed) parts.Add($"次={NextNavTitle} [{ShortKey(NextNavKey)}]");
+            return $"これらの候補を本物として確定: {string.Join(" / ", parts)}";
+        }
+    }
+
+    /// <summary>ToolTip 内では key 全桁は長いので末尾 6 桁に略す。</summary>
+    private static string ShortKey(string? key)
+        => string.IsNullOrEmpty(key) || key.Length <= 6 ? (key ?? "") : "…" + key[^6..];
 
     [ObservableProperty]
     private string _header;
@@ -305,7 +429,9 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         Action<ThreadTabViewModel>?          refreshCallback        = null,
         Action<ThreadTabViewModel>?          addToFavoritesCallback = null,
         Action<ThreadTabViewModel>?          writeCallback          = null,
-        Action<ThreadTabViewModel>?          aiChatCallback         = null)
+        Action<ThreadTabViewModel>?          aiChatCallback         = null,
+        Action<ThreadTabViewModel>?          goPrevThreadCallback   = null,
+        Action<ThreadTabViewModel>?          goNextThreadCallback   = null)
     {
         Board                  = board;
         ThreadKey              = info.Key;
@@ -317,6 +443,8 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         AddToFavoritesCommand  = new RelayCommand(() => addToFavoritesCallback?.Invoke(this));
         WriteCommand           = new RelayCommand(() => writeCallback?.Invoke(this));
         AiChatCommand          = new RelayCommand(() => aiChatCallback?.Invoke(this));
+        GoPrevThreadCommand    = new RelayCommand(() => goPrevThreadCallback?.Invoke(this));
+        GoNextThreadCommand    = new RelayCommand(() => goNextThreadCallback?.Invoke(this));
         // 表示モード切替ボタンのサイクル順で次へ進む (一周したら先頭へ)。
         // 旧 DedupTree は dedupTree2 へ置き換え中のためサイクルから除外している (ソースは残すが UI からは呼ばない)。
         CycleViewModeCommand   = new RelayCommand(() =>

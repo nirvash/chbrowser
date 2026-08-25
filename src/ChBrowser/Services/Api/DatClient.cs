@@ -80,8 +80,10 @@ public sealed class DatClient
                     allPosts.AddRange(existingPosts);
                     if (existingPosts.Count > 0) progress.Report(existingPosts);
 
-                    // 新規分を append しつつ streaming パース
-                    await using var fs     = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.None);
+                    // 新規分を append しつつ streaming パース。
+                    // FileShare.Read: 取得中のファイルを前後スレナビの連鎖検証等が読めるようにする
+                    // (= 排他にすると起動時の同時復元で「別プロセスが使用中」IOException が発生していた)。
+                    await using var fs     = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
                     await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                     await StreamPostsAsync(stream, fs, allPosts, existingPosts.Count + 1, progress, ct).ConfigureAwait(false);
                     finalSize = new FileInfo(path).Length;
@@ -89,7 +91,7 @@ public sealed class DatClient
                 }
             case 200: // OK - 全置換 (サーバが Range を無視 or 初回取得)
                 {
-                    await using var fs     = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await using var fs     = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
                     await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                     await StreamPostsAsync(stream, fs, allPosts, 1, progress, ct).ConfigureAwait(false);
                     finalSize = new FileInfo(path).Length;
@@ -111,7 +113,7 @@ public sealed class DatClient
                         .SendAsync(req2, HttpCompletionOption.ResponseHeadersRead, ct)
                         .ConfigureAwait(false);
                     resp2.EnsureSuccessStatusCode();
-                    await using var fs     = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await using var fs     = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
                     await using var stream = await resp2.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                     await StreamPostsAsync(stream, fs, allPosts, 1, progress, ct).ConfigureAwait(false);
                     finalSize = new FileInfo(path).Length;
@@ -128,7 +130,7 @@ public sealed class DatClient
                         break;
                     }
                     // 変換成功: 通常の dat と同じパスにキャッシュ書き出し → 以降は普通に取れる。
-                    await using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+                    await using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
                         await fs.WriteAsync(fallbackBytes, ct).ConfigureAwait(false);
                     var posts = DatParser.Parse(fallbackBytes);
                     allPosts.AddRange(posts);
@@ -202,14 +204,69 @@ public sealed class DatClient
         return any;
     }
 
-    /// <summary>ローカル保存済みの dat があればパースして返す。無ければ空。</summary>
+    /// <summary>ローカル保存済みの dat があればパースして返す。無ければ空。
+    /// 読み取りは FileShare.ReadWrite (= 取得中の追記書き込みと共存する)。</summary>
     public async Task<DatFetchResult?> LoadFromDiskAsync(Board board, string threadKey, CancellationToken ct = default)
     {
         var path = _paths.DatPath(board.Host, board.DirectoryName, threadKey);
         if (!File.Exists(path)) return null;
 
-        var bytes = await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false);
-        return new DatFetchResult(DatParser.Parse(bytes), bytes.LongLength);
+        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var bytes = new byte[fs.Length];
+        var read  = 0;
+        while (read < bytes.Length)
+        {
+            var n = await fs.ReadAsync(bytes.AsMemory(read), ct).ConfigureAwait(false);
+            if (n == 0) break;
+            read += n;
+        }
+        // 追記中の読み取りで要求より短く終わる可能性に備えて実読みバイトだけを渡す。
+        if (read == bytes.Length) return new DatFetchResult(DatParser.Parse(bytes), read);
+        return new DatFetchResult(DatParser.Parse(bytes[..read]), read);
+    }
+
+    /// <summary>nav 候補のタイトル probe 用に読み込む dat 先頭バイト数。1 行目 (タイトル行) には十分。</summary>
+    private const int TitleProbeBytes = 4096;
+
+    /// <summary>ネットワーク上の dat 先頭だけを Range 取得して 1 レス目のスレタイトルを返す。
+    /// 前後スレナビの候補検証専用。ディスクには一切保存しない (= 見ただけの荒らしスレが
+    /// <see cref="EnumerateExistingThreadKeys"/> の「ログあり」扱いになる汚染を避ける)。
+    /// dat 落ち (404) / 通信失敗 / パース不能は null。</summary>
+    public async Task<string?> FetchThreadTitleFromNetworkAsync(Board board, string threadKey, CancellationToken ct = default)
+    {
+        var url = $"{board.Url.TrimEnd('/')}/dat/{threadKey}.dat";
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            // 先頭 4KB だけ要求。Range 無視で 200 全体が来ても先頭行を読み切った時点で
+            // ストリームを放棄するので実転送は最小限で済む。
+            req.Headers.Range = new RangeHeaderValue(0, TitleProbeBytes - 1);
+            using var resp = await _client.Http
+                .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct)
+                .ConfigureAwait(false);
+            var code = (int)resp.StatusCode;
+            if (code != 200 && code != 206) return null;
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var buf   = new byte[TitleProbeBytes];
+            var total = 0;
+            int read;
+            while (total < buf.Length &&
+                   (read = await stream.ReadAsync(buf.AsMemory(total), ct).ConfigureAwait(false)) > 0)
+                total += read;
+
+            var lineEnd = Array.IndexOf(buf, (byte)'\n', 0, total);
+            if (lineEnd < 0) lineEnd = total;
+            var firstLine = Encoding.GetEncoding(932).GetString(buf, 0, lineEnd).TrimEnd('\r');
+            if (firstLine.Length == 0) return null;
+            return DatParser.ParseLine(firstLine, 1)?.ThreadTitle;
+        }
+        catch (Exception ex)
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[datFetch] title probe failed {url}: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>dat の先頭 1 行だけ読んでスレタイトルを取り出す。
@@ -221,7 +278,8 @@ public sealed class DatClient
         if (!File.Exists(path)) return null;
         try
         {
-            await using var stream = File.OpenRead(path);
+            // FileShare.ReadWrite: 取得中 (追記書き込み中) のファイルでも読めるようにする。
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader       = new StreamReader(stream, Encoding.GetEncoding(932));
             var firstLine          = await reader.ReadLineAsync(ct).ConfigureAwait(false);
             if (firstLine is null) return null;
@@ -231,6 +289,31 @@ public sealed class DatClient
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[DatClient] read title failed for {threadKey}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>ネットワーク上の dat 全体を取得してパースする (ディスク非保存・メモリのみ)。
+    /// 前後スレナビの連鎖検証 (= 候補スレ本文内のリンク走査) 専用。ユーザが開いてもいない
+    /// 候補スレの dat でログ列挙を汚染しないために保存しない。
+    /// 取得失敗 / dat 落ち (404 等) は null。</summary>
+    public async Task<DatFetchResult?> FetchInMemoryAsync(Board board, string threadKey, CancellationToken ct = default)
+    {
+        var url = $"{board.Url.TrimEnd('/')}/dat/{threadKey}.dat";
+        try
+        {
+            using var resp = await _client.Http
+                .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
+                .ConfigureAwait(false);
+            var code = (int)resp.StatusCode;
+            if (code != 200 && code != 206) return null;
+            var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            return new DatFetchResult(DatParser.Parse(bytes), bytes.LongLength);
+        }
+        catch (Exception ex)
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[datFetch] in-memory fetch failed {url}: {ex.Message}");
             return null;
         }
     }

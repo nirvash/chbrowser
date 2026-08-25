@@ -149,6 +149,9 @@ public partial class App : Application
         _configStorage   = new ConfigStorage(paths);
         _currentConfig   = _configStorage.Load();
 
+        // ログのファイル出力を有効化 (data/chbrowser.log。2MB × 2 世代ローテーション = 肥大化しない)。
+        ChBrowser.Services.Logging.LogService.Instance.InitFileSink(paths.LogTxtPath);
+
         // HiDPI: PerMonitorV2 指定なら任意のウィンドウ作成前に awareness を上げる
         if (_currentConfig.HiDpiMode == "PerMonitorV2")
         {

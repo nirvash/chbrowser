@@ -1653,6 +1653,166 @@ public partial class ThreadDisplayPane : UserControl
         _ = main.OpenNextThreadSearchAsync(tab);
     }
 
+    // -----------------------------------------------------------------
+    // 前スレ / 次スレナビゲーション (ツールバー ⏮ ⏭ 🚫 ✅)
+    // 解決ロジック本体は ViewModels/MainViewModel.ThreadNav.cs。
+    // -----------------------------------------------------------------
+
+    private void NavPrevButton_RightClick(object sender, MouseButtonEventArgs e)
+        => ShowNavCandidateMenu(sender as Button, isPrev: true);
+
+    private void NavNextButton_RightClick(object sender, MouseButtonEventArgs e)
+        => ShowNavCandidateMenu(sender as Button, isPrev: false);
+
+    /// <summary>⏮ / ⏭ 右クリック。有力順の候補メニューを開く。
+    /// 候補クリック = 「その場で採用 + 確定 + オープン」。乱立板では
+    /// 「開く → 違ったら 🚫 で除外 or 次候補を選択」を繰り返して正解に辿り着く。</summary>
+    private void ShowNavCandidateMenu(Button? btn, bool isPrev)
+    {
+        if (btn is null) return;
+        if (DataContext is not ThreadPaneGroupViewModel { SelectedTab: { } tab }) return;
+        if (Vm is not { } main) return;
+
+        var cands = isPrev ? tab.PrevNavCandidates : tab.NextNavCandidates;
+        var menu  = new ContextMenu { PlacementTarget = btn, Placement = PlacementMode.Bottom };
+        var label = isPrev ? "前" : "次";
+
+        menu.Items.Add(new MenuItem { Header = $"{label}スレ候補 ({cands?.Count ?? 0} 件)", IsEnabled = false });
+        menu.Items.Add(new Separator());
+
+        if (cands is not { Count: > 0 })
+        {
+            menu.Items.Add(new MenuItem { Header = "(候補なし)", IsEnabled = false });
+        }
+        else
+        {
+            foreach (var c in cands)
+            {
+                var captured = c;
+                var item     = new MenuItem { Header = BuildNavCandidateHeader(captured, tab, isPrev) };
+                item.Click   += (_, _) => main.AdoptNavCandidate(tab, isPrev, captured);
+                menu.Items.Add(item);
+            }
+        }
+
+        menu.Items.Add(new Separator());
+        var confirmItem = new MenuItem
+        {
+            Header    = "この候補で確定",
+            IsEnabled = isPrev ? tab.HasPrevNav && !tab.IsPrevNavConfirmed
+                               : tab.HasNextNav && !tab.IsNextNavConfirmed,
+        };
+        confirmItem.Click += (_, _) => main.ConfirmNavigation(tab);
+        menu.Items.Add(confirmItem);
+
+        var manualItem = new MenuItem { Header = "手動で URL を設定…" };
+        manualItem.Click += (_, _) => PromptManualNavUrl(tab, isPrev);
+        menu.Items.Add(manualItem);
+
+        if (isPrev ? tab.IsPrevNavConfirmed : tab.IsNextNavConfirmed)
+        {
+            var clearItem = new MenuItem { Header = "確定をクリア" };
+            clearItem.Click += (_, _) => _ = SafeClearNavOverrideAsync(main, tab, isPrev);
+            menu.Items.Add(clearItem);
+        }
+
+        menu.IsOpen = true;
+    }
+
+    /// <summary>🚫 クリック。前後それぞれの候補を出し、選んだ key を「荒らし / 間違い」として
+    /// 除外登録する (idx.json の NavExcludedKeys に永続化、以降の自動 ranking 対象外)。</summary>
+    private void NavExcludeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn) return;
+        if (DataContext is not ThreadPaneGroupViewModel { SelectedTab: { } tab }) return;
+        if (Vm is not { } main) return;
+
+        var menu = new ContextMenu { PlacementTarget = btn, Placement = PlacementMode.Bottom };
+        AppendNavExcludeSection(menu, tab, main, isPrev: true);
+        if ((tab.PrevNavCandidates?.Count ?? 0) > 0 && (tab.NextNavCandidates?.Count ?? 0) > 0)
+            menu.Items.Add(new Separator());
+        AppendNavExcludeSection(menu, tab, main, isPrev: false);
+
+        if (menu.Items.Count == 0) return;
+        menu.IsOpen = true;
+    }
+
+    private static void AppendNavExcludeSection(ContextMenu menu, ThreadTabViewModel tab, MainViewModel main, bool isPrev)
+    {
+        var cands = isPrev ? tab.PrevNavCandidates : tab.NextNavCandidates;
+        if (cands is not { Count: > 0 }) return;
+        menu.Items.Add(new MenuItem
+        {
+            Header    = $"{(isPrev ? "前" : "次")}スレ候補を除外:",
+            IsEnabled = false,
+        });
+        foreach (var c in cands)
+        {
+            var captured = c;
+            var item     = new MenuItem { Header = BuildNavCandidateHeader(captured, tab, isPrev) };
+            item.Click   += async (_, _) =>
+            {
+                try { await main.ExcludeNavCandidateAsync(tab, captured.Key); }
+                catch (Exception ex) { main.StatusMessage = $"候補の除外に失敗: {ex.Message}"; }
+            };
+            menu.Items.Add(item);
+        }
+    }
+
+    /// <summary>✅ クリック。現採用 target を「本物」として確定 (idx.json へ永続化)。</summary>
+    private void NavConfirmButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ThreadPaneGroupViewModel { SelectedTab: { } tab }) return;
+        if (Vm is not { } main) return;
+        main.ConfirmNavigation(tab);
+    }
+
+    /// <summary>候補メニュー項目の表示文字列。採用中候補には ✔ を付け、タイトル + レス数 + key を並べる。</summary>
+    private static string BuildNavCandidateHeader(ThreadNavCandidate c, ThreadTabViewModel tab, bool isPrev)
+    {
+        var currentKey = isPrev ? tab.PrevNavKey : tab.NextNavKey;
+        var title      = string.IsNullOrEmpty(c.Title) ? "(タイトル不明)" : TruncateForMenu(c.Title);
+        var count      = c.PostCount > 0 ? $" ({c.PostCount})" : "";
+        var mark       = c.Key == currentKey ? "✔ " : "";
+        return $"{mark}{title}{count}  [{c.Key}]";
+    }
+
+    /// <summary>メニュー表示用に長いスレタイを切る。</summary>
+    private static string TruncateForMenu(string s)
+    {
+        const int max = 44;
+        if (s.Length <= max) return s;
+        var cut = max;
+        // サロゲートペアの途中で切らない (ThreadTabViewModel.TruncateForTab と同じ配慮)。
+        if (char.IsHighSurrogate(s[cut - 1])) cut--;
+        return s[..cut] + "…";
+    }
+
+    /// <summary>「手動で URL を設定…」。InputDialog に入力された URL を検証して採用 + オープンする。</summary>
+    private void PromptManualNavUrl(ThreadTabViewModel tab, bool isPrev)
+    {
+        if (Vm is not { } main) return;
+        var label = isPrev ? "前スレ" : "次スレ";
+        var input = InputDialog.Prompt(
+            Window.GetWindow(this),
+            $"{label}の手動設定",
+            $"{label}のスレ URL を入力してください (同一板のみ有効):\nhttps://…/test/read.cgi/{tab.Board.DirectoryName}/<key>/");
+        if (string.IsNullOrWhiteSpace(input)) return;
+        SafeSetManualNavUrl(main, tab, isPrev, input);
+    }
+
+    private static void SafeSetManualNavUrl(MainViewModel main, ThreadTabViewModel tab, bool isPrev, string input)
+    {
+        try { main.SetManualNavTarget(tab, isPrev, input); }
+        catch (Exception ex) { main.StatusMessage = $"手動設定エラー: {ex.Message}"; }
+    }
+
+    private static async Task SafeClearNavOverrideAsync(MainViewModel main, ThreadTabViewModel tab, bool isPrev)
+    {
+        try { await main.ClearNavOverrideAsync(tab, isPrev); }
+        catch (Exception ex) { main.StatusMessage = $"確定解除エラー: {ex.Message}"; }
+    }
+
     private void ThreadTabDeleteLog_Click(object sender, RoutedEventArgs e)
     {
         if (TabOf<ThreadTabViewModel>(sender) is not { } tab) return;

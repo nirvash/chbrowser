@@ -32,4 +32,14 @@ public sealed record ThreadIndex(
     double? ScrollY = null,
     double? DocHeight = null,
     double? EnvSlotScale = null,
-    double? EnvPageZoom = null);
+    double? EnvPageZoom = null,
+    /// <summary>前スレナビゲーションの確定値 (= ユーザが ✅ 確定 / 候補メニューで選択 / 手動 URL 設定した key)。
+    /// null は「未確定」で、自動推測 (<see cref="ViewModels.MainViewModel"/>) の結果に従う。
+    /// スレ key はスレ立て epoch 秒なので「本 key &lt; 自スレ key」が前スレの方向条件。</summary>
+    string? PrevThreadKey = null,
+    /// <summary>次スレナビゲーションの確定値。意味は <see cref="PrevThreadKey"/> の次スレ版
+    /// (「本 key &gt; 自スレ key」が方向条件)。</summary>
+    string? NextThreadKey = null,
+    /// <summary>前後スレ候補から「荒らし / 間違いリンク」としてユーザが除外登録したスレ key 集合。
+    /// 自動推測の候補 ranking から永久に外される (🚫 除外ボタンで追加)。null は空集合と同義。</summary>
+    string[]? NavExcludedKeys = null);
