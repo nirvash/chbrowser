@@ -10,6 +10,23 @@ using ChBrowser.Models;
 
 namespace ChBrowser.Services.Llm;
 
+/// <summary>前後スレナビの候補 1 件分 (<see cref="ChBrowser.ViewModels.ThreadNavCandidate"/> のツール層向けミラー。
+/// Services 層から ViewModels 型を直接参照しないためのコピー)。</summary>
+public sealed record NavCandidateInfo(string Key, string Title, int PostCount, double Score);
+
+/// <summary>attached スレの前後スレナビ片側分の状態。<see cref="ThreadToolset"/> へは
+/// スナップショットではなくライブ読み取りデリゲート (<c>Func&lt;bool, NavSideState&gt;</c>) で渡される
+/// (= 採用 → オープンのような連続操作の間に状態が更新されても常に最新が読める)。</summary>
+public sealed record NavSideState(
+    string?                       Key,
+    string                        Title,
+    bool                          Confirmed,
+    IReadOnlyList<NavCandidateInfo> Candidates);
+
+/// <summary><c>set_nav_target</c> がホスト側 (MainViewModel) へ依頼する 1 操作。
+/// Action は "adopt" / "exclude" / "clear" / "confirm"。Key は adopt / exclude で必須。</summary>
+public sealed record NavMutationRequest(bool IsPrev, string Action, string? Key);
+
 /// <summary>
 /// AI チャットで LLM が呼び出せるツール群を束ねる。
 ///
@@ -46,6 +63,13 @@ public sealed class ThreadToolset : IAgentToolset
     private const int DefaultRepliesLimit = 30;
     private const int MaxRepliesLimit     = 100;
 
+    /// <summary>find_next_thread_candidates の既定 / 上限件数、類似度しきい値。
+    /// しきい値 6 は MainViewModel.FuzzyMatchByTitle (右クリック「次スレ候補検索」) と同じ
+    /// (= 「Part」「【】」のような短いプレフィックスだけでヒットしないようにする)。</summary>
+    private const int DefaultCandidatesLimit = 20;
+    private const int MaxCandidatesLimit     = 50;
+    private const int CandidateSimMin        = 6;
+
     /// <summary>find_popular_posts の既定 / 上限件数。</summary>
     private const int DefaultPopularTopK = 10;
     private const int MaxPopularTopK     = 50;
@@ -79,6 +103,16 @@ public sealed class ThreadToolset : IAgentToolset
     private readonly Func<string, Task<string>>    _openBoardInAppAsync;
     private readonly Func<string, IReadOnlyList<AiSearchResultEntry>, Task<string>> _openThreadListInAppAsync;
 
+    /// <summary>attached スレの前後スレナビ状態のライブ読み取り (isPrev → 状態)。
+    /// null = ナビ非対応で構築された toolset (get_nav_state / open_prev_thread / open_next_thread はエラーを返す)。
+    /// ホスト (MainViewModel) が UI スレッド上で ObservableProperty を読むクロージャを渡す。
+    /// 実行は UI スレッド前提 (MCP は Dispatcher 経由、AI エージェントも UI スレッド上でツールを実行する)。</summary>
+    private readonly Func<bool, NavSideState>? _getNavSide;
+
+    /// <summary>set_nav_target の実体 (= MainViewModel.ThreadNav の採用 / 除外 / 解除 / 確定操作)。
+    /// null 可 (非対応)。メッセージ文字列を返す。</summary>
+    private readonly Func<NavMutationRequest, Task<string>>? _navMutationAsync;
+
     /// <summary>会話開始時の attached スレッド (任意)。<c>thread_url</c> 省略時のデフォルト先で、状態系ツールの唯一のソース。</summary>
     private readonly ThreadContext? _attached;
 
@@ -106,12 +140,16 @@ public sealed class ThreadToolset : IAgentToolset
         int?                          attachedLastRead        = null,
         int?                          attachedMarkPostNumber  = null,
         IEnumerable<int>?             attachedOwnPostNumbers  = null,
-        bool                          attachedHasReplyToOwn   = false)
+        bool                          attachedHasReplyToOwn   = false,
+        Func<bool, NavSideState>?     getNavSide              = null,
+        Func<NavMutationRequest, Task<string>>? navMutationAsync = null)
     {
         _dataLoader               = dataLoader;
         _openThreadInAppAsync     = openThreadInAppAsync;
         _openBoardInAppAsync      = openBoardInAppAsync;
         _openThreadListInAppAsync = openThreadListInAppAsync;
+        _getNavSide               = getNavSide;
+        _navMutationAsync         = navMutationAsync;
 
         if (attachedBoard is not null && attachedThreadKey is not null && attachedPosts is not null)
         {
@@ -544,6 +582,114 @@ public sealed class ThreadToolset : IAgentToolset
                     },
                 },
             },
+
+            // ---- 前後スレナビゲーション系 (attached 専用。find_next_thread_candidates のみ thread_url 可) ----
+            new
+            {
+                type     = "function",
+                function = new
+                {
+                    name        = "get_nav_state",
+                    description = "attached スレッドの前後スレナビゲーション (⏮ ⏭) 状態を返す。" +
+                                  "解決済みの前 / 次スレ (key・タイトル・URL・確定済みか) と、未確定なら候補一覧 (有力順) を含む。" +
+                                  "「次スレ開いて」「前のスレに戻って」系の依頼ではまずこれを呼び、" +
+                                  "解決済みなら open_next_thread / open_prev_thread、未解決なら find_next_thread_candidates で探す。" +
+                                  "attached が無い場合はエラー。",
+                    parameters  = new
+                    {
+                        type       = "object",
+                        properties = new { },
+                        required   = Array.Empty<string>(),
+                    },
+                },
+            },
+            new
+            {
+                type     = "function",
+                function = new
+                {
+                    name        = "open_next_thread",
+                    description = "attached スレッドの「次スレ」へ移動する (= ツールバー ⏭ ボタン相当)。解決済み target をアプリで開く。" +
+                                  "未解決の場合はエラー + 上位候補が返るので、find_next_thread_candidates(direction=\"next\") や" +
+                                  " list_threads で本物を特定して set_nav_target(action=\"adopt\", side=\"next\", key=...) で採用してから再試行する。" +
+                                  "attached が無い場合はエラー。",
+                    parameters  = new
+                    {
+                        type       = "object",
+                        properties = new { },
+                        required   = Array.Empty<string>(),
+                    },
+                },
+            },
+            new
+            {
+                type     = "function",
+                function = new
+                {
+                    name        = "open_prev_thread",
+                    description = "attached スレッドの「前スレ」へ移動する (= ツールバー ⏮ ボタン相当)。" +
+                                  "挙動と未解決時の対処は open_next_thread と同じ (side が \"prev\" になるだけ)。",
+                    parameters  = new
+                    {
+                        type       = "object",
+                        properties = new { },
+                        required   = Array.Empty<string>(),
+                    },
+                },
+            },
+            new
+            {
+                type     = "function",
+                function = new
+                {
+                    name        = "find_next_thread_candidates",
+                    description = "指定スレと同じ板の subject.txt から、スレタイ類似度 (最長共通部分文字列) で" +
+                                  "「次スレ / 前スレ候補」を検索して上位を返す (**データのみ。開きも採用もしない**)。" +
+                                  "direction=\"next\" で現スレより新しい key のみ、\"prev\" で古い key のみに絞り込める (既定 \"any\")。" +
+                                  "thread_url 省略時は attached スレ。" +
+                                  "結果の使い分け: 採用してナビに登録するなら set_nav_target(action=\"adopt\")、" +
+                                  "単に開くだけなら open_thread_in_app / open_next_thread。" +
+                                  "get_nav_state で既に解決済みなら通常はこのツールは不要。",
+                    parameters  = new
+                    {
+                        type       = "object",
+                        properties = new
+                        {
+                            direction  = new { type = "string", description = "\"next\" (現スレより新しく立てられた key のみ) / \"prev\" (古い key のみ) / \"any\" (既定)。次スレを探しているなら \"next\"。" },
+                            title      = new { type = "string", description = "類似度判定の基準に使うタイトル上書き (通常は省略。thread_url 指定時に dat から取れない場合の手動指定用)" },
+                            limit      = new { type = "integer", description = $"返す最大件数 (既定 {DefaultCandidatesLimit}, 上限 {MaxCandidatesLimit})" },
+                            thread_url = ThreadUrlParam(),
+                        },
+                        required = Array.Empty<string>(),
+                    },
+                },
+            },
+            new
+            {
+                type     = "function",
+                function = new
+                {
+                    name        = "set_nav_target",
+                    description = "attached スレッドの前後スレナビ状態を変更する (= ⏮ ⏭ 右クリックメニュー相当)。\n" +
+                                  "- action=\"adopt\": 数字 key を side (\"prev\"|\"next\") スレとして**採用 + 確定し、アプリでそのスレを開く**。\n" +
+                                  "- action=\"exclude\": key を除外リストへ永続登録して再解決する (荒らし / 誤爆候補の排除)。\n" +
+                                  "- action=\"clear\": side 側の確定値を解除して自動推測に戻す。\n" +
+                                  "- action=\"confirm\": 現在採用中の前後 target を「本物」として確定 (永続化、以降の自動解決で不変)。\n" +
+                                  "adopt / exclude には side と数字のみの key が必須 (自スレ自身・逆方向の key は拒否される)。" +
+                                  "attached が無い場合はエラー。",
+                    parameters  = new
+                    {
+                        type       = "object",
+                        properties = new
+                        {
+                            action = new { type = "string", description = "\"adopt\" / \"exclude\" / \"clear\" / \"confirm\"" },
+                            side   = new { type = "string", description = "\"prev\" / \"next\" (confirm 以外で必須)" },
+                            key    = new { type = "string", description = "対象スレの数字 key (スレ立て epoch 秒。list_threads / find_next_thread_candidates / get_nav_state の candidates から得る。adopt / exclude で必須)" },
+                        },
+                        required = new[] { "action" },
+                    },
+                },
+            },
         };
     }
 
@@ -641,6 +787,11 @@ public sealed class ThreadToolset : IAgentToolset
                 "open_thread_in_app"      => await OpenThreadInAppAsync(argumentsJson).ConfigureAwait(false),
                 "open_board_in_app"       => await OpenBoardInAppAsync(argumentsJson).ConfigureAwait(false),
                 "open_thread_list_in_app" => await OpenThreadListInAppAsync(argumentsJson).ConfigureAwait(false),
+                "get_nav_state"               => GetNavState(),
+                "open_prev_thread"            => await OpenAdjacentThreadAsync(isPrev: true).ConfigureAwait(false),
+                "open_next_thread"            => await OpenAdjacentThreadAsync(isPrev: false).ConfigureAwait(false),
+                "find_next_thread_candidates" => await FindNextThreadCandidatesAsync(argumentsJson, ct).ConfigureAwait(false),
+                "set_nav_target"              => await SetNavTargetAsync(argumentsJson).ConfigureAwait(false),
                 _                     => ErrorJson($"未知のツール: {name}"),
             };
         }
@@ -1533,6 +1684,315 @@ public sealed class ThreadToolset : IAgentToolset
         }, JsonOpts);
     }
 
+    // ---- 前後スレナビゲーション系 ----
+
+    private string GetNavState()
+    {
+        if (_attached is null || _getNavSide is null)
+            return ErrorJson("attached スレッドが無いので前後スレナビ状態は取得できません (このツールは attached スレ専用)。");
+        var board = _attached.Board;
+        var prev  = _getNavSide(true);
+        var next  = _getNavSide(false);
+
+        string hint;
+        if (prev.Key is null && next.Key is null)
+            hint = "前後とも未解決。find_next_thread_candidates (direction=\"next\" / \"prev\") で候補を探し、" +
+                   "見つかったら set_nav_target(action=\"adopt\") で採用する。";
+        else if (next.Key is null)
+            hint = "次スレが未解決。find_next_thread_candidates(direction=\"next\") で探して set_nav_target(action=\"adopt\", side=\"next\", key=...) で採用するか、list_threads で自力特定して open_thread_in_app してもよい。";
+        else if (prev.Key is null)
+            hint = "前スレが未解決。find_next_thread_candidates(direction=\"prev\") で探して set_nav_target(action=\"adopt\", side=\"prev\", key=...) で採用する。";
+        else if (!prev.Confirmed || !next.Confirmed)
+            hint = "少なくとも片側は自動推測。間違っていれば set_nav_target(action=\"exclude\" / \"adopt\")、正しければ set_nav_target(action=\"confirm\") で確定せよ。";
+        else
+            hint = "前後とも確定済み。移動は open_prev_thread / open_next_thread。";
+
+        return JsonSerializer.Serialize(new
+        {
+            thread = new
+            {
+                thread_url = $"https://{board.Host}/test/read.cgi/{board.DirectoryName}/{_attached.ThreadKey}/",
+                key        = _attached.ThreadKey,
+                title      = _attached.Title,
+                board      = _attached.BoardName,
+            },
+            prev = BuildNavSidePayload(board, prev),
+            next = BuildNavSidePayload(board, next),
+            hint,
+        }, JsonOpts);
+    }
+
+    private async Task<string> OpenAdjacentThreadAsync(bool isPrev)
+    {
+        if (_attached is null || _getNavSide is null)
+            return ErrorJson("attached スレッドが無いのでナビ移動はできません (このツールは attached スレ専用)。");
+
+        var side = _getNavSide(isPrev);
+        if (string.IsNullOrEmpty(side.Key))
+        {
+            // 未解決でも候補があるなら上位を添えて返す (= LLM が即 set_nav_target(adopt) に繋げられる)。
+            var top = side.Candidates.Take(3)
+                .Select(c => new { key = c.Key, title = c.Title })
+                .ToArray();
+            return JsonSerializer.Serialize(new
+            {
+                error          = $"{NavDirLabel(isPrev)}スレが未解決のため移動できません (解決がまだ完了していない可能性もある)。",
+                top_candidates = top,
+                hint           = top.Length > 0
+                    ? "top_candidates から本物を選んで set_nav_target(action=\"adopt\", side=\"" + (isPrev ? "prev" : "next") + "\", key=...) で採用するか、" +
+                      "find_next_thread_candidates(direction=\"" + (isPrev ? "prev" : "next") + "\") で再検索せよ。"
+                    : "find_next_thread_candidates(direction=\"" + (isPrev ? "prev" : "next") + "\") で候補を探せ。",
+            }, JsonOpts);
+        }
+
+        var url  = $"https://{_attached.Board.Host}/test/read.cgi/{_attached.Board.DirectoryName}/{side.Key}/";
+        var msg  = await _openThreadInAppAsync(url).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new
+        {
+            ok         = true,
+            direction  = isPrev ? "prev" : "next",
+            opened_key = side.Key,
+            title      = side.Title,
+            confirmed  = side.Confirmed,
+            thread_url = url,
+            message    = msg,
+        }, JsonOpts);
+    }
+
+    private async Task<string> FindNextThreadCandidatesAsync(string argsJson, CancellationToken ct)
+    {
+        if (!TryParseObject(argsJson, out var args))
+            return ErrorJson("引数 JSON のパースに失敗");
+
+        // 対象スレの解決: thread_url 指定 > attached。
+        Board  board;
+        string curKey;
+        string srcTitle;
+        if (args.ValueKind == JsonValueKind.Object
+            && args.TryGetProperty("thread_url", out var tuEl) && tuEl.ValueKind == JsonValueKind.String
+            && !string.IsNullOrEmpty(tuEl.GetString()))
+        {
+            var url = tuEl.GetString() ?? "";
+            if (!_dataLoader.TryParseThreadUrl(url, out var h, out var d, out var k))
+                return ErrorJson($"thread_url の解釈に失敗: \"{url}\"");
+            board  = _dataLoader.ResolveBoard(h, d);
+            curKey = k;
+
+            if (args.TryGetProperty("title", out var tEl) && tEl.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(tEl.GetString()))
+            {
+                srcTitle = tEl.GetString()!;
+            }
+            else if (_attached is not null
+                     && string.Equals(_attached.Board.Host, h, StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(_attached.Board.DirectoryName, d, StringComparison.Ordinal)
+                     && string.Equals(_attached.ThreadKey, k, StringComparison.Ordinal))
+            {
+                srcTitle = _attached.Title;
+            }
+            else
+            {
+                // dat 先頭レスからタイトルを引く (取れなければ title 引数での上書きを促す)。
+                var posts     = await _dataLoader.LoadPostsAsync(board, k, ct).ConfigureAwait(false);
+                var fromDat   = posts.Count > 0 ? posts[0].ThreadTitle : null;
+                if (string.IsNullOrWhiteSpace(fromDat))
+                    return ErrorJson("指定スレのタイトルを取得できませんでした (dat 落ち?)。title 引数で元スレタイトルを明示指定してください。");
+                srcTitle = fromDat;
+            }
+        }
+        else
+        {
+            if (_attached is null)
+                return ErrorJson("thread_url が指定されておらず、attached スレッドもありません。thread_url を指定してください。");
+            board    = _attached.Board;
+            curKey   = _attached.ThreadKey;
+            srcTitle = args.ValueKind == JsonValueKind.Object
+                       && args.TryGetProperty("title", out var tEl2) && tEl2.ValueKind == JsonValueKind.String
+                       && !string.IsNullOrWhiteSpace(tEl2.GetString())
+                ? tEl2.GetString()!
+                : _attached.Title;
+        }
+
+        if (string.IsNullOrWhiteSpace(srcTitle))
+            return ErrorJson("元スレのタイトルが空のため類似判定できません。title 引数でタイトルを指定してください。");
+
+        var direction = "any";
+        if (args.TryGetProperty("direction", out var dirEl) && dirEl.ValueKind == JsonValueKind.String)
+            direction = (dirEl.GetString() ?? "any").Trim().ToLowerInvariant();
+        var limit = DefaultCandidatesLimit;
+        if (args.TryGetProperty("limit", out var limEl) && TryGetIntLoose(limEl, out var lim))
+            limit = Math.Clamp(lim, 1, MaxCandidatesLimit);
+
+        // 方向フィルタ: key = スレ立て epoch 秒なので「次 = より大きい / 前 = より小さい」。
+        // 現 key が非数値なら方向判定不能 → any 扱いにフォールバック。
+        ulong? curNum = ulong.TryParse(curKey, out var n) ? n : null;
+        bool   filterByDirection = direction is "next" or "prev" && curNum is not null;
+        if (direction is "next" or "prev" && curNum is null)
+            direction = "any";
+
+        var threads  = await _dataLoader.ListThreadsAsync(board, ct).ConfigureAwait(false);
+        var srcLower = srcTitle.ToLowerInvariant();
+        var scored   = new List<(int Sim, ThreadInfo Info)>();
+        foreach (var t in threads)
+        {
+            if (t.Key == curKey) continue;                       // 自分自身は常に除外
+            if (filterByDirection)
+            {
+                if (!ulong.TryParse(t.Key, out var tk)) continue;
+                if (direction == "next" ? !(tk > curNum) : !(tk < curNum)) continue;
+            }
+            var sim = LcsLength(srcLower, t.Title.ToLowerInvariant());
+            if (sim < CandidateSimMin) continue;
+            scored.Add((sim, t));
+        }
+
+        var ordered   = scored.OrderByDescending(x => x.Sim).ThenByDescending(x => x.Info.PostCount);
+        var picked    = ordered.Take(limit).ToArray();
+        var truncated = scored.Count > picked.Length;
+
+        var candidates = picked.Select(x => new
+        {
+            key         = x.Info.Key,
+            title       = x.Info.Title,
+            post_count  = x.Info.PostCount,
+            similarity  = x.Sim,
+            momentum    = ComputeMomentum(x.Info.Key, x.Info.PostCount),
+            thread_url  = $"https://{board.Host}/test/read.cgi/{board.DirectoryName}/{x.Info.Key}/",
+        }).ToArray();
+
+        return JsonSerializer.Serialize(new
+        {
+            source = new
+            {
+                thread_url = $"https://{board.Host}/test/read.cgi/{board.DirectoryName}/{curKey}/",
+                key        = curKey,
+                title      = srcTitle,
+            },
+            board     = board.BoardName ?? board.DirectoryName,
+            board_url = board.Url,
+            direction,
+            total_matched = scored.Count,
+            returned      = candidates.Length,
+            truncated,
+            hint = "採用してナビへ登録するなら set_nav_target(action=\"adopt\", side=\"" + (direction switch
+            {
+                "next" => "next",
+                "prev" => "prev",
+                _      => "(next|prev)",
+            }) + "\", key=...)。単に開くだけなら open_thread_in_app。" +
+            "similarity は最長共通部分文字列長 (大きいほど類似)。同点時は post_count 降順。",
+            candidates,
+        }, JsonOpts);
+    }
+
+    private async Task<string> SetNavTargetAsync(string argsJson)
+    {
+        if (_attached is null || _navMutationAsync is null || _getNavSide is null)
+            return ErrorJson("attached スレッドが無いのでナビ操作はできません (このツールは attached スレ専用)。");
+        if (!TryParseObject(argsJson, out var args))
+            return ErrorJson("引数 JSON のパースに失敗");
+
+        if (!args.TryGetProperty("action", out var actEl) || actEl.ValueKind != JsonValueKind.String)
+            return ErrorJson("action が指定されていません (adopt / exclude / clear / confirm)");
+        var action = (actEl.GetString() ?? "").Trim().ToLowerInvariant();
+        if (action is not ("adopt" or "exclude" or "clear" or "confirm"))
+            return ErrorJson($"未知の action: \"{action}\" (adopt / exclude / clear / confirm のいずれか)");
+
+        var needSide = action != "confirm";
+        bool isPrev;
+        if (needSide)
+        {
+            if (!args.TryGetProperty("side", out var sideEl) || sideEl.ValueKind != JsonValueKind.String)
+                return ErrorJson($"side が指定されていません (action=\"{action}\" には \"prev\" / \"next\" が必要)");
+            var side = (sideEl.GetString() ?? "").Trim().ToLowerInvariant();
+            if (side is not ("prev" or "next"))
+                return ErrorJson($"side は \"prev\" / \"next\" のみ (受け取った値: \"{side}\")");
+            isPrev = side == "prev";
+        }
+        else
+        {
+            isPrev = false; // confirm は両サイド対象なので使わない
+        }
+
+        string? key = null;
+        if (action is "adopt" or "exclude")
+        {
+            if (!args.TryGetProperty("key", out var keyEl) || keyEl.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(keyEl.GetString()))
+                return ErrorJson($"key が指定されていません (action=\"{action}\" には数字のスレ key が必要)");
+            key = (keyEl.GetString() ?? "").Trim();
+
+            // ホスト側へ渡す前にここで検証する (自スレ / 非数字 / 方向不一致)。
+            if (!ulong.TryParse(key, out var k))
+                return ErrorJson($"key は数字のみである必要があります (受け取った値: \"{key}\")");
+            if (key == _attached.ThreadKey)
+                return ErrorJson("key は自スレ自身です (自分自身へのナビは設定できません)");
+            if (ulong.TryParse(_attached.ThreadKey, out var cur))
+            {
+                if (action == "adopt")
+                {
+                    if (isPrev && !(k < cur))
+                        return ErrorJson($"前スレ (side=\"prev\") には現スレより古い key を指定してください ({key} >= {cur})");
+                    if (!isPrev && !(k > cur))
+                        return ErrorJson($"次スレ (side=\"next\") には現スレより新しい key を指定してください ({key} <= {cur})");
+                }
+            }
+        }
+
+        var msg = await _navMutationAsync(new NavMutationRequest(isPrev, action, key)).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new
+        {
+            ok      = true,
+            action,
+            side    = needSide ? (isPrev ? "prev" : "next") : null,
+            key,
+            message = msg,
+        }, JsonOpts);
+    }
+
+    /// <summary>get_nav_state 応答の片側ぶんのペイロード。</summary>
+    private static object BuildNavSidePayload(Board board, NavSideState s) => new
+    {
+        resolved_key = s.Key,
+        title        = s.Title,
+        thread_url   = string.IsNullOrEmpty(s.Key)
+            ? null
+            : $"https://{board.Host}/test/read.cgi/{board.DirectoryName}/{s.Key}/",
+        confirmed = s.Confirmed,
+        candidates = s.Candidates.Select(c => new
+        {
+            key        = c.Key,
+            title      = c.Title,
+            post_count = c.PostCount,
+            score      = c.Score,
+            thread_url = $"https://{board.Host}/test/read.cgi/{board.DirectoryName}/{c.Key}/",
+        }).ToArray(),
+    };
+
+    private static string NavDirLabel(bool isPrev) => isPrev ? "前" : "次";
+
+    /// <summary>2 文字列の最長共通部分文字列の長さを DP で計算する
+    /// (= MainViewModel.FuzzyMatchByTitle と同じアルゴリズムのツール層ローカルコピー)。</summary>
+    private static int LcsLength(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0) return 0;
+        if (a.Length > b.Length) (a, b) = (b, a);
+        var prev = new int[a.Length + 1];
+        var curr = new int[a.Length + 1];
+        var max  = 0;
+        for (var i = 1; i <= b.Length; i++)
+        {
+            for (var j = 1; j <= a.Length; j++)
+            {
+                curr[j] = b[i - 1] == a[j - 1] ? prev[j - 1] + 1 : 0;
+                if (curr[j] > max) max = curr[j];
+            }
+            (prev, curr) = (curr, prev);
+            Array.Clear(curr, 0, curr.Length);
+        }
+        return max;
+    }
+
     /// <summary>ログ用に文字列を上限文字数で切る (= 長すぎる argsJson でログを埋め尽くさない)。</summary>
     private static string Trunc(string s, int max)
         => s.Length <= max ? s : s[..max] + "…";
@@ -1587,8 +2047,24 @@ public sealed class ThreadToolset : IAgentToolset
             ? "あり (直前の差分取得で自分のレスを参照したレスが来ている)"
             : "なし");
 
+        if (_getNavSide is not null)
+        {
+            var prev = _getNavSide(true);
+            var next = _getNavSide(false);
+            sb.Append("- 前スレ (⏮): ").AppendLine(FormatNavSideLine(prev));
+            sb.Append("- 次スレ (⏭): ").AppendLine(FormatNavSideLine(next));
+            if (!string.IsNullOrEmpty(next.Key))
+                sb.AppendLine("  「次スレへ移動して」系は open_next_thread で即応答できる。");
+        }
+
         return sb.ToString();
     }
+
+    /// <summary>初期状態スナップショット用のナビ片側 1 行分。</summary>
+    private static string FormatNavSideLine(NavSideState s)
+        => string.IsNullOrEmpty(s.Key)
+            ? "未解決 (get_nav_state / find_next_thread_candidates で候補確認可)"
+            : $"{s.Title} [{s.Key}]{(s.Confirmed ? " (確定)" : " (自動推測)")}";
 
     /// <summary>会話開始時点の「自分の書き込み + それへの直接返信」をプロンプトに埋め込み可能なテキストで返す。
     /// attached 無し or 自分マーク無しなら "" を返す。</summary>

@@ -175,8 +175,13 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   **ToolRuntime** = evidence id 付きツール実行)。UI 出力先は `IAgentHost`
   (`AiChatViewModel.AgentHost.cs` 実装)
 - LLM 公開ツールの唯一の真実源は `Services/Llm/ToolCatalog.PublicToolsets()`。
-  **内蔵エージェントと MCP サーバが同一表面を共有** (スレ読取 14 + web_search/web_fetch の計 16)。
-  `thread_url` 省略時は「現在選択中のスレ」が対象。URL 受理は 5ch.io / bbspink.com 系のみ
+  **内蔵エージェントと MCP サーバが同一表面を共有** (スレ読取・前後スレナビ 19 + web_search/web_fetch の計 21)。
+  `thread_url` 省略時は「現在選択中のスレ」が対象。URL 受理は 5ch.io / bbspink.com 系のみ。
+  前後スレナビ系 (`get_nav_state` / `open_prev_thread` / `open_next_thread` /
+  `find_next_thread_candidates` / `set_nav_target`) は attached 専用で、ナビ状態は
+  `BuildToolsetForTab` がライブ読み取りデリゲート (`ReadNavSideForTool` / `ApplyNavMutationForToolAsync`,
+  MainViewModel.ThreadNav.cs) として注入する (= スナップショットにしない。採用 → オープンの
+  ツール連鎖中に状態が変わるため)
 - MCP サーバ (`Services/Mcp/McpHttpServer.cs`): Streamable HTTP 最小実装、**127.0.0.1 バインドのみ**
   (既定ポート 7393、`http://127.0.0.1:7393/mcp`)。設定で明示オフ (既定 OFF)、ON/OFF・ポート変更は即時反映。
   GET/SSE・バッチ・認証は非対応。tools/call は UI スレッドへマーシャリングされる

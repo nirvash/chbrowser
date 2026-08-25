@@ -507,7 +507,9 @@ public sealed partial class MainViewModel
             attachedLastRead:         savedIdx?.LastReadPostNumber,
             attachedMarkPostNumber:   tab.MarkPostNumber,
             attachedOwnPostNumbers:   tab.OwnPostNumbers,
-            attachedHasReplyToOwn:    tab.HasReplyToOwn);
+            attachedHasReplyToOwn:    tab.HasReplyToOwn,
+            getNavSide:               isPrev => ReadNavSideForTool(tab, isPrev),
+            navMutationAsync:         req => ApplyNavMutationForToolAsync(tab, req));
     }
 
     /// <summary>AI チャットウィンドウの「タイトル領域」用文字列。attached あれば そのスレタイ、無ければ汎用ラベル。</summary>

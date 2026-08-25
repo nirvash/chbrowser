@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using ChBrowser.Models;
+using ChBrowser.Services.Llm;
 using ChBrowser.Services.Storage;
 using ChBrowser.Services.Url;
 
@@ -272,9 +273,20 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>兄弟タブ由来の推論候補を自タブへ統合する。既存候補に無ければ先頭に高スコアで追加し、
-    /// 該当側の採用 key が未決の場合だけ採用する (= 通常解決が見つけられなかった場合の救済)。</summary>
+    /// 該当側の採用 key が未決の場合だけ採用する (= 通常解決が見つけられなかった場合の救済)。
+    /// ただしユーザが除外登録 (🚫 / <c>NavExcludedKeys</c>) した key は採り込まない
+    /// (= 除外の恒久性を保証。さもないと再解決のたびに除外候補が蘇る)。</summary>
     private void MergeSiblingCandidate(ThreadTabViewModel tab, bool isPrev, ThreadTabViewModel other)
     {
+        var index = _threadIndex.Load(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey);
+        if (index?.NavExcludedKeys is { Length: > 0 } excludedArr &&
+            excludedArr.Contains(other.ThreadKey))
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[threadNav] sibling infer skip (excluded): {tab.ThreadKey} {(isPrev ? "prev" : "next")} = {other.ThreadKey}");
+            return;
+        }
+
         IReadOnlyList<ThreadNavCandidate> cur = isPrev
             ? tab.PrevNavCandidates ?? Array.Empty<ThreadNavCandidate>()
             : tab.NextNavCandidates ?? Array.Empty<ThreadNavCandidate>();
@@ -820,6 +832,56 @@ public sealed partial class MainViewModel
     {
         _navLogKeysCache.Remove((tab.Board.Host, tab.Board.DirectoryName));
         _ = ResolveThreadChainAsync(tab, force);
+    }
+
+    // -----------------------------------------------------------------
+    // AI / MCP ツール公開 (ThreadToolset の get_nav_state / open_next_thread /
+    // open_prev_thread / set_nav_target から呼ばれる)
+    // -----------------------------------------------------------------
+
+    /// <summary>ツール層 (<see cref="ThreadToolset"/>) 向けに片側ナビ状態のライブ読み取りを行う。
+    /// スナップショットでなく都度読みにするのは、ツール連鎖 (採用 → オープン等) の間に
+    /// 状態が更新されても常に最新を見せるため。UI スレッド前提 (= ObservableProperty 直読み)。</summary>
+    internal NavSideState ReadNavSideForTool(ThreadTabViewModel tab, bool isPrev)
+        => isPrev
+            ? new NavSideState(tab.PrevNavKey, tab.PrevNavTitle ?? "", tab.IsPrevNavConfirmed,
+                               ToNavCandidateInfos(tab.PrevNavCandidates))
+            : new NavSideState(tab.NextNavKey, tab.NextNavTitle ?? "", tab.IsNextNavConfirmed,
+                               ToNavCandidateInfos(tab.NextNavCandidates));
+
+    private static IReadOnlyList<NavCandidateInfo> ToNavCandidateInfos(IReadOnlyList<ThreadNavCandidate>? cands)
+        => cands is null || cands.Count == 0
+            ? Array.Empty<NavCandidateInfo>()
+            : cands.Select(c => new NavCandidateInfo(c.Key, c.Title, c.PostCount, c.Score)).ToArray();
+
+    /// <summary>set_nav_target の実体。action は "adopt" / "exclude" / "clear" / "confirm"
+    /// (adopt / exclude の key・方向検証は ThreadToolset 側で済んでいる前提)。
+    /// ユーザ向けメッセージ文字列を返す。UI スレッド前提。</summary>
+    internal async Task<string> ApplyNavMutationForToolAsync(ThreadTabViewModel tab, NavMutationRequest req)
+    {
+        switch (req.Action)
+        {
+            case "confirm":
+                ConfirmNavigation(tab);
+                return $"前後スレを確定しました (前={tab.PrevNavKey ?? "-"} / 次={tab.NextNavKey ?? "-"})";
+
+            case "exclude":
+                await ExcludeNavCandidateAsync(tab, req.Key!).ConfigureAwait(true);
+                return $"候補 [{req.Key}] を除外登録して再解決しました";
+
+            case "clear":
+                await ClearNavOverrideAsync(tab, req.IsPrev).ConfigureAwait(true);
+                return $"{(req.IsPrev ? "前" : "次")}スレの確定を解除しました (自動推測に戻します)";
+
+            case "adopt":
+                // 候補メニュー選択と同じ経路: 採用 + 確定 + オープンし、タイトル不明分を再解決で補う。
+                AdoptNavCandidate(tab, req.IsPrev, new ThreadNavCandidate(req.Key!, "", 0, 0));
+                KickNavResolve(tab, force: true);
+                return $"{(req.IsPrev ? "前" : "次")}スレとして採用して開きました: [{req.Key}]";
+
+            default:
+                return $"未知の action: {req.Action}";
+        }
     }
 }
 
