@@ -12,7 +12,11 @@
 //   { type: 'openUrl', url }                — 外部 URL クリック
 //   { type: 'scrollPosition', postNumber }  — viewport 上端のレス番号 (debounced)
 //   { type: 'refreshThread' }               — スレ末尾のリロードボタンクリック (差分取得)
-//   { type: 'threadPageZoomDelta', delta }  — Ctrl+ホイールによるページズームステップ (±1)
+//   { type: 'threadPageZoomDelta', delta, clientY, anchorPostNumber, anchorOffsetY }
+//                                            — Ctrl+ホイールによるページズームステップ (±1)
+//   { type: 'pageZoomCompensate', k, clientY, anchorPostNumber, anchorOffsetY }
+//                                            — ページズーム適用後の縦位置補正
+//                                              (clientY/anchorPostNumber 基準。無ければ中央)
 //   { type: 'paneActivated' }               — Phase 14: pane 内任意の mousedown (アドレスバー切替用)
 //   { type: 'shortcut', descriptor }        — Phase 16: ショートカット/マウス操作のディスパッチ要求
 //   { type: 'gesture',  descriptor }        — Phase 16: マウスジェスチャー認識結果のディスパッチ要求
@@ -3362,17 +3366,45 @@ function findReadProgressMaxNumber() {
     });
 
     // Ctrl+ホイール: WebView2 標準のページズームを抑止し、倍率変更を C# へ通知する。
-    // (標準ズームは永続化されないため、C# 側で ZoomFactor 設定 + config 永続化に置き換え。
-    //  右クリック+ホイール等はマウス操作ショートカット優先なので無視。)
+    // このとき「適用前の scrollY / viewport 高さ / マウス Y 座標 / マウス下の投稿」も
+    // スナップショットで添える (= ズーム適用は C# 側で非同期に行われるため、補正は
+    // この事前値を基準に決定計算する。これにより補正と適用の実行順序レースに関係なく、
+    // 常に同じ結果になる)。
+    // 右クリック+ホイール等はマウス操作ショートカット優先なので無視。)
     document.addEventListener('wheel', function(e) {
         if (!e.ctrlKey) return;
         if (e.buttons) return;
         e.preventDefault();
         e.stopPropagation();
         if (window.chrome && window.chrome.webview) {
+            const baseY = window.scrollY || 0;
+            const clientY = e.clientY;
+            // リフロー対応: マウス下の投稿要素を特定し、要素内オフセットを記録する。
+            // ズーム後に同じ投稿の新しい位置を測定し、マウス下の内容が同じ画面位置に留まるよう補正する。
+            let anchorPostNumber = null;
+            let anchorOffsetY = 0;
+            const hovered = document.elementFromPoint(e.clientX, clientY);
+            if (hovered) {
+                const postEl = hovered.closest('.post');
+                if (postEl) {
+                    const noEl = postEl.querySelector('.post-no[data-number]');
+                    if (noEl) {
+                        const n = parseInt(noEl.dataset.number, 10);
+                        if (!isNaN(n)) {
+                            anchorPostNumber = n;
+                            anchorOffsetY = clientY - postEl.getBoundingClientRect().top;
+                        }
+                    }
+                }
+            }
             window.chrome.webview.postMessage({
                 type: 'threadPageZoomDelta',
                 delta: e.deltaY < 0 ? 1 : -1,
+                baseY: baseY,
+                baseVh: document.documentElement.clientHeight,
+                clientY: clientY,
+                anchorPostNumber: anchorPostNumber,
+                anchorOffsetY: anchorOffsetY,
             });
         }
     }, { passive: false, capture: true });
@@ -4868,6 +4900,47 @@ function findReadProgressMaxNumber() {
                     // 既存スレ表示のスクロールバーは閾値が変わると赤マーカーの集合も変わるので再計算
                     if (typeof updateRichScrollbar === 'function') updateRichScrollbar();
                     break;
+                case 'pageZoomCompensate':
+                    // ページズーム適用後の縦位置補正。wheel 時の事前スナップショット
+                    // (baseY / baseVh / clientY / anchorPostNumber / anchorOffsetY) を基準に、
+                    // 指定アンカー位置のコンテンツがズーム後も同じ画面位置に留まるよう調整する。
+                    //   即時補正: newScrollY = baseY + clientY * (1 - 1 / k)
+                    //   リフロー補正: マウス下の投稿を再測定し、実際の新しいドキュメント座標で
+                    //                 同じ画面位置 (clientY / k) になるよう scrollY を上書きする。
+                    // (clientY = baseVh/2 かつ anchorPostNumber なしのときが「画面中央固定」の特例。
+                    //   適用と補正の実行順序レースに影響されない決定的計算。)
+                    {
+                        const kz             = (typeof msg.k              === 'number') ? msg.k              : 1;
+                        const baseY          = (typeof msg.baseY          === 'number') ? msg.baseY          : (window.scrollY || 0);
+                        const baseVh         = (typeof msg.baseVh         === 'number') ? msg.baseVh         : document.documentElement.clientHeight;
+                        const clientY        = (typeof msg.clientY        === 'number') ? msg.clientY        : (baseVh / 2);
+                        const anchorPostNumber = (typeof msg.anchorPostNumber === 'number') ? msg.anchorPostNumber : null;
+                        const anchorOffsetY  = (typeof msg.anchorOffsetY  === 'number') ? msg.anchorOffsetY  : 0;
+                        if (kz > 0 && Math.abs(kz - 1) > 0.001) {
+                            // 即時補正: ドキュメント座標が不変だった場合の位置を先に適用
+                            window.scrollTo(0, baseY + clientY * (1 - 1 / kz));
+
+                            // リフロー対応: マウス下の投稿の新しい実位置を測定し直して補正する。
+                            // WebView2 のズーム適用・レイアウト確定を待つため rAF + setTimeout の二段階で実行。
+                            if (anchorPostNumber != null) {
+                                const targetScreenY = clientY / kz; // 旧マウス位置の新しい viewport CSS 座標
+                                let reanchored = false;
+                                const reanchor = function () {
+                                    if (reanchored) return;
+                                    reanchored = true;
+                                    const postEl = document.getElementById('r' + anchorPostNumber);
+                                    if (!postEl) return;
+                                    const rect = postEl.getBoundingClientRect();
+                                    if (rect.height === 0) return; // hidden / not laid out
+                                    const D_after = (window.scrollY || 0) + rect.top + anchorOffsetY;
+                                    window.scrollTo(0, D_after - targetScreenY);
+                                };
+                                requestAnimationFrame(reanchor);
+                                setTimeout(reanchor, 80);
+                            }
+                        }
+                        break;
+                    }
                 // setShortcutBindings は shortcut-bridge.js 内で直接受信するためここでは扱わない。
                 case 'imageMeta':
                     // C# が HEAD で取った Content-Length / キャッシュ参照 / 非同期 URL 展開の結果を返してきた。

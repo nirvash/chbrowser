@@ -39,7 +39,10 @@ public partial class ThreadDisplayPane : UserControl
         foreach (var pair in _seenInitialReady)
         {
             var wv = pair.Key;
-            if (Math.Abs(wv.ZoomFactor - zoom) > 0.001) wv.ZoomFactor = zoom;
+            // 他ペイン: 事前スナップショットが無いため比率のみ送る。
+            // JS 側は現時点の scrollY/clientHeight で画面中央固定の補正を行う。
+            SendPageZoomCompensate(wv, wv.ZoomFactor, zoom);
+            wv.ZoomFactor = zoom;
         }
     }
 
@@ -885,8 +888,61 @@ public partial class ThreadDisplayPane : UserControl
         var baseZ  = group.Main.CurrentConfig.ThreadPageZoom;
         var factor = dir > 0 ? 1.1 : (1.0 / 1.1);
         var next   = Math.Clamp(Math.Round(baseZ * factor, 2), 0.5, 3.0);
-        if (Math.Abs(wv.ZoomFactor - next) > 0.001) wv.ZoomFactor = next;
-        group.Main.SetThreadPageZoom(next);
+        if (Math.Abs(next - baseZ) < 0.001) return;
+
+        // 縦位置補正を JS へ依頼 (wheel 時の事前スナップショットを転送)。
+        // 補正式は決定的なので、ZoomFactor 適用との実行順序レースに影響されない。
+        var passY  = payload.TryGetProperty("baseY",   out var byP) && byP.ValueKind == JsonValueKind.Number ? byP.GetDouble() : 0.0;
+        var passVh = payload.TryGetProperty("baseVh",  out var bvP) && bvP.ValueKind == JsonValueKind.Number ? bvP.GetDouble() : 0.0;
+        var passCy = payload.TryGetProperty("clientY", out var cyP) && cyP.ValueKind == JsonValueKind.Number ? cyP.GetDouble() : (double?)null;
+        var passAnchorN = payload.TryGetProperty("anchorPostNumber", out var anP) && anP.ValueKind == JsonValueKind.Number ? anP.GetInt32() : (int?)null;
+        var passAnchorOff = payload.TryGetProperty("anchorOffsetY", out var aoP) && aoP.ValueKind == JsonValueKind.Number ? aoP.GetDouble() : 0.0;
+        SendPageZoomCompensate(wv, baseZ, next, passY, passVh, passCy, passAnchorN, passAnchorOff);
+
+        wv.ZoomFactor = next;
+        group.Main.SetThreadPageZoom(next); // 永続化 debounce + 他ペインへの配信イベント
+    }
+
+    /// <summary>wv へ「ズーム適用後の縦位置補正」メッセージを送る (比率のみ。
+    /// JS 側は現時点の scrollY/clientHeight で画面中央固定の補正を行う)。</summary>
+    private static void SendPageZoomCompensate(WebView2 wv, double fromZoom, double toZoom)
+    {
+        if (fromZoom <= 0 || Math.Abs(fromZoom - toZoom) < 0.001) return;
+        if (wv.CoreWebView2 is null) return;
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "pageZoomCompensate",
+            k    = Math.Clamp(toZoom / fromZoom, 0.1, 10.0),
+        });
+        wv.CoreWebView2.PostWebMessageAsJson(json);
+    }
+
+    /// <summary>wv へ「ズーム適用後の縦位置補正」メッセージを送る。
+    /// wheel 時の事前スナップショット (baseY/baseVh/clientY/anchorPostNumber/anchorOffsetY)
+    /// を使った決定的計算版。clientY が null のときは baseVh/2 (= 画面中央) が使われる。</summary>
+    private static void SendPageZoomCompensate(
+        WebView2 wv,
+        double fromZoom,
+        double toZoom,
+        double baseY,
+        double baseVh,
+        double? clientY = null,
+        int? anchorPostNumber = null,
+        double anchorOffsetY = 0)
+    {
+        if (fromZoom <= 0 || Math.Abs(fromZoom - toZoom) < 0.001) return;
+        if (wv.CoreWebView2 is null) return;
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type             = "pageZoomCompensate",
+            k                = Math.Clamp(toZoom / fromZoom, 0.1, 10.0),
+            baseY,
+            baseVh,
+            clientY,
+            anchorPostNumber,
+            anchorOffsetY,
+        });
+        wv.CoreWebView2.PostWebMessageAsJson(json);
     }
 
     /// <summary>JS から「URL リンクが右クリックされた」通知を受け、UrlContextMenu を開く。
