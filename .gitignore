@@ -77,3 +77,6 @@ tools/
 # tools/make-icon.ps1 が app.ico と並べて出力する各サイズの PNG。配布物には含めない。
 # app.ico (= 実際にビルドが参照する) は引き続き track する。
 src/ChBrowser/Resources/icon/preview_*.png
+
+# --- ���[�J�������� (�f�C���[���p exe �̔z�u�擙�A�}�V���ŗL���̂��� commit ���Ȃ�) ---
+/LOCAL.md
