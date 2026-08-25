@@ -835,6 +835,10 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     }
 
     // ---- スレ表示のページズーム (Ctrl+ホイール) ----
+    /// <summary>ページズーム変更をすべてのスレペインへ通知する
+    /// (各 ThreadDisplayPane が購読し、自分の WebView2.ZoomFactor へ適用する)。</summary>
+    public static event System.Action<double>? ThreadPageZoomChanged;
+
     /// <summary>ページズーム永続化の debounce 用。</summary>
     private System.Windows.Threading.DispatcherTimer? _pageZoomSaveTimer;
 
@@ -846,6 +850,8 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         if (Math.Abs(CurrentConfig.ThreadPageZoom - z) < 0.001) return;
 
         CurrentConfig = CurrentConfig with { ThreadPageZoom = z };
+        // 全スレペインへ即時通知 (各ペインは自分の WebView2.ZoomFactor へ適用する)
+        ThreadPageZoomChanged?.Invoke(z);
         _pageZoomSaveTimer ??= new System.Windows.Threading.DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(400),

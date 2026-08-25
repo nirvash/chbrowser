@@ -2868,13 +2868,15 @@
         // 1.5s だけ繰り延べ (画像レイアウト待ち)。超えたらレス番号経路へフォールバック。
         if (pendingScrollExactY != null) {
             const dh = document.documentElement.scrollHeight;
-            if (dh >= pendingScrollExactDocH - 2) {
+            const dhd = dh - pendingScrollExactDocH;
+            if (Math.abs(dhd) <= 2) {
                 const maxS = Math.max(0, dh - vh0);
                 window.scrollTo(0, Math.min(pendingScrollExactY, maxS));
                 pendingScrollExactY = null;
                 return;
             }
-            if (performance.now() - pendingScrollExactSince < 1500) return; // 繰り延べ
+            if (dhd > 2 || performance.now() - pendingScrollExactSince >= 1500) { pendingScrollExactY = null; } /* doc grew/changed -> fallback */
+            else { return; } /* still converging -> keep waiting */ // 繰り延べ
             pendingScrollExactY = null; // 諦めてレス番号経路へフォールバック
         }
 
@@ -2948,7 +2950,24 @@
      *  番号順 (1,2,3...) でなく表示順にしたのは、ツリーモードでは DOM 順と番号順が一致せず、
      *  「見た目は 28 まで読んでいるのに番号スキャンでは 26 で止まる」ようなずれが出るため。
      *  戻り値: {num, el} / 読了候補なしなら null。 */
-    function findReadProgressMaxNumber() {
+        // Bottom edge of a post EXCLUDING nested child posts (.post).
+    // In tree modes replies are rendered inside the parent .post box, so using the
+    // parent rect.bottom would never mark it as fully-read.
+    function directContentBottom(el) {
+        let bottom = el.getBoundingClientRect().top;
+        const walk = (node) => {
+            for (const ch of node.children) {
+                if (ch.classList && ch.classList.contains("post")) continue;
+                const r = ch.getBoundingClientRect();
+                if (r.height > 0) bottom = Math.max(bottom, r.bottom);
+                walk(ch);
+            }
+        };
+        walk(el);
+        return bottom;
+    }
+
+function findReadProgressMaxNumber() {
         if (!allPosts || allPosts.length === 0) return null;
         const vh   = document.documentElement.clientHeight;
         const root = document.getElementById('posts');
@@ -2956,9 +2975,9 @@
 
         let lastValid = null;
         for (const p of root.querySelectorAll('.post')) {
-            const r = p.getBoundingClientRect();
-            if (r.height === 0) continue; // filter-hidden 等はスキップ
-            if (r.bottom > vh) break;     // 表示順で最初の下端切れ投稿 → 直前までが読了位置
+            const r0 = p.getBoundingClientRect();
+            if (r0.height === 0) continue; // filter-hidden 等はスキップ
+            if (directContentBottom(p) > vh) break;     // 表示順で最初の下端切れ投稿 → 直前までが読了位置
             const noEl = p.querySelector('.post-no[data-number]');
             const num  = noEl ? parseInt(noEl.dataset.number, 10) : NaN;
             if (!isNaN(num)) lastValid = { num, el: p };

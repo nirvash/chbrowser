@@ -28,6 +28,19 @@ public partial class ThreadDisplayPane : UserControl
         InitializeComponent();
         ChBrowser.Controls.PaneDragInitiator.Attach(HeaderBar, ChBrowser.Models.PaneId.ThreadDisplay);
         Loaded += (_, __) => WireVideoDownloadCompletionToPane();
+        // ページズーム変更の全ペイン配信を受け、自分の WebView2 へ適用する
+        ChBrowser.ViewModels.MainViewModel.ThreadPageZoomChanged += OnThreadPageZoomBroadcast;
+    }
+
+    /// <summary>Ctrl+ホイール等によるページズーム変更を、このペインが保持する
+    /// すべてのスレ WebView2 へ適用する (他ペインでホイール操作されても追従)。</summary>
+    private void OnThreadPageZoomBroadcast(double zoom)
+    {
+        foreach (var pair in _seenInitialReady)
+        {
+            var wv = pair.Key;
+            if (Math.Abs(wv.ZoomFactor - zoom) > 0.001) wv.ZoomFactor = zoom;
+        }
     }
 
     /// <summary>NG 判定 AI のしきい値ボタン。左クリックでアタッチ済み ContextMenu (しきい値メニュー) を開く。

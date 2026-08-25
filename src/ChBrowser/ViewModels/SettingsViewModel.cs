@@ -575,8 +575,14 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     /// <summary>このパネルが感知しない外部経路 (PostDialog のどんぐり認証モード変更等) で
     /// AppConfig が更新されたときに、保存時のベースラインを最新版に張り替える。
-    /// UI フィールドは触らないので「設定ウィンドウ内でユーザーが入力中の値」は失われない。</summary>
-    public void RefreshBaseline(AppConfig latest) => _initialConfig = latest;
+    /// UI フィールドは触らないので「設定ウィンドウ内でユーザーが入力中の値」は失われない。
+    /// ただしページズーム (Ctrl+ホイール) は設定 UI が存在せず外部更新が唯一の変化経路のため、
+    /// 例外的に VM 側へも反映する (= 反映しないと次の ToConfig で旧値へ戻ってしまう)。</summary>
+    public void RefreshBaseline(AppConfig latest)
+    {
+        _initialConfig = latest;
+        ThreadPageZoom = latest.ThreadPageZoom;
+    }
 
     public void RefreshCacheSizeDisplay()
     {
