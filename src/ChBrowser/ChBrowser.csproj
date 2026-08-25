@@ -14,8 +14,10 @@
     <NeutralLanguage>ja-JP</NeutralLanguage>
 
     <!-- バージョン情報ダイアログ用。ビルド時に評価され、AssemblyInformationalVersionAttribute に
-         "v20260508" 形式で焼きこまれる (= ハードコードしないので毎ビルド自動更新)。
-         IncludeSourceRevisionInInformationalVersion=false で、SDK が "+commitsha" を付けるのを抑止。 -->
+         "vYYYYMMDD" 形式で焼きこまれる (= ハードコードしないので毎ビルド自動更新)。
+         commit 特定用の short SHA と未コミット変更マーカーは下の StampGitCommitToVersion ターゲットが
+         追記する ("vYYYYMMDD (<sha>[-dirty])" 完成形になる)。
+         IncludeSourceRevisionInInformationalVersion=false で、SDK 独自の "+fullsha" 付与を抑止。 -->
     <InformationalVersion>v$([System.DateTime]::Now.ToString('yyyyMMdd'))</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
@@ -66,5 +68,23 @@
     <EmbeddedResource Include="Resources\shortcut-bridge.js" />
     <EmbeddedResource Include="Resources\ai-chat.html" />
   </ItemGroup>
+  <!-- バージョン情報に git commit を焼き込む。
+       InformationalVersion を "vYYYYMMDD (shortsha または shortsha-dirty)" 形式にする。
+         - shortsha : HEAD コミットの短縮 SHA (バージョン情報ダイアログで「どの commit か」判別可能にする)
+         - dirty    : 作業ツリーに未コミット変更がある場合の目印 (計装入り検証ビルド等の識別用)
+       git が無い / repo 無しの環境では日付のみの従来形式にフォールバックする。 -->
+  <Target Name="StampGitCommitToVersion" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git rev-parse --short HEAD 2&gt;NUL" ConsoleToMsBuild="true" IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitShortSha" />
+    </Exec>
+    <Exec Command="git status --porcelain 2&gt;NUL" ConsoleToMsBuild="true" IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitStatusOut" />
+    </Exec>
+    <PropertyGroup Condition="'$(GitShortSha)' != '' And '$(GitShortSha.Trim())' != ''">
+      <_GitDirty Condition="$([System.String]::Copy('$(GitStatusOut)').Trim().Length) &gt; 0">-dirty</_GitDirty>
+      <_GitDirty Condition="'$(_GitDirty)' == ''"></_GitDirty>
+      <InformationalVersion>v$([System.DateTime]::Now.ToString('yyyyMMdd')) ($(GitShortSha.Trim())$(_GitDirty))</InformationalVersion>
+    </PropertyGroup>
+  </Target>
 
 </Project>

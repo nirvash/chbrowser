@@ -42,8 +42,13 @@ public partial class ThreadDisplayPane : UserControl
             // 他ペイン: 事前スナップショットが無いため比率のみ送る。
             // JS 側は現時点の scrollY/clientHeight で画面中央固定の補正を行う。
             SendPageZoomCompensate(wv, wv.ZoomFactor, zoom);
+            var before = wv.ZoomFactor;
             wv.ZoomFactor = zoom;
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[pageZoom] broadcast: {before:F3} -> {zoom:F3} (wv#{wv.GetHashCode() % 10000})");
         }
+        ChBrowser.Services.Logging.LogService.Instance.Write(
+            $"[pageZoom] broadcast done: zoom={zoom:F3}, targets={_seenInitialReady.Count()}");
     }
 
     /// <summary>NG 判定 AI のしきい値ボタン。左クリックでアタッチ済み ContextMenu (しきい値メニュー) を開く。
@@ -269,7 +274,13 @@ public partial class ThreadDisplayPane : UserControl
         // 永続化済みページズーム (Ctrl+ホイール) を適用
         if (Application.Current is App appReady)
         {
-            var z = Math.Clamp(appReady.CurrentConfig.ThreadPageZoom, 0.5, 3.0);
+            var cfgZ = appReady.CurrentConfig.ThreadPageZoom;
+            var z    = Math.Clamp(cfgZ, 0.5, 3.0);
+            var header = (wv.DataContext as ThreadTabViewModel)?.Header ?? "(no ctx)";
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[pageZoom] ready: {header} wv#{wv.GetHashCode() % 10000}"
+                + $" wv.ZoomFactor={wv.ZoomFactor:F3} -> config={cfgZ:F3} (clamped={z:F3})"
+                + $" apply={Math.Abs(wv.ZoomFactor - z) > 0.001}");
             if (Math.Abs(wv.ZoomFactor - z) > 0.001) wv.ZoomFactor = z;
         }
 
@@ -896,6 +907,9 @@ public partial class ThreadDisplayPane : UserControl
         var factor = dir > 0 ? 1.1 : (1.0 / 1.1);
         var next   = Math.Clamp(Math.Round(baseZ * factor, 2), 0.5, 3.0);
         if (Math.Abs(next - baseZ) < 0.001) return;
+
+        ChBrowser.Services.Logging.LogService.Instance.Write(
+            $"[pageZoom] wheel: delta={(dir > 0 ? "+" : "-")} base={baseZ:F3} -> next={next:F3} (wv#{wv.GetHashCode() % 10000})");
 
         // 縦位置補正を JS へ依頼 (wheel 時の事前スナップショットを転送)。
         // 補正式は決定的なので、ZoomFactor 適用との実行順序レースに影響されない。

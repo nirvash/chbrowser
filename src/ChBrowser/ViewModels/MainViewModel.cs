@@ -863,7 +863,10 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         var z = Math.Clamp(Math.Round(zoom, 2), 0.5, 3.0);
         if (Math.Abs(CurrentConfig.ThreadPageZoom - z) < 0.001) return;
 
+        var prevZ = CurrentConfig.ThreadPageZoom;
         CurrentConfig = CurrentConfig with { ThreadPageZoom = z };
+        ChBrowser.Services.Logging.LogService.Instance.Write(
+            $"[pageZoom] SetThreadPageZoom: {prevZ:F3} -> {z:F3} (永続化は debounce 400ms 後)");
         // 全スレペインへ即時通知 (各ペインは自分の WebView2.ZoomFactor へ適用する)
         ThreadPageZoomChanged?.Invoke(z);
         _pageZoomSaveTimer ??= new System.Windows.Threading.DispatcherTimer
@@ -879,6 +882,8 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     private void PageZoomSaveTimer_Tick(object? sender, EventArgs e)
     {
         _pageZoomSaveTimer?.Stop();
+        ChBrowser.Services.Logging.LogService.Instance.Write(
+            $"[pageZoom] persist tick: CurrentConfig={CurrentConfig.ThreadPageZoom:F3} -> App.CurrentConfig へ同期 + config.json 保存");
         PersistConfigCallback?.Invoke(CurrentConfig);
     }
 

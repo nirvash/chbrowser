@@ -8,7 +8,8 @@ namespace ChBrowser.Views;
 
 /// <summary>ヘルプ → バージョン情報 で開くダイアログ。
 /// バージョン文字列は <see cref="AssemblyInformationalVersionAttribute"/> から読み出す
-/// (= csproj の <c>&lt;InformationalVersion&gt;</c> でビルド日付を焼きこんでいる)。</summary>
+/// (= csproj の StampGitCommitToVersion ターゲットが "vYYYYMMDD (<sha>[-dirty])" 形式で
+/// ビルド日付 + commit を焼きこんでいる)。</summary>
 public partial class AboutDialog : Window
 {
     public AboutDialog()
@@ -32,10 +33,9 @@ public partial class AboutDialog : Window
     {
         var attr = typeof(AboutDialog).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>();
-        var v = attr?.InformationalVersion ?? "(version unknown)";
-        // SDK が "+commitsha" を付けるケース (SourceLink 有効時) に備え、'+' 以降を除去。
-        var plus = v.IndexOf('+');
-        return plus >= 0 ? v[..plus] : v;
+        // "vYYYYMMDD (<sha>[-dirty])" をそのまま表示する (= どの commit のビルドか判別できるのが目的)。
+        // git 不在環境で焼きこみに失敗した場合は日付のみの従来形式になる。
+        return attr?.InformationalVersion ?? "(version unknown)";
     }
 
     private void OkButton_Click(object sender, RoutedEventArgs e) => Close();
