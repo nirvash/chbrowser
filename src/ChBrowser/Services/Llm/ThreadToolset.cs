@@ -1041,7 +1041,12 @@ public sealed class ThreadToolset : IAgentToolset
     /// <summary>get_new_posts の実体。「未読 / 新着」をカーソル (after > 新着マーク > 既読位置 > 末尾) 以降
     /// 一括取得する。attached ではライブ状態 (<see cref="AttachedLiveState"/>) を使うので、差分取得直後の
     /// Posts / MarkPostNumber がそのまま反映される。refresh=true 時は attached ならホスト側で差分取得を
-    /// 行い (= UI の「以降新レス」マーク更新も伴う)、非 attach ならネット優先ロードを行う。</summary>
+    /// 行い (= UI の「以降新レス」マーク更新も伴う)、非 attach ならネット優先ロードを行う。
+    ///
+    /// レス番号の範囲判定 (lo / hi / tail カーソル) は「最大レス番号」基準で行う。NG 透明化で
+    /// attached の posts は隠したレスを含まない (= 件数 &lt; 最大番号) ため、件数を上限に使うと
+    /// MarkPostNumber (dat 連番ベース) との比較で hi &lt; lo となり、新着があるのに空応答を返す。
+    /// current_total / previous_total だけは「可視レスの件数」の意味で posts.Count を使う。</summary>
     private async Task<string> GetNewPostsAsync(string argsJson, CancellationToken ct)
     {
         if (!TryParseObject(argsJson, out var args))
@@ -1110,6 +1115,9 @@ public sealed class ThreadToolset : IAgentToolset
             prevTotal = curTotal = posts.Count;
         }
 
+        // カーソル解決の前提: 範囲上限は最大レス番号 (= NG 非表示を含む dat 連番)。上記 doc 参照。
+        var maxNum = posts.Count > 0 ? posts[posts.Count - 1].Number : 0;
+
         // カーソル解決: after 引数 > 新着マーク位置 > 既読位置 > 末尾 limit 件。
         // 内部カーソルは「この番号まで既読」を表し、返却は cursor+1 以降。
         int cursor;
@@ -1131,14 +1139,14 @@ public sealed class ThreadToolset : IAgentToolset
         }
         else
         {
-            cursor = Math.Max(0, curTotal - limit);
+            cursor = Math.Max(0, maxNum - limit);
             cursorSource = "tail";
         }
 
         var lo = Math.Max(1, cursor + 1);
-        var hi = curTotal;
+        var hi = maxNum;
 
-        if (curTotal == 0 || hi < lo)
+        if (maxNum == 0 || hi < lo)
         {
             return JsonSerializer.Serialize(new
             {
@@ -1175,8 +1183,8 @@ public sealed class ThreadToolset : IAgentToolset
         var hasMore = end < hi;
         var hint = hasMore
             ? $"未読がまだ残っています (今回の返却は >>{lo}- >>{end})。続きは after={end} で再呼出し。"
-            : cursorSource == "tail"
-                ? $"末尾 {slice.Count} 件を返した (未読位置情報なし)。全文を読むなら get_posts(start=1, end={curTotal})。"
+                : cursorSource == "tail"
+                    ? $"末尾 {slice.Count} 件を返した (未読位置情報なし)。全文を読むなら get_posts(start=1, end={maxNum})。"
                 : "カーソル以降すべてを返した (未読はこれで消化)。";
 
         return JsonSerializer.Serialize(new

@@ -88,7 +88,9 @@ public sealed class ThreadDataLoader
 
     /// <summary>指定スレの Post 列を<b>ネットワーク優先</b>で取得する (= get_new_posts の refresh=true 用)。
     /// 通常の <see cref="LoadPostsAsync"/> はディスクキャッシュ優先なので「今サーバにある最新」を
-    /// 取れない。こちらは取得成功時に会話キャッシュも差し替える。失敗時は通常経路にフォールバック。</summary>
+    /// 取れない。こちらは取得成功時に会話キャッシュも差し替える (LRU 上限の退避も行う)。
+    /// 失敗時は通常経路にフォールバックするが、キャンセル (<see cref="OperationCanceledException"/>) は
+    /// フォールバックせずそのまま呼び出し元へ伝播させる。</summary>
     public async Task<IReadOnlyList<Post>> LoadPostsFreshAsync(Board board, string threadKey, CancellationToken ct = default)
     {
         try
@@ -101,10 +103,12 @@ public sealed class ThreadDataLoader
                     var key = CacheKey(board.Host, board.DirectoryName, threadKey);
                     _postsCache[key] = fetched.Posts;
                     TouchLru_NoLock(key);
+                    EvictIfNeeded_NoLock();
                 }
                 return fetched.Posts;
             }
         }
+        catch (OperationCanceledException) { throw; }
         catch { /* ネット取得失敗は通常経路 (ディスク優先) へフォールバック */ }
         return await LoadPostsAsync(board, threadKey, ct).ConfigureAwait(false);
     }
