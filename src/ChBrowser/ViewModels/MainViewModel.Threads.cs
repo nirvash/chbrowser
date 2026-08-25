@@ -19,9 +19,12 @@ public sealed partial class MainViewModel
     /// <summary>レスのバッチに NG 判定を適用し、可視分だけ tab.AppendPosts する共通ヘルパ。
     /// バッチ内の連鎖は計算するが、過去バッチに跨る連鎖は対象外 (= タブ再オープン時に正しい連鎖が効く)。
     /// <paramref name="isIncremental"/> = true は「初期表示後の差分追加」を JS に伝える (Phase 20)。</summary>
-    private void AppendPostsWithNg(ThreadTabViewModel tab, IReadOnlyList<Post> batch, bool isIncremental = false)
+    /// <returns>実際に JS へ append できた先頭レスの番号 (= batch 全件が NG 非表示だった場合は null)。
+    /// 手動差分取得時の「新着先頭へスクロール」(<see cref="RefreshThreadAsync"/>) が飛び先を
+    /// 決めるのに使う (= NG で消えたレス番号へは飛べないため)。</returns>
+    private int? AppendPostsWithNg(ThreadTabViewModel tab, IReadOnlyList<Post> batch, bool isIncremental = false)
     {
-        if (batch.Count == 0) return;
+        if (batch.Count == 0) return null;
         // dat の 1 レス目はスレタイトルを保持している。アドレスバーから直接スレを開いた経路では
         // タブ作成時 Title が空文字なので、最初にこのメソッドに来た batch の中で 1 レス目を見つけたら
         // タイトル / タブヘッダを埋める。お気に入り登録の Title もここで揃う。
@@ -31,16 +34,26 @@ public sealed partial class MainViewModel
         }
         var breakdown = _ng.ComputeHiddenWithBreakdown(batch.ToList(), tab.Board.Host, tab.Board.DirectoryName);
         var hidden    = breakdown.HiddenNumbers;
+        int? firstAppendedNumber;
         if (hidden.Count == 0)
         {
             tab.AppendPosts(batch, isIncremental);
+            firstAppendedNumber = batch[0].Number;
         }
         else
         {
             var visible = new List<Post>(batch.Count - hidden.Count);
             foreach (var p in batch)
                 if (!hidden.Contains(p.Number)) visible.Add(p);
-            if (visible.Count > 0) tab.AppendPosts(visible, isIncremental);
+            if (visible.Count > 0)
+            {
+                tab.AppendPosts(visible, isIncremental);
+                firstAppendedNumber = visible[0].Number;
+            }
+            else
+            {
+                firstAppendedNumber = null;
+            }
             tab.HiddenCount += hidden.Count;
             tab.AddHiddenBreakdown(breakdown);
         }
@@ -49,6 +62,7 @@ public sealed partial class MainViewModel
 
         // NG 判定 AI: 選択中タブにレスが増えたら、新規分 (= 未判定) の判定を再開する。
         OnPostsAppendedForAiNg(tab);
+        return firstAppendedNumber;
     }
 
     // ---- 「自分の書き込みへの返信あり」検出 (= 状態マーク赤化) ----
@@ -114,33 +128,42 @@ public sealed partial class MainViewModel
     /// OnAppendBatchChanged が binding.MarkPostNumber を読んで JSON に乗せるため)。
     ///
     /// 副作用: <see cref="StatusMessage"/> と <c>tab.DatSize</c> も更新する。 </summary>
-    private void ApplyFetchDelta(ThreadTabViewModel tab, int prevCount, DatFetchResult result, string headerForStatus)
+    ///
+    /// <returns>「新着先頭へスクロール」(<see cref="RefreshThreadAsync"/>) 用の飛び先候補 =
+    /// 今回の差分で実際に JS へ append できた先頭レス番号。新着 0 件 / dat 縮小 / 初取得相当
+    /// (prevCount=0) / 新着が全件 NG 非表示のときは null (= スクロールしない)。</returns>
+    private int? ApplyFetchDelta(ThreadTabViewModel tab, int prevCount, DatFetchResult result, string headerForStatus)
     {
         ChBrowser.Services.Logging.LogService.Instance.Write(
             $"[fetchDelta] {headerForStatus}: prevCount={prevCount}, result.Count={result.Posts.Count}");
 
+        int? firstNewNumber;
         if (result.Posts.Count > prevCount)
         {
             var added = new List<Post>(result.Posts.Count - prevCount);
             for (var i = prevCount; i < result.Posts.Count; i++) added.Add(result.Posts[i]);
+            int? appendedFirst;
             if (prevCount > 0)
             {
                 tab.MarkPostNumber = prevCount + 1;
+                appendedFirst = AppendPostsWithNg(tab, added, isIncremental: true);
                 ChBrowser.Services.Logging.LogService.Instance.Write(
-                    $"[fetchDelta]   → set tab.MarkPostNumber={prevCount + 1}, then AppendPostsWithNg(added={added.Count}, incremental=true)");
+                    $"[fetchDelta]   → set tab.MarkPostNumber={prevCount + 1}, then AppendPostsWithNg(added={added.Count}, incremental=true) → firstAppended={appendedFirst?.ToString() ?? "null"}");
             }
             else
             {
                 ChBrowser.Services.Logging.LogService.Instance.Write(
                     $"[fetchDelta]   → prevCount=0 (初取得相当) なので mark は立てず、AppendPostsWithNg(added={added.Count}, incremental=true)");
+                AppendPostsWithNg(tab, added, isIncremental: true);
+                appendedFirst = null;
             }
-            AppendPostsWithNg(tab, added, isIncremental: true);
             // 仕様: 「差分取得で来た新着」が own への返信を含む場合だけ赤化フラグを立てる。
             // cache load や ToggleOwnPost では発火しない。
             tab.HasReplyToOwn = DeltaHasReplyToOwn(tab, added);
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[fetchDelta]   → HasReplyToOwn={tab.HasReplyToOwn} (delta scan over {added.Count} new posts)");
             tab.StatusMessage = $"{headerForStatus}: {added.Count} レス追加 (合計 {result.Posts.Count})";
+            firstNewNumber = appendedFirst;
         }
         else if (result.Posts.Count == prevCount)
         {
@@ -151,6 +174,7 @@ public sealed partial class MainViewModel
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[fetchDelta]   → 新着 0 件、tab.MarkPostNumber=null、HasReplyToOwn=false");
             tab.StatusMessage = $"{headerForStatus}: 新着なし ({result.Posts.Count} レス)";
+            firstNewNumber = null;
         }
         else
         {
@@ -160,8 +184,10 @@ public sealed partial class MainViewModel
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[fetchDelta]   → dat 縮小、tab.MarkPostNumber=null、HasReplyToOwn=false");
             tab.StatusMessage = $"{headerForStatus}: dat 縮小 ({prevCount} → {result.Posts.Count})";
+            firstNewNumber = null;
         }
         tab.DatSize = result.DatSize;
+        return firstNewNumber;
     }
 
     /// <summary>スレ一覧でスレをダブルクリックしたとき呼ばれる。
@@ -313,7 +339,11 @@ public sealed partial class MainViewModel
 
     /// <summary>スレ更新ボタン / スレ一覧で開いているスレを再クリックされた時に呼ばれる。
     /// HTTP Range で差分のみ取得して、増分レスを JS に append する。</summary>
-    public async Task RefreshThreadAsync(ThreadTabViewModel tab)
+    /// <param name="tab">差分取得対象のタブ。</param>
+    /// <param name="scrollToFirstNewPost">手動差分取得 (= 🔄 ボタン / ショートカット等) のとき true。
+    /// 新着があった場合に新着先頭レスまでスクロールさせる。スレ一覧再クリックや書き込み後の
+    /// 自動取得など非手動経路は false (= 従来どおり読書位置を維持)。</param>
+    public async Task RefreshThreadAsync(ThreadTabViewModel tab, bool scrollToFirstNewPost = false)
     {
         if (tab.IsBusy) return;
 
@@ -328,10 +358,18 @@ public sealed partial class MainViewModel
 
             var noProgress = new Progress<IReadOnlyList<Post>>(_ => { });
             var result     = await _datClient.FetchStreamingAsync(tab.Board, tab.ThreadKey, noProgress).ConfigureAwait(true);
-            ApplyFetchDelta(tab, prevCount, result, tab.Header);
+            var firstNew   = ApplyFetchDelta(tab, prevCount, result, tab.Header);
 
             SaveFetchedPostCount(tab.Board, tab.ThreadKey, result.Posts.Count);
             tab.FetchedPostCount = result.Posts.Count;
+
+            // 手動差分取得: 新着があったときだけ新着先頭レスまでスクロールする。
+            // PendingScrollToPost への setter で JS に scrollToPost が push される。appendPosts の各 batch
+            // メッセージより後に post されるため (= PostJsonWhenReadyAsync の FIFO 保証)、JS 側では
+            // 新着描画完了後のスクロールとして効き、既存の比例復帰 / tryScrollToTarget を上書きする。
+            // 飛び先は NG 非表示を除いた「実際に append できた先頭」なので、全件 NG のときは何もしない。
+            if (scrollToFirstNewPost && firstNew is int firstNewNo)
+                tab.PendingScrollToPost = new ScrollToPostRequest(firstNewNo);
 
             // 最終状態算定: HasReplyToOwn は ApplyFetchDelta の delta scan で直前に決まっているので
             // ここではそれを ComputeMarkState で集約するだけ。Refresh 経路は stateHint なしなので Dropped 評価しない。
@@ -1350,7 +1388,7 @@ public sealed partial class MainViewModel
             board, info,
             closeCallback:          t => RemoveThreadTab(t),
             deleteCallback:         t => DeleteThreadLog(t),
-            refreshCallback:        t => _ = RefreshThreadAsync(t),
+            refreshCallback:        t => _ = RefreshThreadAsync(t, scrollToFirstNewPost: true),
             addToFavoritesCallback: t => ToggleThreadFavorite(t),
             writeCallback:          t => OpenPostDialog(t),
             aiChatCallback:         t => OpenAiChat(t),

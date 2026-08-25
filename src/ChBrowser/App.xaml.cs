@@ -499,7 +499,7 @@ public partial class App : Application
             }
             _ = vm.ReopenRecentlyClosedThreadListTabAsync();
         }
-        void RefreshThread(object? src) { if (ResolveTargetThreadTab(src, vm) is { } t) _ = vm.RefreshThreadAsync(t); }
+        void RefreshThread(object? src) { if (ResolveTargetThreadTab(src, vm) is { } t) _ = vm.RefreshThreadAsync(t, scrollToFirstNewPost: true); }
         // タブ領域でのクローズ操作 (= 中クリック等) は、
         //   - 具体的なタブ上で発動 → そのタブを閉じる (従来動作)
         //   - タブの無い空き領域で発動 (mouse src は non-null だが解決失敗) → 直前に閉じたタブを復元
