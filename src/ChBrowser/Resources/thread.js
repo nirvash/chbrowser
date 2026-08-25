@@ -5032,12 +5032,16 @@ function findReadProgressMaxNumber() {
                     applyVideoCacheState(msg);
                     break;
                 case 'scrollToPost': {
-                    // ContextMenu 「このレスに飛ぶ」から呼ばれる。primary レス (id="rN") に scrollIntoView。
+                    // ContextMenu 「このレスに飛ぶ」 / AI ツール show_post_in_app から呼ばれる。
+                    // primary レス (id="rN") に scrollIntoView + 一時ハイライト (markScrollTarget)。
                     // ポップアップは即時閉じる (= 飛んだ先が popup に隠れないようにする)。
                     // 該当 primary レスが DOM に居ない (= フィルタで非表示 / NG / dedupTree で折り畳み等) 場合は no-op。
                     const target = document.getElementById('r' + msg.number);
                     closeFrom(0);
-                    if (target) target.scrollIntoView({ block: 'start' });
+                    if (target) {
+                        target.scrollIntoView({ block: 'start' });
+                        markScrollTarget(target);
+                    }
                     break;
                 }
                 case 'setHiddenPosts': {
@@ -5067,6 +5071,28 @@ function findReadProgressMaxNumber() {
             if (set[n]) el.classList.add('ai-ng-hidden');
             else        el.classList.remove('ai-ng-hidden');
         }
+    }
+
+    // ---------- scroll ターゲットの一時ハイライト ----------
+    // scrollToPost で飛んだ先を目立たせて視線を誘導する。連続呼び出しでは前のハイライトを
+    // 解除してから付け直す (= 常時に出ているターゲットは高々 1 つ)。配色は post.css の
+    // .post.chb-scroll-target / @keyframes chb-scroll-flash で定義、テーマ側で上書き可能。
+    var _scrollTargetTimer = null;
+    function markScrollTarget(el) {
+        document.querySelectorAll('.chb-scroll-target').forEach(function (n) {
+            if (n !== el) n.classList.remove('chb-scroll-target');
+        });
+        // 同一要素への再トリガでもアニメーションを最初から再生させるため、一度外して reflow を挟む。
+        el.classList.remove('chb-scroll-target');
+        void el.offsetWidth;
+        el.classList.add('chb-scroll-target');
+        if (_scrollTargetTimer) clearTimeout(_scrollTargetTimer);
+        _scrollTargetTimer = setTimeout(function () {
+            document.querySelectorAll('.chb-scroll-target').forEach(function (n) {
+                n.classList.remove('chb-scroll-target');
+            });
+            _scrollTargetTimer = null;
+        }, 2000);
     }
 
     // ---------- 「スレ表示真っ白」現象 分析用フック ----------

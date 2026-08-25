@@ -178,3 +178,18 @@
     font-size: 0.85em;
     margin-left: 2px;
 }
+
+/* scrollToPost (「このレスに飛ぶ」 / AI ツール show_post_in_app) で飛んだ先の一時ハイライト。
+ * thread.js markScrollTarget が .chb-scroll-target を付け、2 秒後に自動解除する。
+ * animation 終了後もクラスが残る時間があるため最終 keyframe は透明に戻す。テーマ側で上書き可。 */
+.post.chb-scroll-target {
+    animation: chb-scroll-flash 2s ease-out;
+    outline: 2px solid rgba(255, 170, 0, 0.55);
+    outline-offset: -2px;
+    border-radius: 3px;
+}
+@keyframes chb-scroll-flash {
+    0%   { background-color: rgba(255, 200, 0, 0.40); }
+    60%  { background-color: rgba(255, 200, 0, 0.22); }
+    100% { background-color: transparent; }
+}
