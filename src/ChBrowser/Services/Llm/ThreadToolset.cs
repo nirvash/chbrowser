@@ -27,6 +27,14 @@ public sealed record NavSideState(
 /// Action は "adopt" / "exclude" / "clear" / "confirm"。Key は adopt / exclude で必須。</summary>
 public sealed record NavMutationRequest(bool IsPrev, string Action, string? Key);
 
+/// <summary>attached スレのライブ状態 (<c>get_new_posts</c> 専用)。他ツールがコンストラクタ時点の
+/// スナップショットを使うのに対し、こちらは呼び出しのたびにホスト側 (MainViewModel) が
+/// 現在値を読んで返す (= 差分取得直後の Posts / MarkPostNumber を反映できる)。</summary>
+public sealed record AttachedLiveState(
+    IReadOnlyList<Post> Posts,
+    int?                MarkPostNumber,
+    int?                LastReadPostNumber);
+
 /// <summary>
 /// AI チャットで LLM が呼び出せるツール群を束ねる。
 ///
@@ -69,6 +77,11 @@ public sealed class ThreadToolset : IAgentToolset
     private const int DefaultCandidatesLimit = 20;
     private const int MaxCandidatesLimit     = 50;
     private const int CandidateSimMin        = 6;
+
+    /// <summary>get_new_posts の既定 / 上限件数。get_posts (50/回) より大きいのは
+    /// 「未読を一括追いつく」用途のため。</summary>
+    private const int DefaultNewPostsLimit = 100;
+    private const int MaxNewPostsLimit     = 200;
 
     /// <summary>find_popular_posts の既定 / 上限件数。</summary>
     private const int DefaultPopularTopK = 10;
@@ -113,6 +126,18 @@ public sealed class ThreadToolset : IAgentToolset
     /// null 可 (非対応)。メッセージ文字列を返す。</summary>
     private readonly Func<NavMutationRequest, Task<string>>? _navMutationAsync;
 
+    /// <summary>attached スレのライブ状態読み取り (<c>get_new_posts</c> 専用)。null = 非対応。
+    /// UI スレッド前提 (MCP は Dispatcher 経由、AI エージェントも UI スレッド上で実行)。</summary>
+    private readonly Func<AttachedLiveState>? _getAttachedLive;
+
+    /// <summary>attached スレのサーバ差分取得 (= 更新ボタン相当)。<c>get_new_posts(refresh=true)</c> から
+    /// 呼ばれる。null 可 (非対応)。結果メッセージ文字列を返す。</summary>
+    private readonly Func<Task<string>>? _refreshAttachedAsync;
+
+    /// <summary>指定レスをスレ表示ペインで表示する (スクロール + アクティブ化)。
+    /// <c>show_post_in_app</c> の本体。null 可 (非対応)。</summary>
+    private readonly Func<string, int, Task<string>>? _showPostInAppAsync;
+
     /// <summary>会話開始時の attached スレッド (任意)。<c>thread_url</c> 省略時のデフォルト先で、状態系ツールの唯一のソース。</summary>
     private readonly ThreadContext? _attached;
 
@@ -142,7 +167,10 @@ public sealed class ThreadToolset : IAgentToolset
         IEnumerable<int>?             attachedOwnPostNumbers  = null,
         bool                          attachedHasReplyToOwn   = false,
         Func<bool, NavSideState>?     getNavSide              = null,
-        Func<NavMutationRequest, Task<string>>? navMutationAsync = null)
+        Func<NavMutationRequest, Task<string>>? navMutationAsync = null,
+        Func<AttachedLiveState>?      getAttachedLive         = null,
+        Func<Task<string>>?           refreshAttachedAsync    = null,
+        Func<string, int, Task<string>>? showPostInAppAsync   = null)
     {
         _dataLoader               = dataLoader;
         _openThreadInAppAsync     = openThreadInAppAsync;
@@ -150,6 +178,9 @@ public sealed class ThreadToolset : IAgentToolset
         _openThreadListInAppAsync = openThreadListInAppAsync;
         _getNavSide               = getNavSide;
         _navMutationAsync         = navMutationAsync;
+        _getAttachedLive          = getAttachedLive;
+        _refreshAttachedAsync     = refreshAttachedAsync;
+        _showPostInAppAsync       = showPostInAppAsync;
 
         if (attachedBoard is not null && attachedThreadKey is not null && attachedPosts is not null)
         {
@@ -283,6 +314,34 @@ public sealed class ThreadToolset : IAgentToolset
                         type       = "object",
                         properties = new { },
                         required   = Array.Empty<string>(),
+                    },
+                },
+            },
+            new
+            {
+                type     = "function",
+                function = new
+                {
+                    name        = "get_new_posts",
+                    description = "指定スレの「未読 / 新着」をカーソル以降まとめて取得する。" +
+                                  "**カーソル解決順 (after 省略時)**: 新着マーク位置 (このアプリ起動中の差分取得で増えた先頭) → 既読位置 → 末尾 limit 件。" +
+                                  "**refresh** (= 既定 false): true で呼び出し時にサーバへ差分取得してから返す" +
+                                  " (=「開いたままのスレに今新しいレスが届いてないか確認したい」とき)。false はローカルの現況のみでサーバアクセス無し。" +
+                                  "refresh=true の連続呼び出し (ポーリング) はサーバ負荷になるため避け、1 回呼んで has_more を辿ること。" +
+                                  "戻り値: previous_total (取得前の総レス数。attached + refresh=true 時のみ伸びうる) / current_total / posts / has_more / new_mark_start。" +
+                                  "has_more=true なら after=<返却最終レス番号> で再呼出しすれば続きを読める。" +
+                                  "thread_url 省略時は attached スレ。",
+                    parameters  = new
+                    {
+                        type       = "object",
+                        properties = new
+                        {
+                            after      = new { type = "integer", description = "このレス番号より後ろを取得するカーソル (省略時は上記の優先順で自動解決)" },
+                            limit      = new { type = "integer", description = $"最大取得件数 (既定 {DefaultNewPostsLimit}, 上限 {MaxNewPostsLimit})" },
+                            refresh    = new { type = "boolean", description = "true: サーバへ差分取得してから返す (既定 false = ローカル現況のみ)" },
+                            thread_url = ThreadUrlParam(),
+                        },
+                        required = Array.Empty<string>(),
                     },
                 },
             },
@@ -520,6 +579,29 @@ public sealed class ThreadToolset : IAgentToolset
                             thread_url = new { type = "string", description = "対象スレッドの URL。**必ず list_threads / search_posts 等のツール結果から取得した実在の URL を使う**こと。形式は https://<host>/test/read.cgi/<板dir>/<数字key>/ で、key は数字のみ。\"thread_id_1\" のような placeholder や記憶からの推測 URL は絶対禁止 (= 不正 URL は parse エラーになる)。" },
                         },
                         required = new[] { "thread_url" },
+                    },
+                },
+            },
+            new
+            {
+                type     = "function",
+                function = new
+                {
+                    name        = "show_post_in_app",
+                    description = "指定したレスを ChBrowser のスレ表示ペイン上でユーザに見える位置までスクロールして強調表示する。" +
+                                  "「そのレス見せて」「該当箇所を開いて」「原文を見たい」など、ユーザが実際にレスを確認することを意図した依頼で使う。" +
+                                  "thread_url 省略時は attached スレを対象とする。" +
+                                  "対象スレが未オープンなら開いてから移動し、既に開かれていればそのタブをアクティブ化する。" +
+                                  "このツールはレス本文を取得するためのものではない。内容確認には get_post / get_posts を使う。",
+                    parameters  = new
+                    {
+                        type       = "object",
+                        properties = new
+                        {
+                            number     = new { type = "integer", description = "表示するレス番号 (1 始まり)" },
+                            thread_url = ThreadUrlParam(),
+                        },
+                        required = new[] { "number" },
                     },
                 },
             },
@@ -775,8 +857,8 @@ public sealed class ThreadToolset : IAgentToolset
             {
                 "get_thread_meta"     => await GetThreadMetaAsync(argumentsJson, ct).ConfigureAwait(false),
                 "get_thread_state"    => GetThreadState(),
-                "get_posts"           => await GetPostsAsync(argumentsJson, ct).ConfigureAwait(false),
-                "search_posts"        => await SearchPostsAsync(argumentsJson, ct).ConfigureAwait(false),
+                "get_new_posts"       => await GetNewPostsAsync(argumentsJson, ct).ConfigureAwait(false),
+                "get_posts"           => await GetPostsAsync(argumentsJson, ct).ConfigureAwait(false),                "search_posts"        => await SearchPostsAsync(argumentsJson, ct).ConfigureAwait(false),
                 "get_post"            => await GetPostAsync(argumentsJson, ct).ConfigureAwait(false),
                 "get_posts_by_id"     => await GetPostsByIdAsync(argumentsJson, ct).ConfigureAwait(false),
                 "find_replies_to"     => await FindRepliesToAsync(argumentsJson, ct).ConfigureAwait(false),
@@ -785,6 +867,7 @@ public sealed class ThreadToolset : IAgentToolset
                 "list_boards"         => ListBoards(argumentsJson),
                 "list_threads"        => await ListThreadsAsync(argumentsJson, ct).ConfigureAwait(false),
                 "open_thread_in_app"      => await OpenThreadInAppAsync(argumentsJson).ConfigureAwait(false),
+                "show_post_in_app"        => await ShowPostInAppAsync(argumentsJson).ConfigureAwait(false),
                 "open_board_in_app"       => await OpenBoardInAppAsync(argumentsJson).ConfigureAwait(false),
                 "open_thread_list_in_app" => await OpenThreadListInAppAsync(argumentsJson).ConfigureAwait(false),
                 "get_nav_state"               => GetNavState(),
@@ -953,6 +1036,178 @@ public sealed class ThreadToolset : IAgentToolset
             });
         }
         return JsonSerializer.Serialize(new { posts = slice }, JsonOpts);
+    }
+
+    /// <summary>get_new_posts の実体。「未読 / 新着」をカーソル (after > 新着マーク > 既読位置 > 末尾) 以降
+    /// 一括取得する。attached ではライブ状態 (<see cref="AttachedLiveState"/>) を使うので、差分取得直後の
+    /// Posts / MarkPostNumber がそのまま反映される。refresh=true 時は attached ならホスト側で差分取得を
+    /// 行い (= UI の「以降新レス」マーク更新も伴う)、非 attach ならネット優先ロードを行う。</summary>
+    private async Task<string> GetNewPostsAsync(string argsJson, CancellationToken ct)
+    {
+        if (!TryParseObject(argsJson, out var args))
+            return ErrorJson("引数 JSON のパースに失敗");
+
+        var refresh = ReadBoolArg(args, "refresh");
+        long? afterArg = null;
+        if (args.TryGetProperty("after", out var afterEl) && TryGetIntLoose(afterEl, out var av))
+            afterArg = av;
+        var limit = DefaultNewPostsLimit;
+        if (args.TryGetProperty("limit", out var limEl) && TryGetIntLoose(limEl, out var lim))
+            limit = Math.Clamp(lim, 1, MaxNewPostsLimit);
+
+        string? urlOverride = null;
+        if (args.TryGetProperty("thread_url", out var tuEl) && tuEl.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(tuEl.GetString()))
+            urlOverride = tuEl.GetString();
+
+        // ---- attached パス判定: ライブ状態が取れて、URL 指定が無いか attached 一致のとき ----
+        bool attachedMatch = false;
+        if (_getAttachedLive is not null && _attached is not null)
+        {
+            if (urlOverride is null)
+            {
+                attachedMatch = true;
+            }
+            else if (_dataLoader.TryParseThreadUrl(urlOverride, out var ah, out var ad, out var ak))
+            {
+                attachedMatch =
+                    string.Equals(_attached.Board.Host,          ah, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(_attached.Board.DirectoryName, ad, StringComparison.Ordinal) &&
+                    string.Equals(_attached.ThreadKey,           ak, StringComparison.Ordinal);
+            }
+        }
+
+        int                 prevTotal, curTotal;
+        IReadOnlyList<Post> posts;
+        int?                mark = null, lastRead = null;
+        string?             refreshMsg = null;
+
+        if (attachedMatch)
+        {
+            prevTotal = _getAttachedLive!().Posts.Count;
+            if (refresh)
+            {
+                if (_refreshAttachedAsync is null)
+                    return ErrorJson("refresh=true が要求されましたが、このツールセットでは差分取得が利用できません。");
+                refreshMsg = await _refreshAttachedAsync().ConfigureAwait(false);
+            }
+            var live = _getAttachedLive();
+            posts    = live.Posts;
+            mark     = live.MarkPostNumber;
+            lastRead = live.LastReadPostNumber;
+            curTotal = posts.Count;
+        }
+        else
+        {
+            if (urlOverride is null)
+                return ErrorJson("thread_url が指定されておらず、attached スレッドもありません。thread_url を指定してください。");
+            if (!_dataLoader.TryParseThreadUrl(urlOverride, out var h, out var d, out var k))
+                return ErrorJson($"thread_url の解釈に失敗: \"{urlOverride}\" (5ch.io / bbspink.com のスレ URL である必要があります)");
+            var board = _dataLoader.ResolveBoard(h, d);
+            posts     = refresh
+                ? await _dataLoader.LoadPostsFreshAsync(board, k, ct).ConfigureAwait(false)
+                : await _dataLoader.LoadPostsAsync(board, k, ct).ConfigureAwait(false);
+            prevTotal = curTotal = posts.Count;
+        }
+
+        // カーソル解決: after 引数 > 新着マーク位置 > 既読位置 > 末尾 limit 件。
+        // 内部カーソルは「この番号まで既読」を表し、返却は cursor+1 以降。
+        int cursor;
+        string cursorSource;
+        if (afterArg is long a)
+        {
+            cursor = checked((int)a);
+            cursorSource = "after";
+        }
+        else if (mark is int m)
+        {
+            cursor = m - 1;   // 新着先頭 (mark 自身) を含めるため -1
+            cursorSource = "new_mark";
+        }
+        else if (lastRead is int lr)
+        {
+            cursor = lr;
+            cursorSource = "last_read";
+        }
+        else
+        {
+            cursor = Math.Max(0, curTotal - limit);
+            cursorSource = "tail";
+        }
+
+        var lo = Math.Max(1, cursor + 1);
+        var hi = curTotal;
+
+        if (curTotal == 0 || hi < lo)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                previous_total        = prevTotal,
+                current_total         = curTotal,
+                new_mark_start        = mark,
+                last_read_post_number = lastRead,
+                cursor_source         = cursorSource,
+                returned_start        = (int?)null,
+                returned_end          = (int?)null,
+                has_more              = false,
+                next_after            = (int?)null,
+                refresh_message       = refreshMsg,
+                hint                  = "カーソル以降のレスはありません (未読なし / 範囲外)。未読位置を知りたい場合は get_thread_state を参照。",
+                posts                 = Array.Empty<object>(),
+            }, JsonOpts);
+        }
+
+        var end   = (int)Math.Min((long)hi, (long)lo + limit - 1);
+        var slice = new List<object>(end - lo + 1);
+        foreach (var p in posts)
+        {
+            if (p.Number < lo || p.Number > end) continue;
+            slice.Add(new
+            {
+                n    = p.Number,
+                name = p.Name,
+                id   = p.Id,
+                date = p.DateText,
+                body = CleanBody(p.Body),
+            });
+        }
+
+        var hasMore = end < hi;
+        var hint = hasMore
+            ? $"未読がまだ残っています (今回の返却は >>{lo}- >>{end})。続きは after={end} で再呼出し。"
+            : cursorSource == "tail"
+                ? $"末尾 {slice.Count} 件を返した (未読位置情報なし)。全文を読むなら get_posts(start=1, end={curTotal})。"
+                : "カーソル以降すべてを返した (未読はこれで消化)。";
+
+        return JsonSerializer.Serialize(new
+        {
+            previous_total        = prevTotal,
+            current_total         = curTotal,
+            new_mark_start        = mark,
+            last_read_post_number = lastRead,
+            cursor_source         = cursorSource,
+            returned_start        = lo,
+            returned_end          = end,
+            has_more              = hasMore,
+            next_after            = hasMore ? (int?)end : null,
+            refresh_message       = refreshMsg,
+            hint,
+            posts                 = slice,
+        }, JsonOpts);
+    }
+
+    /// <summary>bool 引数の寛容な読み取り (true/false の文字列も受ける)。</summary>
+    private static bool ReadBoolArg(JsonElement args, string name)
+    {
+        if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out var el)) return false;
+        switch (el.ValueKind)
+        {
+            case JsonValueKind.True:  return true;
+            case JsonValueKind.False: return false;
+            case JsonValueKind.String:
+                return bool.TryParse(el.GetString(), out var b) && b;
+            default: return false;
+        }
     }
 
     private async Task<string> SearchPostsAsync(string argsJson, CancellationToken ct)
@@ -1523,6 +1778,41 @@ public sealed class ThreadToolset : IAgentToolset
 
         var msg = await _openThreadInAppAsync(url).ConfigureAwait(false);
         return JsonSerializer.Serialize(new { ok = true, thread_url = url, message = msg }, JsonOpts);
+    }
+
+    private async Task<string> ShowPostInAppAsync(string argsJson)
+    {
+        if (!TryParseObject(argsJson, out var args))
+            return ErrorJson("引数 JSON のパースに失敗");
+        if (!args.TryGetProperty("number", out var nEl) || !TryGetIntLoose(nEl, out var number))
+            return ErrorJson("number が指定されていないか、整数として読み取れません");
+        if (number <= 0)
+            return ErrorJson($"number は 1 以上の整数である必要があります (受け取った値: {number})");
+
+        // 対象 URL 解決: thread_url 指定 > attached。
+        string url;
+        if (args.TryGetProperty("thread_url", out var tuEl) && tuEl.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(tuEl.GetString()))
+        {
+            url = tuEl.GetString()!;
+            if (!_dataLoader.TryParseThreadUrl(url, out _, out _, out _))
+                return ErrorJson($"thread_url の解釈に失敗: \"{url}\"");
+        }
+        else
+        {
+            if (_attached is null)
+                return ErrorJson("thread_url が指定されておらず、attached スレッドもありません。thread_url を指定してください。");
+            url = $"https://{_attached.Board.Host}/test/read.cgi/{_attached.Board.DirectoryName}/{_attached.ThreadKey}/";
+            // attached スナップショットで存在チェックだけ行う (NG あぼーん / 範囲外の早期検出)。
+            if (!_attached.Posts.Any(p => p.Number == number))
+                return ErrorJson($"レス番号 {number} は attached スレ ({_attached.Posts.Count} 件中) に見つかりません (NG あぼーん / 範囲外の可能性)。");
+        }
+
+        if (_showPostInAppAsync is null)
+            return ErrorJson("このツールセットでは表示アクションが利用できません。");
+
+        var msg = await _showPostInAppAsync(url, number).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new { ok = true, number, thread_url = url, message = msg }, JsonOpts);
     }
 
     private async Task<string> OpenBoardInAppAsync(string argsJson)
