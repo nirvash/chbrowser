@@ -43,6 +43,18 @@
         <CheckBox Content="ビューアを開いたとき画像詳細ペインを開いた状態にする"
                   IsChecked="{Binding ViewerDetailsPaneDefaultOpen, Mode=TwoWay}" />
 
+        <!-- 画像サムネイルのクリック挙動 -->
+        <CheckBox Content="画像サムネイルをクリックしたときスレ内で最大化する"
+                  IsChecked="{Binding ImageClickMaximize, Mode=TwoWay}"
+                  Margin="0,16,0,4" />
+        <TextBlock TextWrapping="Wrap"
+                   Foreground="#666"
+                   Margin="0,0,0,4">
+            ON のときは、スレ内の読み込み済み画像サムネイルをクリックすると画像ビューアウィンドウを
+            開かず、動画の ⛶ ボタンと同じくスレ表示内で全画面表示します (Esc で戻ります)。
+            OFF (= 既定) ではこれまでどおり画像ビューアウィンドウで開きます。
+        </TextBlock>
+
         <CheckBox Content="動画のループ再生のデフォルト設定"
                   IsChecked="{Binding VideoLoop, Mode=TwoWay}"
                   Margin="0,16,0,4" />

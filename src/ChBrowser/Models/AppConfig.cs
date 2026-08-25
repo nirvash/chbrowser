@@ -176,6 +176,11 @@ public sealed record AppConfig
     /// テキスト等も含めた全体拡大。即時反映 + 永続化。</summary>
     public double ThreadPageZoom { get; init; } = 1.0;
 
+    /// <summary>画像サムネイル (読み込み済み) をクリックしたときの挙動。
+    /// false (既定): 画像ビューアウィンドウで開く。true: 動画の ⛶ と同じくスレ表示内で
+    /// 全画面表示する (Esc で戻る)。即時反映 (setConfig メッセージ → thread.js)。</summary>
+    public bool ImageClickMaximize { get; init; } = false;
+
     /// <summary>動画再生開始時のループの初期値 (スレ内 / ビューアウィンドウ共通)。
     /// false (既定): 1 回再生で停止する。true: 末尾に達したら先頭に戻って繰り返す。
     /// 個々の動画は再生中のループトグルボタンで都度切替可能。

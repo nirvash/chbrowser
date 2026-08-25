@@ -5,7 +5,7 @@
 //   window.setViewMode(mode)                 — 'flat' | 'tree' | 'dedupTree'
 // 受信メッセージ:
 //   { type: 'setConfig', popularThreshold?, imageSizeThresholdMb?, idHighlightThreshold?,
-//     metaPopupClickOnly?, videoLoop?, slotScale?, debug? }              — Phase 11 設定の即時反映
+//     metaPopupClickOnly?, videoLoop?, imageClickMaximize?, slotScale?, debug? }        — Phase 11 設定の即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
@@ -66,6 +66,8 @@
     let ID_HIGHLIGHT_THRESHOLD  = 5; // 同 ID が >= 5 件で「ID」文字列を赤化 (Phase 22)
     // スレ内動画の再生を末尾でループさせるか。既定 OFF (= 1 回再生で停止)。setConfig.videoLoop で上書き。
     let VIDEO_LOOP_PLAYBACK     = false;
+    // 画像クリック時の挙動 (= setConfig.imageClickMaximize)。false: ビューアウィンドウ / true: スレ内最大化。
+    let IMAGE_CLICK_MAXIMIZE    = false;
 
     // ID / ワッチョイ (xxxx-yyyy) の出現一覧。renderCurrentViewMode / appendPosts 後に再計算する。
     //   id      → [postNumber, postNumber, ...]
@@ -3695,6 +3697,35 @@ function findReadProgressMaxNumber() {
             }
             // image
             if (slot.classList.contains('loaded')) {
+                hideAiPopup();
+
+                // オプション ON: 動画の ⛶ と同じく、画像要素をスレ表示内で全画面化する
+                // (= ビューアウィンドウを開かない)。Esc / 全画面終了で元のサムネに戻る。
+                if (IMAGE_CLICK_MAXIMIZE) {
+                    const img = slot.querySelector('img.inline-image');
+                    if (img && img.requestFullscreen) {
+                        img.requestFullscreen().then(function () {
+                            // 全画面中のクリック = 閉じる操作 (Esc と同じ)。stopPropagation で
+                            // 下地のスロットクリックハンドラ (再オープン等) を発火させない。
+                            const onClick = function (ev) {
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                if (document.fullscreenElement) document.exitFullscreen();
+                            };
+                            // 全画面が終わったらリスナーを除去 (= 通常時のクリックに影響させない)
+                            const onChange = function () {
+                                if (document.fullscreenElement !== img) {
+                                    img.removeEventListener('click', onClick);
+                                    document.removeEventListener('fullscreenchange', onChange);
+                                }
+                            };
+                            img.addEventListener('click', onClick);
+                            document.addEventListener('fullscreenchange', onChange);
+                        }).catch(function () { /* 失敗時はビューアへフォールバック */ });
+                        return;
+                    }
+                }
+
                 // Phase 10: ロード済みなら外部ブラウザではなくビューアウィンドウに送る。
                 // ビューアにはサムネ生成に使った実画像 URL (= data-src) を送る。元のページ URL
                 // (= data-url; x.com のステータス URL や imgur の HTML ページ URL 等) ではビューアが
@@ -4831,6 +4862,7 @@ function findReadProgressMaxNumber() {
                         closeFrom(0);
                     }
                     if (typeof msg.videoLoop === 'boolean') VIDEO_LOOP_PLAYBACK = msg.videoLoop;
+                    if (typeof msg.imageClickMaximize === 'boolean') IMAGE_CLICK_MAXIMIZE = msg.imageClickMaximize;
                     if (typeof msg.slotScale === 'number') applyGlobalSlotScale(msg.slotScale);
                     if (typeof msg.debug === 'boolean') DEBUG_DIAG = msg.debug;
                     // 既存スレ表示のスクロールバーは閾値が変わると赤マーカーの集合も変わるので再計算

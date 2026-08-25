@@ -125,6 +125,16 @@ a.anchor.missing {
     border-color: #888;
 }
 
+/* 画像クリックでスレ内最大化したときの表示 (オプション ImageClickMaximize)。
+   画像要素自身が fullscreen 要素になるため、画面いっぱいに object-fit: contain で
+   フィットさせ、余白は黒で埋める (= ビューアウィンドウと同じ見た目)。 */
+img.inline-image:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    object-fit: contain;
+    background: #000000;
+}
+
 /* AI 生成画像 (= comfyUI / SD WebUI Forge / etc.) を識別するバッジ行。
    サムネイル左上に絶対配置で重ねる。生成元ラベルの右にモデル名バッジを並べる。
    pointer-events:none で画像クリックの邪魔をしない。 */
