@@ -785,6 +785,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
             idHighlightThreshold  = config.IdHighlightThreshold,
             metaPopupClickOnly    = config.MetaPopupClickOnly,
             videoLoop             = config.VideoLoop,
+            imageClickMaximize    = config.ImageClickMaximize,
             slotScale             = config.ThreadSlotScale,
             debug                 = config.DebugDisableRecovery,
         });
