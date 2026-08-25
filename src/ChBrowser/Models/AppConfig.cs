@@ -171,6 +171,11 @@ public sealed record AppConfig
     /// 即時反映 (setConfig メッセージ → thread.js)。</summary>
     public double ThreadSlotScale { get; init; } = 1.0;
 
+    /// <summary>スレ表示 WebView2 のページズーム倍率 (Ctrl+ホイールで変更、0.5–3.0)。
+    /// スライダのサムネイルスケール (<see cref="ThreadSlotScale"/>) とは独立で、
+    /// テキスト等も含めた全体拡大。即時反映 + 永続化。</summary>
+    public double ThreadPageZoom { get; init; } = 1.0;
+
     /// <summary>画像サムネイル (読み込み済み) をクリックしたときの挙動。
     /// false (既定): 画像ビューアウィンドウで開く。true: 動画の ⛶ と同じくスレ表示内で
     /// 全画面表示する (Esc で戻る)。即時反映 (setConfig メッセージ → thread.js)。</summary>

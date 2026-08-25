@@ -23,6 +23,17 @@ public interface IThreadDisplayBinding
     /// JS の <c>findReadProgressMaxNumber</c> が算定して保存し、appendPosts ペイロード経由で復元時に渡される。</summary>
     int? ScrollTargetPostNumber { get; }
 
+    /// <summary>復元時の追加スクロール量 (px)。<see cref="ScrollTargetPostNumber"/> の下端を
+    /// viewport 下端に揃えたあと、さらに下へスクロールする量。null は境界ぴったりの復元。</summary>
+    double? ScrollTargetOffsetPx { get; }
+
+    /// <summary>完全復元用: 保存時の絶対 scrollY とドキュメント高さ、および保存環境
+    /// (スロットスケール / ページズーム)。送信側で現環境と一致するときだけ JS へ渡される。</summary>
+    double? ScrollTargetScrollY { get; }
+    double? ScrollTargetDocHeight { get; }
+    double? ScrollEnvSlotScale { get; }
+    double? ScrollEnvPageZoom { get; }
+
     /// <summary>「以降新レス」ラベルの対象レス番号。null ならラベル非表示。
     /// appendPosts のメッセージに同梱して JS に push し、ラベル描画と dedup-tree の境界判定に使う。</summary>
     int? MarkPostNumber { get; }

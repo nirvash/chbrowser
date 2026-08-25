@@ -166,6 +166,26 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     [ObservableProperty]
     private int? _scrollTargetPostNumber;
 
+    /// <summary>復元時の追加スクロール量 (px)。<see cref="_scrollTargetPostNumber"/> の下端を
+    /// viewport 下端に揃えたあと、さらに下へスクロールしていた量。idx.json と一緒に保存され、
+    /// appendPosts ペイロード経由で JS へ渡される (null = 境界ぴったりの復元)。</summary>
+    [ObservableProperty]
+    private double? _scrollTargetOffsetPx;
+
+    /// <summary>完全復元用: 保存時の絶対 scrollY / ドキュメント高さ / 環境値 (スロットスケール・ページズーム)。
+    /// 環境が一致するときだけ JS 側で絶対位置復元に使われる。</summary>
+    [ObservableProperty]
+    private double? _scrollTargetScrollY;
+
+    [ObservableProperty]
+    private double? _scrollTargetDocHeight;
+
+    [ObservableProperty]
+    private double? _scrollEnvSlotScale;
+
+    [ObservableProperty]
+    private double? _scrollEnvPageZoom;
+
     /// <summary>「以降新レス」ラベルの対象レス番号 (= ラベルがその直前に挿入される番号)。
     /// 永続化はしない (= 本アプリ起動以降の差分取得で来た新着のみを示す session-local な値)。
     /// 新規タブ生成時は null、<see cref="MainViewModel.RefreshThreadAsync"/> 等で差分取得が新着を

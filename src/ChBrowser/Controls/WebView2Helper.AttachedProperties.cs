@@ -168,6 +168,24 @@ public static partial class WebView2Helper
         // 集合は通常極小 (数件) なので毎バッチに同梱しても無害。
         var ownPosts     = binding?.OwnPostNumbers ?? System.Array.Empty<int>();
 
+        // 完全復元: 保存環境 (スロットスケール / ページズーム) が現環境と一致する場合のみ
+        // 絶対 scrollY + 保存時ドキュメント高さを同梱する (= JS 側で優先使用される)。
+        double? exactY  = null;
+        double? exactH  = null;
+        var curCfg = ChBrowser.ViewModels.MainViewModel.Current?.CurrentConfig;
+        if (binding is not null
+            && curCfg is not null
+            && binding.ScrollTargetScrollY.HasValue
+            && binding.ScrollTargetDocHeight.HasValue
+            && binding.ScrollEnvSlotScale is double envS
+            && binding.ScrollEnvPageZoom is double envZ
+            && System.Math.Abs(envS - curCfg.ThreadSlotScale) < 0.001
+            && System.Math.Abs(envZ - curCfg.ThreadPageZoom) < 0.001)
+        {
+            exactY = binding.ScrollTargetScrollY;
+            exactH = binding.ScrollTargetDocHeight;
+        }
+
         ChBrowser.Services.Logging.LogService.Instance.Write(
             $"[appendBatch] serialize: posts={data.Posts.Count}"
             + $" (numbers {(data.Posts.Count > 0 ? data.Posts[0].Number : -1)}..{(data.Posts.Count > 0 ? data.Posts[data.Posts.Count - 1].Number : -1)})"
@@ -180,6 +198,9 @@ public static partial class WebView2Helper
             type             = "appendPosts",
             posts            = data.Posts,
             scrollTarget,
+            scrollTargetOffsetPx = binding?.ScrollTargetOffsetPx,
+            scrollExactY     = exactY,
+            scrollExactDocH  = exactH,
             markPostNumber,
             incremental      = data.IsIncremental,
             ownPostNumbers   = ownPosts,
@@ -202,6 +223,7 @@ public static partial class WebView2Helper
         ChBrowser.ViewModels.ThreadTabViewModel tab)
     {
         var filter = tab.Filter;
+        var curCfg  = ChBrowser.ViewModels.MainViewModel.Current?.CurrentConfig;
         // enum (ThreadViewMode) は JsonStringEnumConverter(camelCase) によって
         // "flat" / "tree" / "dedupTree" に変換され、JS 側 VIEW_MODE_STRATEGIES のキーと一致する。
         var json = JsonSerializer.Serialize(new
@@ -210,6 +232,13 @@ public static partial class WebView2Helper
             viewMode       = tab.ViewMode,
             posts          = tab.Posts,
             scrollTarget   = (int?)tab.ScrollTargetPostNumber,
+            scrollTargetOffsetPx = tab.ScrollTargetOffsetPx,
+            scrollExactY   = (tab.ScrollEnvSlotScale.HasValue && tab.ScrollEnvPageZoom.HasValue
+                              && curCfg is not null
+                              && System.Math.Abs(tab.ScrollEnvSlotScale.Value - curCfg.ThreadSlotScale) < 0.001
+                              && System.Math.Abs(tab.ScrollEnvPageZoom.Value - curCfg.ThreadPageZoom) < 0.001)
+                             ? tab.ScrollTargetScrollY : null,
+            scrollExactDocH = tab.ScrollTargetDocHeight,
             markPostNumber = (int?)tab.MarkPostNumber,
             ownPostNumbers = System.Linq.Enumerable.ToArray(tab.OwnPostNumbers),
             filter = new

@@ -108,6 +108,13 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   (`AppConfig.ThreadSlotScale` 永続化)。JS 側 `applyGlobalSlotScale` はスケール変更の前後で
   「ビューポート上端付近の投稿」をアンカーに scrollY を補正する (= 視線位置を固定)。
   個別ドラッグリサイズ (inline style) が優先される
+- スレ表示のスクロール復元: idx.json の読了レス番号 + 投稿内オフセット (px) を基本とし、
+  保存環境 (スロットスケール / ページズーム / ドキュメント高さ) が一致する場合は
+  絶対 scrollY による完全復元を優先する (thread.js tryScrollToTarget の exact パス)
+- スレ表示の Ctrl+ホイールは WebView2 標準ズームではなく**ページズーム倍率**
+  (`AppConfig.ThreadPageZoom` 0.5–3.0) の変更に割り当てて永続化する
+  (thread.js が wheel を preventDefault → `threadPageZoomDelta` → ペインが `wv.ZoomFactor` 設定 +
+  MainViewModel 経由で debounce 保存。ready 時に復元)
 
 ## 設定システムの流れ
 

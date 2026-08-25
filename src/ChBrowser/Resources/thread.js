@@ -1,6 +1,6 @@
 ﻿// ChBrowser thread view renderer.
 // Public API exposed on window (C# → JS):
-//   window.appendPosts(batch, scrollTarget?) — レスを末尾に追加。スレ表示の唯一の描画チャネル。
+//   window.appendPosts(batch, scrollTarget?, offsetPx?) — レスを末尾に追加。スレ表示の唯一の描画チャネル。
 //                                              optional scrollTarget で初回スクロール位置を渡す。
 //   window.setViewMode(mode)                 — 'flat' | 'tree' | 'dedupTree'
 // 受信メッセージ:
@@ -12,6 +12,11 @@
 //   { type: 'openUrl', url }                — 外部 URL クリック
 //   { type: 'scrollPosition', postNumber }  — viewport 上端のレス番号 (debounced)
 //   { type: 'refreshThread' }               — スレ末尾のリロードボタンクリック (差分取得)
+//   { type: 'threadPageZoomDelta', delta, clientY, anchorPostNumber, anchorOffsetY }
+//                                            — Ctrl+ホイールによるページズームステップ (±1)
+//   { type: 'pageZoomCompensate', k, clientY, anchorPostNumber, anchorOffsetY }
+//                                            — ページズーム適用後の縦位置補正
+//                                              (clientY/anchorPostNumber 基準。無ければ中央)
 //   { type: 'paneActivated' }               — Phase 14: pane 内任意の mousedown (アドレスバー切替用)
 //   { type: 'shortcut', descriptor }        — Phase 16: ショートカット/マウス操作のディスパッチ要求
 //   { type: 'gesture',  descriptor }        — Phase 16: マウスジェスチャー認識結果のディスパッチ要求
@@ -53,6 +58,12 @@
     // findReadProgressMaxNumber が算定し scheduleSendScrollPosition が C# に保存させる。
     // 復元時は el.scrollIntoView({ block: 'end' }) で対象レスの下端を viewport 下端に揃える。
     let pendingScrollTarget = null;
+    // 復元時の投稿内オフセット (px)。tryScrollToTarget のアライン後に加算される。
+    let pendingScrollTargetOffset = 0;
+    // 完全復元 (絶対 scrollY) 用。環境一致時のみ C# から値が来る。
+    let pendingScrollExactY     = null;
+    let pendingScrollExactDocH  = null;
+    let pendingScrollExactSince = 0;
 
     // 設定 (Phase 11) で動的変更可能。setConfig メッセージで上書きされる。
     let POPULAR_THRESHOLD       = 3;
@@ -2855,6 +2866,32 @@
         if (userHasScrolled) return;
         if (pendingScrollTarget == null) return;
         if (allPosts.length === 0) return;
+
+        const vh0 = document.documentElement.clientHeight;
+
+        // ---- 完全復元パス (優先): 環境一致時は絶対 scrollY への復元を試みる ----
+        // ドキュメント高さが保存時まで育っていれば即確定。育っていない間は
+        // 1.5s だけ繰り延べ (画像レイアウト待ち)。超えたらレス番号経路へフォールバック。
+        if (pendingScrollExactY != null) {
+            const dh = document.documentElement.scrollHeight;
+            const dhd = dh - pendingScrollExactDocH;
+            if (Math.abs(dhd) <= 2) {
+                const maxS = Math.max(0, dh - vh0);
+                window.scrollTo(0, Math.min(pendingScrollExactY, maxS));
+                pendingScrollExactY = null;
+                return;
+            }
+            if (dhd > 2 || performance.now() - pendingScrollExactSince >= 1500) { pendingScrollExactY = null; } /* doc grew/changed -> fallback */
+            else { return; } /* still converging -> keep waiting */ // 繰り延べ
+            pendingScrollExactY = null; // 諦めてレス番号経路へフォールバック
+        }
+
+        // 投稿内オフセットの適用 (全アライン経路の共通出口)。
+        const applyOffset = () => {
+            if (pendingScrollTargetOffset > 0) {
+                window.scrollBy(0, pendingScrollTargetOffset);
+            }
+        };
         const N = pendingScrollTarget;
         // N 番まで届くまでは繰り延べ。途中で部分的にスクロールすると、後続 batch で再度動いて jitter になる。
         //
@@ -2874,6 +2911,7 @@
                 const docEl  = document.documentElement;
                 const maxTop = Math.max(0, docEl.scrollHeight - docEl.clientHeight);
                 if (Math.abs((window.scrollY || 0) - maxTop) > 4) window.scrollTo(0, maxTop);
+                applyOffset();
                 return;
             }
             // 新着あり → 旧レスの末尾 = 「以降新レス」ラベル。ラベルを画面下端に置く
@@ -2883,6 +2921,7 @@
                 const r  = label.getBoundingClientRect();
                 const vh = document.documentElement.clientHeight;
                 if (Math.abs(r.bottom - vh) > 4) label.scrollIntoView({ block: 'end' });
+                applyOffset();
                 return;
             }
             // ラベル未配置の段階 (updateNewPostsMarkBand 前) では、下の findBottommost(N) で
@@ -2892,45 +2931,64 @@
         const bottomMost = findBottommostPrimaryInRange(N);
         if (!bottomMost) return;
 
-        // jolt 防止: 既に bottommost の下端が viewport 下端 ±4px AND 上端も viewport 内なら no-op
+        // jolt 防止: 既に bottommost の下端が viewport 下端 ±4px AND 上端も viewport 内なら
+        // scrollIntoView は不要だが、オフセット適用は行う (= 投稿内の細かい読み位置の復元)。
         const rect = bottomMost.getBoundingClientRect();
         const vh = document.documentElement.clientHeight;
-        if (Math.abs(rect.bottom - vh) <= 4 && rect.top >= 0 && rect.top < vh) return;
-        bottomMost.scrollIntoView({ block: 'end' });
+        if (Math.abs(rect.bottom - vh) > 4 || rect.top < 0 || rect.top >= vh) {
+            bottomMost.scrollIntoView({ block: 'end' });
+        }
+        applyOffset();
     }
 
     // ---------- scroll position save (debounced) ----------
     // 各タブが専属 WebView2 なので、ユーザーがスクロールした時にだけイベントが発火する。
     // 過渡的な scrollY 値の汚染対策 (suppress) は不要。シンプルな debounce のみ。
     let scrollSaveTimer = null;
-    let scrollSaveLastSent = null;       // 直近送信した「読了 prefix」の最大番号
+    // 直近送信値 ({num, off})。番号とオフセットの両方が変化しない限り再送しない。
+    let scrollSaveLastSent = null;
     const SCROLL_SAVE_DEBOUNCE_MS = 200;
 
-    /** 「読了 prefix」の最大レス番号を算出する (= 次回オープン時の scroll restore target)。
+    /** 「読了位置」を算出する (= 次回オープン時の scroll restore target + 投稿内オフセット)。
      *
-     *  方針:
-     *    1. 各レス番号 N (= 1, 2, 3, ...) の primary instance (id="rN") の下端が viewport 下端以下にあるか調べる。
-     *       条件 (rect.bottom <= clientHeight) を満たすレスは「下端まで見終えた」と扱う。
-     *       これは「画面内で全部見えている」と「上にスクロールして去った」の両方をカバーする。
-     *    2. 1, 2, 3, ... と連番でこの条件を満たし続ける限り進み、初めて満たさなくなった瞬間で停止して、
-     *       直前の番号 N を返す。
-     *
-     *  ツリー表示でレスが番号順に並んでいない場合でも、「先頭から連番が途切れず読了した最大番号」が安定して取れる。
-     *  例: ツリーモードで DOM 順 1,2,3,10,12,4,5,13,6,7,8,9 のスレで「13 まで見えて 6 が下端切れ」だと、
-     *  rendered = {1,2,3,10,12,4,5,13} (6 は下端切れで除外)、1 から連番は {1,2,3,4,5} → N=5。 */
-    function findReadProgressMaxNumber() {
+     *  方針: .post を **DOM 表示順** に走査し、下端が viewport 下端以下 (= 読み終えた) 投稿を
+     *  たどり、初めて下端が切れた投稿で停止する。その直前の投稿番号と要素を返す。
+     *  番号順 (1,2,3...) でなく表示順にしたのは、ツリーモードでは DOM 順と番号順が一致せず、
+     *  「見た目は 28 まで読んでいるのに番号スキャンでは 26 で止まる」ようなずれが出るため。
+     *  戻り値: {num, el} / 読了候補なしなら null。 */
+        // Bottom edge of a post EXCLUDING nested child posts (.post).
+    // In tree modes replies are rendered inside the parent .post box, so using the
+    // parent rect.bottom would never mark it as fully-read.
+    function directContentBottom(el) {
+        let bottom = el.getBoundingClientRect().top;
+        const walk = (node) => {
+            for (const ch of node.children) {
+                if (ch.classList && ch.classList.contains("post")) continue;
+                const r = ch.getBoundingClientRect();
+                if (r.height > 0) bottom = Math.max(bottom, r.bottom);
+                walk(ch);
+            }
+        };
+        walk(el);
+        return bottom;
+    }
+
+function findReadProgressMaxNumber() {
         if (!allPosts || allPosts.length === 0) return null;
         const vh   = document.documentElement.clientHeight;
-        const maxN = allPosts[allPosts.length - 1].number;
-        let lastValid = 0;
-        for (let n = 1; n <= maxN; n++) {
-            const el = document.getElementById('r' + n);
-            // DOM に居ない番号は防御的に飛ばす (= 何らかの理由で primary id が無いケースの保険)。
-            if (!el) continue;
-            if (el.getBoundingClientRect().bottom > vh) break; // 連番が途切れた → 確定
-            lastValid = n;
+        const root = document.getElementById('posts');
+        if (!root) return null;
+
+        let lastValid = null;
+        for (const p of root.querySelectorAll('.post')) {
+            const r0 = p.getBoundingClientRect();
+            if (r0.height === 0) continue; // filter-hidden 等はスキップ
+            if (directContentBottom(p) > vh) break;     // 表示順で最初の下端切れ投稿 → 直前までが読了位置
+            const noEl = p.querySelector('.post-no[data-number]');
+            const num  = noEl ? parseInt(noEl.dataset.number, 10) : NaN;
+            if (!isNaN(num)) lastValid = { num, el: p };
         }
-        return lastValid > 0 ? lastValid : null;
+        return lastValid;
     }
 
     function scheduleSendScrollPosition() {
@@ -2942,12 +3000,26 @@
             // C# が ScrollTargetPostNumber を上書き → 次 batch で別の値が pending に入る、
             // という feedback loop で target がドリフトする。
             if (!userHasScrolled) return;
-            const num = findReadProgressMaxNumber();
-            if (num == null) return;
-            if (num === scrollSaveLastSent) return; // 変化なしは送らない
-            scrollSaveLastSent = num;
+            const res = findReadProgressMaxNumber();
+            if (res === null) return;
+            const { num, el: anchorEl } = res;
+
+            // 投稿内オフセット: アンカー投稿下端から viewport 下端までの px
+            // (= 読了投稿の下端より下、さらに読み進めた量)。復元時に block:'end' 揃え後に加算する。
+            const offsetPx = Math.max(0, document.documentElement.clientHeight - anchorEl.getBoundingClientRect().bottom);
+
+            // 同一レス番号内の読み進みでも offset は変わるため、両方一致の時だけ再送スキップ。
+            const last = scrollSaveLastSent;
+            if (last && last.num === num && Math.abs((last.off ?? 0) - offsetPx) < 0.5) return;
+            scrollSaveLastSent = { num, off: offsetPx };
             if (window.chrome && window.chrome.webview) {
-                window.chrome.webview.postMessage({ type: 'scrollPosition', postNumber: num });
+                window.chrome.webview.postMessage({
+                    type: 'scrollPosition',
+                    postNumber: num,
+                    offsetPx,
+                    scrollY: window.scrollY || 0,
+                    docH: document.documentElement.scrollHeight,
+                });
             }
         }, SCROLL_SAVE_DEBOUNCE_MS);
     }
@@ -3292,6 +3364,50 @@
             return;
         }
     });
+
+    // Ctrl+ホイール: WebView2 標準のページズームを抑止し、倍率変更を C# へ通知する。
+    // このとき「適用前の scrollY / viewport 高さ / マウス Y 座標 / マウス下の投稿」も
+    // スナップショットで添える (= ズーム適用は C# 側で非同期に行われるため、補正は
+    // この事前値を基準に決定計算する。これにより補正と適用の実行順序レースに関係なく、
+    // 常に同じ結果になる)。
+    // 右クリック+ホイール等はマウス操作ショートカット優先なので無視。)
+    document.addEventListener('wheel', function(e) {
+        if (!e.ctrlKey) return;
+        if (e.buttons) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.chrome && window.chrome.webview) {
+            const baseY = window.scrollY || 0;
+            const clientY = e.clientY;
+            // リフロー対応: マウス下の投稿要素を特定し、要素内オフセットを記録する。
+            // ズーム後に同じ投稿の新しい位置を測定し、マウス下の内容が同じ画面位置に留まるよう補正する。
+            let anchorPostNumber = null;
+            let anchorOffsetY = 0;
+            const hovered = document.elementFromPoint(e.clientX, clientY);
+            if (hovered) {
+                const postEl = hovered.closest('.post');
+                if (postEl) {
+                    const noEl = postEl.querySelector('.post-no[data-number]');
+                    if (noEl) {
+                        const n = parseInt(noEl.dataset.number, 10);
+                        if (!isNaN(n)) {
+                            anchorPostNumber = n;
+                            anchorOffsetY = clientY - postEl.getBoundingClientRect().top;
+                        }
+                    }
+                }
+            }
+            window.chrome.webview.postMessage({
+                type: 'threadPageZoomDelta',
+                delta: e.deltaY < 0 ? 1 : -1,
+                baseY: baseY,
+                baseVh: document.documentElement.clientHeight,
+                clientY: clientY,
+                anchorPostNumber: anchorPostNumber,
+                anchorOffsetY: anchorOffsetY,
+            });
+        }
+    }, { passive: false, capture: true });
 
     // ---------- レス番号ダイレクトジャンプ (数字タイプ → 該当レスへスクロール) ----------
     // 1〜4 桁の数字を素早く打つと該当レス番号 (id="rN") へスクロールする (5ch は設定により
@@ -4466,7 +4582,7 @@
      *           タブ閉じ / アプリ再起動でリセットされる)。
      *   - incremental: dat 差分追加フラグ。session-new (= is-new 太字対象) の積算 + dedupTree の section B
      *                  再構築経路の振り分けに使う。 */
-    window.appendPosts = function (batch, scrollTarget, mark, incremental) {
+    window.appendPosts = function (batch, scrollTarget, mark, incremental, scrollTargetOffsetPx, scrollExactY, scrollExactDocH) {
         if (!Array.isArray(batch) || batch.length === 0) return;
         const root = document.getElementById('posts');
         if (!root) return;
@@ -4479,8 +4595,15 @@
             + ', allPostsBefore=' + allPosts.length
             + ', viewMode=' + viewMode);
 
-        // 同梱された scrollTarget があれば保留中ターゲットを更新
+        // 同梱された scrollTarget があれば保留中ターゲットを更新 (オフセットも同時に)。
+        // scrollTargetOffsetPx は引数経由で受け取る (= 外側スコープには存在しないため直接参照は不可)。
         if (typeof scrollTarget === 'number') pendingScrollTarget = scrollTarget;
+        pendingScrollTargetOffset = (typeof scrollTargetOffsetPx === 'number' && scrollTargetOffsetPx > 0)
+            ? scrollTargetOffsetPx : 0;
+        // 完全復元 (絶対 scrollY): 環境一致時のみ C# が値を同梱してくる。
+        pendingScrollExactY    = (typeof scrollExactY === 'number') ? scrollExactY : null;
+        pendingScrollExactDocH = (typeof scrollExactDocH === 'number') ? scrollExactDocH : null;
+        pendingScrollExactSince = (pendingScrollExactY != null) ? performance.now() : 0;
         const newMark = (typeof mark === 'number') ? mark : null;
         const isDelta = (incremental === true);
 
@@ -4669,7 +4792,7 @@
                     if (Array.isArray(msg.ownPostNumbers)) {
                         ownPostNumbers = new Set(msg.ownPostNumbers);
                     }
-                    window.appendPosts(msg.posts, msg.scrollTarget, msg.markPostNumber, msg.incremental);
+                    window.appendPosts(msg.posts, msg.scrollTarget, msg.markPostNumber, msg.incremental, msg.scrollTargetOffsetPx, msg.scrollExactY, msg.scrollExactDocH);
                     break;
                 case 'updateOwnPosts':
                     // 自分マークの増分トグル (post-no メニュー → ToggleOwnPost 経由)。
@@ -4721,7 +4844,7 @@
                         if (Array.isArray(msg.posts) && msg.posts.length > 0) {
                             // appendPosts は incremental=false 経路で渡された posts を初期描画する。
                             // appendPosts 内で markNewPosts / decorateMeta / scrollToTarget 等もまとめて走る。
-                            window.appendPosts(msg.posts, msg.scrollTarget, msg.markPostNumber, false);
+                            window.appendPosts(msg.posts, msg.scrollTarget, msg.markPostNumber, false, msg.scrollTargetOffsetPx, msg.scrollExactY, msg.scrollExactDocH);
                         } else if (typeof msg.markPostNumber === 'number') {
                             markPostNumber = msg.markPostNumber;
                         }
@@ -4777,6 +4900,47 @@
                     // 既存スレ表示のスクロールバーは閾値が変わると赤マーカーの集合も変わるので再計算
                     if (typeof updateRichScrollbar === 'function') updateRichScrollbar();
                     break;
+                case 'pageZoomCompensate':
+                    // ページズーム適用後の縦位置補正。wheel 時の事前スナップショット
+                    // (baseY / baseVh / clientY / anchorPostNumber / anchorOffsetY) を基準に、
+                    // 指定アンカー位置のコンテンツがズーム後も同じ画面位置に留まるよう調整する。
+                    //   即時補正: newScrollY = baseY + clientY * (1 - 1 / k)
+                    //   リフロー補正: マウス下の投稿を再測定し、実際の新しいドキュメント座標で
+                    //                 同じ画面位置 (clientY / k) になるよう scrollY を上書きする。
+                    // (clientY = baseVh/2 かつ anchorPostNumber なしのときが「画面中央固定」の特例。
+                    //   適用と補正の実行順序レースに影響されない決定的計算。)
+                    {
+                        const kz             = (typeof msg.k              === 'number') ? msg.k              : 1;
+                        const baseY          = (typeof msg.baseY          === 'number') ? msg.baseY          : (window.scrollY || 0);
+                        const baseVh         = (typeof msg.baseVh         === 'number') ? msg.baseVh         : document.documentElement.clientHeight;
+                        const clientY        = (typeof msg.clientY        === 'number') ? msg.clientY        : (baseVh / 2);
+                        const anchorPostNumber = (typeof msg.anchorPostNumber === 'number') ? msg.anchorPostNumber : null;
+                        const anchorOffsetY  = (typeof msg.anchorOffsetY  === 'number') ? msg.anchorOffsetY  : 0;
+                        if (kz > 0 && Math.abs(kz - 1) > 0.001) {
+                            // 即時補正: ドキュメント座標が不変だった場合の位置を先に適用
+                            window.scrollTo(0, baseY + clientY * (1 - 1 / kz));
+
+                            // リフロー対応: マウス下の投稿の新しい実位置を測定し直して補正する。
+                            // WebView2 のズーム適用・レイアウト確定を待つため rAF + setTimeout の二段階で実行。
+                            if (anchorPostNumber != null) {
+                                const targetScreenY = clientY / kz; // 旧マウス位置の新しい viewport CSS 座標
+                                let reanchored = false;
+                                const reanchor = function () {
+                                    if (reanchored) return;
+                                    reanchored = true;
+                                    const postEl = document.getElementById('r' + anchorPostNumber);
+                                    if (!postEl) return;
+                                    const rect = postEl.getBoundingClientRect();
+                                    if (rect.height === 0) return; // hidden / not laid out
+                                    const D_after = (window.scrollY || 0) + rect.top + anchorOffsetY;
+                                    window.scrollTo(0, D_after - targetScreenY);
+                                };
+                                requestAnimationFrame(reanchor);
+                                setTimeout(reanchor, 80);
+                            }
+                        }
+                        break;
+                    }
                 // setShortcutBindings は shortcut-bridge.js 内で直接受信するためここでは扱わない。
                 case 'imageMeta':
                     // C# が HEAD で取った Content-Length / キャッシュ参照 / 非同期 URL 展開の結果を返してきた。
