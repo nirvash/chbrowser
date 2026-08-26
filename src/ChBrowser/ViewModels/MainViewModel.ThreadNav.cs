@@ -702,15 +702,29 @@ public sealed partial class MainViewModel
     // -----------------------------------------------------------------
 
     /// <summary>⏮ / ⏭ クリック。採用中 target を開く (既存タブがあればアクティブ化 + 差分取得)。
-    /// target 未決 (= ボタン無効状態) では何もしない。</summary>
+    /// target 未決 (= ボタン無効状態) では何もしない。
+    ///
+    /// <para>移動元スレがお気に入り登録済みの場合、移動先スレを未登録なら自動でお気に入りに追加する
+    /// (= 「連番チェーンを読み進めた先はすべてお気に入り = メディア先読み対象」に揃える設計)。
+    /// 移動元の判定は <see cref="OpenThreadAsync"/> の前に取る
+    /// (オープン後は tab.ThreadKey が移動先に差し替わり得るため)。</para></summary>
     public async Task OpenNavTargetAsync(ThreadTabViewModel tab, bool isPrev)
     {
         var key = isPrev ? tab.PrevNavKey : tab.NextNavKey;
         if (string.IsNullOrEmpty(key)) return;
         var title = isPrev ? tab.PrevNavTitle : tab.NextNavTitle;
+        var srcFavorited = Favorites.IsThreadFavorited(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey);
         ChBrowser.Services.Logging.LogService.Instance.Write(
             $"[threadNav] open {(isPrev ? "prev" : "next")}: {key} \"{title}\" from {tab.ThreadKey}");
         await OpenThreadAsync(tab.Board, new ThreadInfo(key, title ?? "", 0, 0)).ConfigureAwait(true);
+
+        // 移動元がお気に入りなら移動先を自動登録 (既存登録 / オープン失敗でタブ削除済みのときは何もしない)。
+        if (srcFavorited && Favorites.FindThread(tab.Board.Host, tab.Board.DirectoryName, key) is null)
+        {
+            ToggleThreadFavorite(tab.Board, key, title ?? "");
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[threadNav] auto-favorite (source was favorited): {key} \"{title}\"");
+        }
     }
 
     /// <summary>✅ 確定ボタン。両サイドの現採用 target を idx.json へ永続化して confirmed にする。

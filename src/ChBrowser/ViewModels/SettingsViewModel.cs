@@ -78,6 +78,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int    _popularThreshold      = 3;
     [ObservableProperty] private string _defaultThreadViewMode = "DedupTree2";
     [ObservableProperty] private int    _imageSizeThresholdMb  = 5;
+    [ObservableProperty] private bool   _prefetchImagesOnThreadLoad = true;
+    [ObservableProperty] private bool   _prefetchVideosOnThreadLoad = false;
     [ObservableProperty] private int    _idHighlightThreshold  = 5;
     [ObservableProperty] private bool   _metaPopupClickOnly    = true;
     [ObservableProperty] private double _threadSlotScale       = 1.0;
@@ -339,6 +341,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         PopularThreshold             = initial.PopularThreshold;
         DefaultThreadViewMode        = initial.DefaultThreadViewMode;
         ImageSizeThresholdMb         = initial.ImageSizeThresholdMb;
+        PrefetchImagesOnThreadLoad   = initial.PrefetchImagesOnThreadLoad;
+        PrefetchVideosOnThreadLoad   = initial.PrefetchVideosOnThreadLoad;
         IdHighlightThreshold         = initial.IdHighlightThreshold;
         MetaPopupClickOnly           = initial.MetaPopupClickOnly;
         ThreadSlotScale              = initial.ThreadSlotScale;
@@ -553,6 +557,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         PopularThreshold            = PopularThreshold,
         DefaultThreadViewMode       = DefaultThreadViewMode,
         ImageSizeThresholdMb        = ImageSizeThresholdMb,
+        PrefetchImagesOnThreadLoad  = PrefetchImagesOnThreadLoad,
+        PrefetchVideosOnThreadLoad  = PrefetchVideosOnThreadLoad,
         IdHighlightThreshold        = IdHighlightThreshold,
         MetaPopupClickOnly          = MetaPopupClickOnly,
         ThreadSlotScale             = ThreadSlotScale,

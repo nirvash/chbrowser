@@ -83,6 +83,12 @@ public sealed partial class MainViewModel
                 BoardName     = board.BoardName,
             });
             StatusMessage = $"{title} をお気に入りに追加しました";
+            // お気に入り登録をトリガーに既読分のメディア先読みを開始する
+            // (= 「開いた後にお気に入りに入れた」ケース。オープン / 差分取得時の enqueue は
+            //   登録前だったため全てフィルタされている。Service 側 dedup / 設定フィルタで冪等)。
+            var opened = FindThreadTab(board, threadKey);
+            if (opened is not null && opened.Posts.Count > 0)
+                MediaPrefetch?.EnqueueForPosts(board.Host, board.DirectoryName, threadKey, opened.Posts);
         }
         RefreshFavoritedStateOfAllTabs();
     }
@@ -566,6 +572,8 @@ public sealed partial class MainViewModel
                 var added = new List<Post>(result.Posts.Count - prevCount);
                 for (var n = prevCount; n < result.Posts.Count; n++) added.Add(result.Posts[n]);
                 AppendPostsWithNg(existing, added, isIncremental: true);
+                // お気に入りスレの新着メディアを先読み (Service 側で設定フィルタ / dedup する)。
+                MediaPrefetch?.EnqueueForPosts(board.Host, board.DirectoryName, info.Key, added);
                 // 仕様: 「差分取得で来た新着」が own への返信を含む場合だけ赤化フラグを立てる。
                 existing.HasReplyToOwn = DeltaHasReplyToOwn(existing, added);
             }
@@ -659,6 +667,8 @@ public sealed partial class MainViewModel
         tab.DatSize = result.DatSize;
         SaveFetchedPostCount(board, info.Key, result.Posts.Count);
         tab.FetchedPostCount = result.Posts.Count;
+        // お気に入りスレのメディアを先読み (全レス分。差分重複は Service の dedup set が吸収)。
+        MediaPrefetch?.EnqueueForPosts(board.Host, board.DirectoryName, info.Key, result.Posts);
 
         var newTabState = ComputeMarkState(tab, stateHint: null);
         NotifyThreadListLogMark(board, info.Key, newTabState);

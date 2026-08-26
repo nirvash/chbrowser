@@ -33,5 +33,17 @@
                     Padding="10,4" />
         </StackPanel>
 
+        <TextBlock Text="先読み (お気に入りスレ)" FontWeight="SemiBold" Margin="0,20,0,4" />
+        <TextBlock Text="お気に入りに登録したスレを開いたとき、本文中のメディアをバックグラウンドで取得してキャッシュする。未登録スレには影響しない。"
+                   Foreground="#666"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,6" />
+        <CheckBox Content="画像を先読みする (サイズしきい値以下のみ)"
+                  IsChecked="{Binding PrefetchImagesOnThreadLoad, Mode=TwoWay}"
+                  Margin="0,0,0,4" />
+        <CheckBox Content="動画も先読みする (数 MB〜数十 MB/本の自動 DL になるため注意)"
+                  IsChecked="{Binding PrefetchVideosOnThreadLoad, Mode=TwoWay}"
+                  Margin="0,0,0,4" />
+
     </StackPanel>
 </UserControl>

@@ -537,7 +537,8 @@ public partial class ThreadDisplayPane : UserControl
     }
 
     /// <summary>JS から「DL を開始してほしい」要求。<see cref="VideoDownloadManager.Request"/> を呼ぶ。
-    /// 完了/失敗イベントは <see cref="WireVideoDownloadCompletionToPane"/> で sender にプッシュされる。</summary>
+    /// 完了/失敗イベントは <see cref="WireVideoDownloadCompletionToPane"/> 経由で
+    /// 全タブの WebView に videoCacheState として配信される (要求元の記録は不要)。</summary>
     private void HandleVideoDownloadStart(object sender, JsonElement payload)
     {
         if (!payload.TryGetProperty("url", out var urlProp)) return;
@@ -550,12 +551,6 @@ public partial class ThreadDisplayPane : UserControl
 
         // 失敗状態のリセットは JS 側が先に mediaSlotRetry メッセージを送る前提 (Step F で統一)。
         // ここではダウンロード kick だけに専念。
-
-        // 完了通知を sender に届けるため、URL ごとに待機 sender を覚えておく。
-        // 既に DL 中なら Request() は no-op で false を返すが、最後の待機 sender に上書きすればよい
-        // (= 同 URL の slot が複数 WebView2 にあった場合は最後のクリックの WebView2 に state push される。
-        //   Phase 5 では十分な妥協、Phase 6+ で全 WebView2 broadcast に拡張予定)。
-        _pendingDownloadSenders[url] = sender;
         mgr.Request(url);
     }
 
@@ -743,14 +738,13 @@ public partial class ThreadDisplayPane : UserControl
         }
     }
 
-    /// <summary>進行中 DL に対する応答先 WebView2 のマップ。
-    /// <see cref="VideoDownloadManager.DownloadCompleted"/> 発火時に該当 sender に <c>videoCacheState</c> を push する。
-    /// pane 単位で持つ (= 同 URL の DL 完了通知は最後にこの pane で要求した WebView2 に届く)。
-    /// クロスペイン broadcast は Phase 6+ で検討。</summary>
-    private readonly System.Collections.Generic.Dictionary<string, object> _pendingDownloadSenders = new();
-
     /// <summary>VideoDownloadManager のイベントをこのペインに配線する (Loaded 時 1 回)。
-    /// 完了通知を受けたら <see cref="_pendingDownloadSenders"/> から対象 WebView2 を引いて state push。</summary>
+    /// DL 完了 / 失敗 (クリック起因・メディア先読み起因を問わず) のたびに、このペインが保持する
+    /// 全タブの WebView へ <c>videoCacheState</c> を push して「未DL / DL中 / 取得失敗」バッジと
+    /// サムネ表示を最新化する。対象 URL のスロットを持たないタブでは JS 側
+    /// (<c>applyVideoCacheState</c>) が該当無しで no-op になるため、全タブへの push で問題ない。
+    /// (= 先読み起因の完了には要求元 WebView2 の記録が無いため、要求元限定の push だと
+    /// スロット反映が次回オープンまで遅れてしまう。その解消のための拡張)。</summary>
     private void WireVideoDownloadCompletionToPane()
     {
         if (Application.Current is not App app) return;
@@ -763,10 +757,10 @@ public partial class ThreadDisplayPane : UserControl
             // UI thread にディスパッチして PostWebMessageAsJson を安全に呼ぶ。
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (_pendingDownloadSenders.TryGetValue(e.Url, out var sender))
+                foreach (var kv in _tabToWebView)
                 {
-                    _pendingDownloadSenders.Remove(e.Url);
-                    PushVideoCacheStateTo(sender, cache, e.Url);
+                    if (kv.Value.CoreWebView2 is null) continue;
+                    PushVideoCacheStateTo(kv.Value, cache, e.Url);
                 }
             }));
         };

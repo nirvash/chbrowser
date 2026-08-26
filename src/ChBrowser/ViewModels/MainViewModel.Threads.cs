@@ -16,6 +16,12 @@ namespace ChBrowser.ViewModels;
 /// <summary>スレ表示タブ (ThreadTab) の生成・取得・更新・削除・スクロール位置/既読位置の永続化。</summary>
 public sealed partial class MainViewModel
 {
+    /// <summary>お気に入りスレのメディア先読みキュー。App シングル (= OnStartup 完了前は null)。
+    /// 呼び出し点: <see cref="OpenThreadAsync"/> (全レス分) と <see cref="ApplyFetchDelta"/>
+    /// (新着分)。お気に入り判定 / 設定フィルタは Service 側で行われる。</summary>
+    private ChBrowser.Services.Media.MediaPrefetchService? MediaPrefetch
+        => (System.Windows.Application.Current as App)?.MediaPrefetchServiceInstance;
+
     /// <summary>レスのバッチに NG 判定を適用し、可視分だけ tab.AppendPosts する共通ヘルパ。
     /// バッチ内の連鎖は計算するが、過去バッチに跨る連鎖は対象外 (= タブ再オープン時に正しい連鎖が効く)。
     /// <paramref name="isIncremental"/> = true は「初期表示後の差分追加」を JS に伝える (Phase 20)。</summary>
@@ -142,6 +148,8 @@ public sealed partial class MainViewModel
         {
             var added = new List<Post>(result.Posts.Count - prevCount);
             for (var i = prevCount; i < result.Posts.Count; i++) added.Add(result.Posts[i]);
+            // お気に入りスレの新着メディアを先読み (Service 側でお気に入り判定 / 設定フィルタする)。
+            MediaPrefetch?.EnqueueForPosts(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey, added);
             int? appendedFirst;
             if (prevCount > 0)
             {
@@ -285,6 +293,9 @@ public sealed partial class MainViewModel
             SaveFetchedPostCount(board, info.Key, result.Posts.Count);
             // dat 連番ベースの件数を記録 (= 後続の差分取得の境界に使う。NG 透明化では減らない)。
             tab.FetchedPostCount = result.Posts.Count;
+
+            // お気に入りスレのメディアを先読み (全レス分。差分重複は Service の dedup set が吸収)。
+            MediaPrefetch?.EnqueueForPosts(board.Host, board.DirectoryName, info.Key, result.Posts);
 
             // 最終状態は ComputeMarkState で算定 (= Dropped > RepliedToOwn > Cached の優先順)。
             // tab.HasReplyToOwn は ApplyFetchDelta が直前にセット済 (= delta scan の結果)。

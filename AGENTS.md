@@ -121,6 +121,19 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   未 DL は SaveDirectAsync で直接 DL
 - 動画はクリック時に `VideoDownloadManager` が並列 DL を kick。ヒット時は仮想ホスト
   `https://chbrowser-cache.local/videos/...` 経由でローカル再生 (`PlaybackUrl`)
+- お気に入りスレのメディア先読みは `Services/Media/MediaPrefetchService.cs`
+  (App シングル `MediaPrefetchServiceInstance`)。呼び出し経路は 1 本化されており、スレオープン /
+  差分取得 (`ApplyFetchDelta`) / **お気に入り登録時** (`ToggleThreadFavorite` 追加ブランチ。
+  既オープンタブの既読分を投入) / 将来の自動巡回が `EnqueueForPosts(board, key, posts)` を呼ぶだけ。
+  お気に入り判定は App.OnStartup で `IsThreadFavorited` デリゲートに `mainVm.Favorites` を配線した単一箇所。
+  URL 抽出は `MediaUrlExtractor` (= thread.js `buildMediaSlotForUrl` 系判定ルールの C# 移植。
+  JS 側を変えたら同期)。画像 = 同時 2 本・Content-Length 判明時にしきい値事前判定、動画 =
+  逐次ポンプで `VideoDownloadManager.Request` に委譲 (= クリック DL とコアレス)。
+  設定は `PrefetchImagesOnThreadLoad` (既定 ON) / `PrefetchVideosOnThreadLoad` (既定 OFF)。
+  DL 完了は `ThreadDisplayPane.WireVideoDownloadCompletionToPane` が全タブ WebView へ
+  `videoCacheState` broadcast する (先読み起因完了には要求元記録が無いため要求元限定 push では反映されない)
+- 前後スレナビ (`OpenNavTargetAsync`) は**移動元スレがお気に入りの場合のみ**移動先を自動でお気に入り追加する
+  (= 連番チェーンを読み進めた先をすべて先読み対象に揃える。移動元未登録なら連鎖も自動登録も起きない)
 - AI 生成画像メタデータは `Services/Image/AiImageMetadataService.cs` (NuGet 依存ゼロの手製パーサ):
   PNG tEXt/XMP/LSB ステルス、JPEG EXIF、WebP XMP、MP4/WebM コンテナ (未キャッシュ動画は HTTP Range で
   メタ部のみ取得)。ComfyUI workflow グラフ解析込み。結果はサムネイル左上バッジ行の

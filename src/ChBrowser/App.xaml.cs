@@ -43,6 +43,12 @@ public partial class App : Application
     /// 一度失敗した URL は明示クリックがあるまで自動再試行をスキップ。
     /// OnStartup 完了前は null。</summary>
     public ChBrowser.Services.Media.MediaAcquisitionTracker? MediaAcquisitionTrackerInstance => _mediaAcquisitionTracker;
+
+    private ChBrowser.Services.Media.MediaPrefetchService? _mediaPrefetch;
+    /// <summary>お気に入りスレのメディア先読みキュー。スレオープン / 差分取得 / 自動巡回から
+    /// <see cref="ChBrowser.Services.Media.MediaPrefetchService.EnqueueForPosts"/> 経由で使う。
+    /// OnStartup 完了前は null。</summary>
+    public ChBrowser.Services.Media.MediaPrefetchService? MediaPrefetchServiceInstance => _mediaPrefetch;
     private AiImageMetadataService? _aiImageMeta;
     private UrlExpander?       _urlExpander;
     private ConfigStorage?     _configStorage;
@@ -220,6 +226,11 @@ public partial class App : Application
             _imageCache, _mediaAcquisitionTracker,
             System.IO.Path.Combine(paths.CacheVideosDir, "failed_urls.json"));
 
+        // お気に入りスレのメディア先読みキュー。お気に入り判定は MainViewModel 生成後に配線する
+        // (下、mainVm.Favorites へのデリゲート)。
+        _mediaPrefetch = new ChBrowser.Services.Media.MediaPrefetchService(
+            _imageCache, _mediaAcquisitionTracker, _videoDownloadManager, _imageMeta!, _urlExpander!);
+
         // ウィンドウ/ペインサイズの永続化
         var layoutStorage = new LayoutStorage(paths);
         // ビューアウィンドウのサイズ/位置はメイン (= MainWindow) と同じ layout.json に同居して保存している。
@@ -252,6 +263,10 @@ public partial class App : Application
         var openTabsStorage = new OpenTabsStorage(paths);
         var mainVm       = new MainViewModel(bbsmenu, subjectTxt, settingTxt, dat, threadIndex, favoritesStorage, postClient, donguriService, _ngService, paths, openTabsStorage, _llmClient);
         _mainVm          = mainVm;
+        // 先読みキューへのお気に入り判定の配線 (= 判定箇所の単一化。スレオープン / 差分取得 /
+        // 将来の自動巡回のどの経路から EnqueueForPosts が呼ばれても同じ集合判定が効く)。
+        _mediaPrefetch!.IsThreadFavorited = (host, dir, key)
+            => mainVm.Favorites.IsThreadFavorited(host, dir, key);
         // AI 向け板ガイド (ユーザ編集テキスト) — AI チャットを開くたびに読み込んで文脈に注入する。
         _aiBoardGuide    = new ChBrowser.Services.Storage.AiBoardGuideStorage(paths);
         mainVm.AiBoardGuide = _aiBoardGuide;

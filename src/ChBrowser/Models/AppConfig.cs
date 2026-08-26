@@ -153,6 +153,16 @@ public sealed record AppConfig
     /// <summary>画像 HEAD 自動取得しきい値 (MB)。これ以上の画像はクリックされるまで取得しない。即時反映。</summary>
     public int ImageSizeThresholdMb { get; init; } = 5;
 
+    /// <summary>お気に入り登録済みスレを開いたとき、本文中の画像リンクをバックグラウンドで
+    /// 先読みしてキャッシュするか。<see cref="ImageSizeThresholdMb"/> 以下の画像のみ対象
+    /// (= 超過分は従来どおりクリック時取得)。即時反映。</summary>
+    public bool PrefetchImagesOnThreadLoad { get; init; } = true;
+
+    /// <summary>お気に入り登録済みスレを開いたとき、本文中の動画リンク本体もバックグラウンド DL するか。
+    /// 数 MB〜数十 MB/本になり得るため既定 OFF。DL 本体は VideoDownloadManager 経由
+    /// (= クリック起因 DL とコアレス、確定失敗ストアも共有)。即時反映。</summary>
+    public bool PrefetchVideosOnThreadLoad { get; init; } = false;
+
     /// <summary>同一 ID の書込が何件以上あったら ID の "ID" 文字列を赤色で強調するかの閾値 (Phase 22)。
     /// 既定 5 = 同一 ID が 5 件以上で赤。1 にすると同 ID が 2 件以上で赤、等。
     /// 同 ID が 2 件以上 (= 単に複数) のときはリンク風装飾は常に出る (赤化はこの閾値を超えたときだけ)。
