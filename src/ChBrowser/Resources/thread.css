@@ -531,10 +531,26 @@ body.slot-resizing * {
 
 /* load-failed スロットはテーマ代替画像 (image-404.png、透過 PNG 想定) をレス背景に
  * 溶け込ませるため枠/背景を消す。hover で枠を表示し、クリック可能 (= 再試行) ことを示す。
- * テーマ画像未配置でテキスト fallback の場合も透過のままで問題ない。 */
+ * テーマ画像未配置でテキスト fallback の場合も透過のままで問題ない。
+ *
+ * サイズは通常スロットの 1/2 (+ 絶対下限 96px)。404 アートは情報量が少なく
+ * 通常サイズで占領する必要がないため。retrySlot / playMedia で load-failed が外れれば
+ * CSS のみで自動的に通常サイズへ戻る (= JS 側のインラインスタイル操作は不要)。 */
 .image-slot.load-failed {
     background: transparent;
     border-color: transparent;
+    width: calc(240px * var(--slot-scale) / 2);
+    height: calc(240px * var(--slot-scale) / 2);
+    min-width: 96px;
+    min-height: 96px;
+}
+/* 動画 / YouTube スロット (320x180) の load-failed も同率の 1/2。
+ * 高さ 90px は下限 96px 未満になるため box だけ僅かに高くなるが、
+ * 中身は object-fit: contain のため表示が伸縮することはない。 */
+.image-slot.video.load-failed,
+.image-slot.youtube.load-failed {
+    width: calc(320px * var(--slot-scale) / 2);
+    height: calc(180px * var(--slot-scale) / 2);
 }
 
 /* load-failed スロットのテーマ代替画像 (data/themes/default/image-404.png)。
