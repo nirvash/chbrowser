@@ -63,7 +63,12 @@ public sealed partial class MainViewModel
         => ToggleThreadFavorite(tab.Board, tab.ThreadKey, tab.Title);
 
     /// <summary>(板, スレキー, スレタイトル) を引数に取るプリミティブ版。
-    /// スレタブを開かず、スレ一覧の行などから直接トグルしたい時に使う。</summary>
+    /// スレタブを開かず、スレ一覧の行などから直接トグルしたい時に使う。
+    ///
+    /// 追加時、対象スレのタブが開いていて前後ナビで次スレが見つかっている場合
+    /// (= 連番チェーンの「最新ではない」メンバー) は、スレタイ末尾の連番を除去した名前の
+    /// フォルダ (無ければルート直下に新規作成) へ自動格納する。
+    /// タブ未オープン等で次スレの有無を判定できない場合は従来どおりルート直下に入る。</summary>
     public void ToggleThreadFavorite(Board board, string threadKey, string title)
     {
         var existing = Favorites.FindThread(board.Host, board.DirectoryName, threadKey);
@@ -74,23 +79,52 @@ public sealed partial class MainViewModel
         }
         else
         {
-            Favorites.AddRoot(new FavoriteThread
+            var newFav = new FavoriteThread
             {
                 Host          = board.Host,
                 DirectoryName = board.DirectoryName,
                 ThreadKey     = threadKey,
                 Title         = title,
                 BoardName     = board.BoardName,
-            });
-            StatusMessage = $"{title} をお気に入りに追加しました";
+            };
+
+            // 次スレ解決済み (= 最新以外の連番スレ) ならシリーズフォルダへ格納する。
+            // タイトルは追加時点のものを使う (tab.Title と同源)。
+            var opened   = FindThreadTab(board, threadKey);
+            var folderVm = opened is { HasNextNav: true }
+                ? Favorites.GetOrCreateRootFolder(DeriveSeriesFolderName(title))
+                : null;
+
+            if (folderVm is not null)
+            {
+                Favorites.AddInto(folderVm, newFav);
+                StatusMessage = $"{title} をお気に入り「{folderVm.Name}」フォルダに追加しました";
+            }
+            else
+            {
+                Favorites.AddRoot(newFav);
+                StatusMessage = $"{title} をお気に入りに追加しました";
+            }
+
             // お気に入り登録をトリガーに既読分のメディア先読みを開始する
             // (= 「開いた後にお気に入りに入れた」ケース。オープン / 差分取得時の enqueue は
             //   登録前だったため全てフィルタされている。Service 側 dedup / 設定フィルタで冪等)。
-            var opened = FindThreadTab(board, threadKey);
             if (opened is not null && opened.Posts.Count > 0)
                 MediaPrefetch?.EnqueueForPosts(board.Host, board.DirectoryName, threadKey, opened.Posts);
         }
         RefreshFavoritedStateOfAllTabs();
+    }
+
+    /// <summary>連番スレ自動整理用フォルダ名を求める: スレタイ末尾の連番 (+ 前後の空白) を
+    /// 除去した文字列。半角 / 全角数字とも連番とみなす。除去して空になる場合は元タイトルを返す。</summary>
+    internal static string DeriveSeriesFolderName(string title)
+    {
+        var t = (title ?? string.Empty).Trim();
+        if (t.Length == 0) return t;
+        var stripped = System.Text.RegularExpressions.Regex
+            .Replace(t, @"[\s　]*[0-9０-９]+$", string.Empty)
+            .TrimEnd();
+        return stripped.Length > 0 ? stripped : t;
     }
 
     /// <summary>お気に入り状態の変化を、開いている全タブにリアルタイム反映する (Phase 18+)。

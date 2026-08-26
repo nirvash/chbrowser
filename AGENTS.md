@@ -162,6 +162,11 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   展開失敗スロット (expand-failed) も load-failed と見た目を統一 (= 意味クラスとしてのみ保持)
 - 前後スレナビ (`OpenNavTargetAsync`) は**移動元スレがお気に入りの場合のみ**移動先を自動でお気に入り追加する
   (= 連番チェーンを読み進めた先をすべて先読み対象に揃える。移動元未登録なら連鎖も自動登録も起きない)
+- **連番スレのお気に入り自動整理**: 次スレが前後ナビで解決済みのスレ (= 最新ではない連番メンバー) を
+  お気に入りに入れると、スレタイ末尾の連番 (+ 前後空白) を除去した名前のシリーズフォルダへ格納する
+  (`ToggleThreadFavorite` 追加ブランチ / `DeriveSeriesFolderName`。半角・全角数字とも連番扱い。
+  フォルダはツリー全体から同名を再利用し、無ければルート直下に新規作成)。
+  タブ未オープン等で次スレ未解決なら従来どおりルート直下に入る (= 判定できる時だけ自動格納)
 - AI 生成画像メタデータは `Services/Image/AiImageMetadataService.cs` (NuGet 依存ゼロの手製パーサ):
   PNG tEXt/XMP/LSB ステルス、JPEG EXIF、WebP XMP、MP4/WebM コンテナ (未キャッシュ動画は HTTP Range で
   メタ部のみ取得)。ComfyUI workflow グラフ解析込み。結果はサムネイル左上バッジ行の

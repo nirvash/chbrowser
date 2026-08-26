@@ -214,6 +214,55 @@ public sealed class FavoritesViewModel : ObservableObject
         return null;
     }
 
+    /// <summary>指定名のフォルダを検索して返す。ルート直下を先に探し、無ければネスト配下
+    /// (<paramref name="includeNested"/>=true 時) を探索。大文字小文字は区別する (日本語名前提)。</summary>
+    public FavoriteFolderViewModel? FindFolderByName(string name, bool includeNested)
+    {
+        FavoriteFolderViewModel? nested = null;
+        foreach (var vm in Items)
+        {
+            if (vm is not FavoriteFolderViewModel f) continue;
+            if (string.Equals(f.Name, name, StringComparison.Ordinal)) return f;
+            if (includeNested && nested is null)
+            {
+                foreach (var child in f.Children)
+                {
+                    nested = FindFolderInChildren(child, name);
+                    if (nested is not null) break;
+                }
+            }
+        }
+        return nested;
+    }
+
+    private static FavoriteFolderViewModel? FindFolderInChildren(FavoriteEntryViewModel vm, string name)
+    {
+        if (vm is not FavoriteFolderViewModel f) return null;
+        if (string.Equals(f.Name, name, StringComparison.Ordinal)) return f;
+        foreach (var child in f.Children)
+        {
+            var hit = FindFolderInChildren(child, name);
+            if (hit is not null) return hit;
+        }
+        return null;
+    }
+
+    /// <summary>連番スレ自動整理用: 指定名フォルダを取得し、無ければルート直下に新規作成する
+    /// (Save + Changed 通知付き)。既存フォルダがネスト配下に在る場合はそれをそのまま再利用する。</summary>
+    public FavoriteFolderViewModel GetOrCreateRootFolder(string name)
+    {
+        var existing = FindFolderByName(name, includeNested: true);
+        if (existing is not null) return existing;
+
+        var vm = FavoriteEntryViewModel.Create(new FavoriteFolder { Name = name });
+        if (vm is not FavoriteFolderViewModel folderVm) throw new InvalidOperationException("folder create failed");
+        folderVm.Parent = null;
+        Items.Add(folderVm);
+        Save();
+        NotifyChanged();
+        return folderVm;
+    }
+
     /// <summary>お気に入り済みスレ全集合 (key tuple)。スレ一覧描画時の bulk lookup 用。</summary>
     public HashSet<(string Host, string Dir, string Key)> CollectFavoriteThreadKeys()
     {
