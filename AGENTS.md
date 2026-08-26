@@ -206,6 +206,11 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   `Get-Process -Name ChBrowser | Stop-Process` のような名前指定一括 kill は**禁止**。
   さらに「列挙して特定 PID だけ除外」する方式も**禁止** — ユーザが自分のインスタンスを
   再起動すると PID が変わり除外が無効化され、巻き込んで落とす (実害が発生済み)
+  - **例外 (ユーザ許可済み, 2026-08)**: **Debug ビルドのプロセス** (= exe パスが
+    `src\ChBrowser\bin\Debug` 配下のもの) はユーザが動作確認用に起動したものであり、
+    停止してよい。exe パスで Debug 版と判定した個別 PID に対して
+    `Stop-Process -Id <pid>` を使うこと (名前指定一括 kill の禁止は継続)。
+    Release/publish 出力 (= デイリー利用 exe) は本例外の対象外
 - `validate` 相当の機構は無し。JS 変更はビルドで埋め込まれるため、動作確認はビルド後の実行で行う
 - 埋め込み JS の構文エラーは**ペイン全体の描画死**として表面化する (IIFE 全体が死ぬため「スレが真っ白」等)。
   ビルド前に `node --check src/ChBrowser/Resources/<file>.js` で構文検証できる

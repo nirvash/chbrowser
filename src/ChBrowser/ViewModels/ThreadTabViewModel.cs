@@ -42,6 +42,14 @@ public sealed class ScrollToPostRequest
     public ScrollToPostRequest(int number) => Number = number;
 }
 
+/// <summary>「未」ボタン (jumpToUnread) の push トリガ。
+/// <see cref="ThreadTabViewModel.PendingJumpToUnread"/> に新インスタンスを setter することで、
+/// AttachedProperty 側で JS へ jumpToUnread メッセージが飛ぶ。
+/// <para>注意: <b>record にしないこと</b>。参照同一性で毎回 PropertyChanged を発火させる。</para></summary>
+public sealed class JumpToUnreadRequest
+{
+}
+
 /// <summary>前スレ / 次スレナビゲーションの候補 1 件。ツールバー ⏮ ⏭ ボタンの右クリックメニューや
 /// 🚫 除外メニューに並べる。解決ロジック本体は MainViewModel.ThreadNav.cs 参照。</summary>
 /// <param name="Key">候補スレの key (= スレ立て epoch 秒)。</param>
@@ -76,6 +84,8 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     public IRelayCommand GoPrevThreadCommand    { get; }
     /// <summary>ツールバー ⏭ (次スレへ) ボタン用。</summary>
     public IRelayCommand GoNextThreadCommand    { get; }
+    /// <summary>ツールバー「未」ボタン用。最初の未読レスにジャンプする。</summary>
+    public IRelayCommand JumpToUnreadCommand    { get; }
 
     // ---- 前スレ / 次スレナビゲーション状態 ----
     //
@@ -253,6 +263,12 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     /// JS に scrollToPost メッセージが飛ぶ。値が変わると WebView2Helper.ScrollToPostPush から JS に届く。</summary>
     [ObservableProperty]
     private ScrollToPostRequest? _pendingScrollToPost;
+
+    /// <summary>「未」ボタン (jumpToUnread) の push トリガ。
+    /// 新インスタンスを setter することで AttachedProperty 経由で JS に jumpToUnread が飛ぶ。
+    /// JS 側が maxSeenDocY を基準に最初の未見レスを解決する。</summary>
+    [ObservableProperty]
+    private JumpToUnreadRequest? _pendingJumpToUnread;
 
     [ObservableProperty]
     private ThreadViewMode _viewMode = ThreadViewMode.Flat;
@@ -445,6 +461,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         AiChatCommand          = new RelayCommand(() => aiChatCallback?.Invoke(this));
         GoPrevThreadCommand    = new RelayCommand(() => goPrevThreadCallback?.Invoke(this));
         GoNextThreadCommand    = new RelayCommand(() => goNextThreadCallback?.Invoke(this));
+        JumpToUnreadCommand    = new RelayCommand(JumpToUnread);
         // 表示モード切替ボタンのサイクル順で次へ進む (一周したら先頭へ)。
         // 旧 DedupTree は dedupTree2 へ置き換え中のためサイクルから除外している (ソースは残すが UI からは呼ばない)。
         CycleViewModeCommand   = new RelayCommand(() =>
@@ -467,6 +484,12 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         }
         AiHiddenPostNumbers = hidden; // 空配列でも push する (= 全クリアの意味になる)
     }
+
+    /// <summary>「未」ボタン: 未読先頭へジャンプする。ジャンプ先の解決は JS 側で行う
+    /// (= 表示順で「まだ見ていない最初のレス」。flat / tree / dedupTree どのモードでも一貫)。
+    /// ここでは JS への push トリガを立てるのみ。</summary>
+    private void JumpToUnread()
+        => PendingJumpToUnread = new JumpToUnreadRequest();
 
     /// <summary>レスを末尾に追加。内部 <see cref="Posts"/> を更新したあと、
     /// <see cref="LatestAppendBatch"/> 経由で WebView2 (JS) に増分を送る。

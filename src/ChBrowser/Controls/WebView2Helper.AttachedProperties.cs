@@ -428,6 +428,32 @@ public static partial class WebView2Helper
     }
 
     // ------------------------------------------------------------
+    // JumpToUnreadPush (スレ表示: 未読先頭へジャンプせよ JS に push)
+    //
+    // ツールバー「未」ボタンで ThreadTabViewModel.PendingJumpToUnread が新インスタンスに
+    // セットされ、本 callback が走る。ジャンプ先の解決は JS 側で行う
+    // (= 表示順で「まだ見ていない最初のレス」。tree / dedupTree のネスト順に支配されない)。
+    // ------------------------------------------------------------
+
+    public static readonly DependencyProperty JumpToUnreadPushProperty =
+        DependencyProperty.RegisterAttached(
+            "JumpToUnreadPush",
+            typeof(object),
+            typeof(WebView2Helper),
+            new PropertyMetadata(null, OnJumpToUnreadPushChanged));
+
+    public static object? GetJumpToUnreadPush(DependencyObject d) => d.GetValue(JumpToUnreadPushProperty);
+    public static void    SetJumpToUnreadPush(DependencyObject d, object? value) => d.SetValue(JumpToUnreadPushProperty, value);
+
+    private static void OnJumpToUnreadPushChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not WebView2 wv) return;
+        if (e.NewValue is not ChBrowser.ViewModels.JumpToUnreadRequest) return;
+        var json = JsonSerializer.Serialize(new { type = "jumpToUnread" }, PostJsonOptions);
+        _ = PostJsonWhenReadyAsync(wv, json, NavScope.ThreadShell);
+    }
+
+    // ------------------------------------------------------------
     // ViewMode (スレ表示: flat / tree / dedupTree の表示モードを JS に通知)
     // ------------------------------------------------------------
 

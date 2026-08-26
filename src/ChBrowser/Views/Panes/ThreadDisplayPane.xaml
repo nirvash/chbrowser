@@ -184,6 +184,30 @@
                             VerticalAlignment="Center" />
                 </StackPanel>
 
+                <!-- 「未」ボタン: 最初の未読レスにジャンプ。
+                     解決順: MarkPostNumber → ScrollTargetPostNumber+1 → 最終レス番号 → no-op。 -->
+                <StackPanel DockPanel.Dock="Left"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="0,0,10,0">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedTab}" Value="{x:Null}">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+
+                    <Button Style="{StaticResource ToolbarIconButton}"
+                            Command="{Binding SelectedTab.JumpToUnreadCommand, FallbackValue={x:Null}}"
+                            ToolTip="最初の未読レスにジャンプ">
+                        <TextBlock Text="未" FontSize="11" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
+                </StackPanel>
+
                 <!-- 前スレ / 次スレナビゲーション (⏮ ⏭ 🚫 ✅)。
                      解決ロジックは MainViewModel.ThreadNav.cs、メニュー構築は code-behind
                      (NavButton_RightClick / NavExcludeButton_Click) 参照。
@@ -543,6 +567,7 @@
                                   ctrl:WebView2Helper.HidePostsPush="{Binding PendingHidePostNumbers}"
                                   ctrl:WebView2Helper.AiHiddenPush="{Binding AiHiddenPostNumbers}"
                                   ctrl:WebView2Helper.ScrollToPostPush="{Binding PendingScrollToPost}"
+                                  ctrl:WebView2Helper.JumpToUnreadPush="{Binding PendingJumpToUnread}"
                                   ctrl:WebView2Helper.ThreadConfigJson="{Binding DataContext.Main.ThreadConfigJson, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   ctrl:WebView2Helper.ThreadShortcutsJson="{Binding DataContext.Main.ThreadShortcutsJson, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   WebMessageReceived="ThreadViewWebView_WebMessageReceived"

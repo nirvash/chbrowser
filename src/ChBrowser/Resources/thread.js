@@ -7,6 +7,7 @@
 //   { type: 'setConfig', popularThreshold?, imageSizeThresholdMb?, idHighlightThreshold?,
 //     metaPopupClickOnly?, videoLoop?, imageClickMaximize?, slotScale?, debug? }        — Phase 11 設定の即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
+//   { type: 'jumpToUnread' }                                        — 「未」ボタン: 既見範囲の下端から最初の未見レスへジャンプ
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
 //   { type: 'openUrl', url }                — 外部 URL クリック
@@ -64,6 +65,10 @@
     let pendingScrollExactY     = null;
     let pendingScrollExactDocH  = null;
     let pendingScrollExactSince = 0;
+
+    // 「未」ボタン (jumpToUnread) 用: セッション中に viewport 下端が到達した最大 document Y。
+    // 単調増加 (max のみ)。jumpToUnread で「既に見た範囲の下端」の基準にする。
+    let maxSeenDocY = 0;
 
     // 設定 (Phase 11) で動的変更可能。setConfig メッセージで上書きされる。
     let POPULAR_THRESHOLD       = 3;
@@ -3238,6 +3243,10 @@ function findReadProgressMaxNumber() {
     }
 
     window.addEventListener('scroll', scheduleSendScrollPosition, { passive: true });
+    window.addEventListener('scroll', function () {
+        const docBottom = window.scrollY + window.innerHeight;
+        if (docBottom > maxSeenDocY) maxSeenDocY = docBottom;
+    }, { passive: true });
 
     // ---------- click handling (anchor scroll / external URL / inline image) ----------
     // 注意: スレ表示内の <a> は href 属性を持たず非 focusable にしている (Chromium が
@@ -5041,6 +5050,31 @@ function findReadProgressMaxNumber() {
                     if (target) {
                         target.scrollIntoView({ block: 'start' });
                         markScrollTarget(target);
+                    }
+                    break;
+                }
+                case 'jumpToUnread': {
+                    // 「未」ボタン: 既に見た範囲の下端 (maxSeenDocY) を基準に、表示順で最初の未見レスへジャンプ。
+                    // 全件既見の場合はドキュメント末尾へスクロールする。
+                    const floorY = Math.max(maxSeenDocY, window.scrollY + window.innerHeight);
+                    const root = document.getElementById('posts');
+                    if (root) {
+                        const posts = root.querySelectorAll('.post[id^="r"]');
+                        let target = null;
+                        for (const el of posts) {
+                            // filter-hidden / NG 等の非表示レス (height 0) は未見候補から除外する
+                            // (= scrollIntoView しても動けないため)
+                            if (el.getBoundingClientRect().height === 0) continue;
+                            const docBottom = directContentBottom(el) + window.scrollY;
+                            if (docBottom > floorY) { target = el; break; }
+                        }
+                        closeFrom(0);
+                        if (target) {
+                            target.scrollIntoView({ block: 'start' });
+                            markScrollTarget(target);
+                        } else {
+                            window.scrollTo({ top: document.documentElement.scrollHeight });
+                        }
                     }
                     break;
                 }
