@@ -70,8 +70,13 @@ public sealed class ImageMetaService : IDisposable
                 Debug.WriteLine($"[ImageMeta] HEAD {url} → {(int)res.StatusCode}");
                 return ImageMeta.Unknown;
             }
-            var size = res.Content.Headers.ContentLength;
-            return new ImageMeta(Ok: true, Size: size);
+            // imgur は削除済み画像へのアクセスを実体 URL から removed.png (プレースホルダ PNG) への
+            // リダイレクトで返す (= HTTP 200 のまま)。これを「画像が存在しない」確定信号として検出し、
+            // 呼び出し元に伝える。最終 URI が取れない場合は判定不可。
+            var finalUri = res.RequestMessage?.RequestUri;
+            var removed  = IsImgurRemovedPlaceholder(finalUri ?? new Uri(url));
+            Debug.WriteLineIf(removed, $"[ImageMeta] HEAD {url} → imgur removed placeholder");
+            return new ImageMeta(Ok: true, Size: res.Content.Headers.ContentLength, IsRemovedPlaceholder: removed);
         }
         catch (Exception ex)
         {
@@ -84,6 +89,12 @@ public sealed class ImageMetaService : IDisposable
         }
     }
 
+    /// <summary>imgur の削除済み画像プレースホルダ (removed.png) かどうか。
+    /// リダイレクト後の最終 URI もしくは要求 URI 自体が該当する場合に真。</summary>
+    public static bool IsImgurRemovedPlaceholder(Uri uri) =>
+        uri.Host.EndsWith("imgur.com", StringComparison.OrdinalIgnoreCase)
+        && uri.AbsolutePath.Equals("/removed.png", StringComparison.OrdinalIgnoreCase);
+
     public void Dispose()
     {
         _http.Dispose();
@@ -91,8 +102,10 @@ public sealed class ImageMetaService : IDisposable
     }
 }
 
-/// <summary>HEAD 結果。Ok=false は HEAD 失敗 (= サイズ不明、JS 側はそのまま読み込む)。</summary>
-public readonly record struct ImageMeta(bool Ok, long? Size)
+/// <summary>HEAD 結果。Ok=false は HEAD 失敗 (= サイズ不明、JS 側はそのまま読み込む)。
+/// IsRemovedPlaceholder は imgur の削除済み画像プレースホルダ (removed.png) 検出
+/// (= Ok=true・キャッシュ可だが、表示 / 先読みでは画像不在扱いにする)。</summary>
+public readonly record struct ImageMeta(bool Ok, long? Size, bool IsRemovedPlaceholder = false)
 {
     public static ImageMeta Unknown => new(false, null);
 }

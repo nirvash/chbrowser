@@ -1456,6 +1456,7 @@ public partial class ThreadDisplayPane : UserControl
             bool   cached = false;
             long?  size   = null;
             bool   ok;
+            var    removedPlaceholder = false;
 
             if (isAsync && resolvedUrl is null)
             {
@@ -1473,6 +1474,7 @@ public partial class ThreadDisplayPane : UserControl
                     var meta = await mainWindow.ImageMetaService.GetAsync(actualUrl).ConfigureAwait(true);
                     ok   = meta.Ok;
                     size = meta.Size;
+                    removedPlaceholder = meta.IsRemovedPlaceholder;
                 }
                 else
                 {
@@ -1485,8 +1487,15 @@ public partial class ThreadDisplayPane : UserControl
             // 過去にこの URL の画像 GET が失敗していたら imageLoadFailed=true で通知
             // (= JS 側は自動 loadSlotImage をスキップして「クリックで再試行」表示)。
             // cached=true (= ローカルファイル存在) のときは fetcher 経路を通らないので失敗フラグは無視。
-            var imageLoadFailed = !cached && tracker is not null
-                && tracker.IsFailed(actualUrl, ChBrowser.Services.Media.MediaAcquisitionKind.Image);
+            // imgur 削除済みプレースホルダ (removed.png) も画像不在として扱う (= tracker に記録し、
+            // スロットはテーマの image-404.png 表示になる)。
+            if (removedPlaceholder && tracker is not null && !cached)
+            {
+                tracker.MarkFailed(actualUrl, ChBrowser.Services.Media.MediaAcquisitionKind.Image);
+            }
+            var imageLoadFailed = (!cached && tracker is not null
+                && tracker.IsFailed(actualUrl, ChBrowser.Services.Media.MediaAcquisitionKind.Image))
+                || (removedPlaceholder && !cached);
 
             var json = JsonSerializer.Serialize(new
             {

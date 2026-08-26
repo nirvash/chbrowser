@@ -214,6 +214,16 @@ public sealed class MediaPrefetchService : IDisposable
                     return;
                 }
 
+                // imgur の削除済み画像プレースホルダ (removed.png リダイレクト / 直指定) は
+                // キャッシュに乗せない (= 削除画像のサムネとして残るため)。不在扱いで記録のみ。
+                var respUri = resp.RequestMessage?.RequestUri;
+                if (respUri is not null && ImageMetaService.IsImgurRemovedPlaceholder(respUri))
+                {
+                    Debug.WriteLine($"[mediaPrefetch] image is imgur removed placeholder url={actual}");
+                    _tracker.MarkFailed(actual, MediaAcquisitionKind.Image);
+                    return;
+                }
+
                 var contentType = resp.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
                 await using var stream = await resp.Content.ReadAsStreamAsync(_cts.Token).ConfigureAwait(false);
                 await _cache.SaveAsync(actual, stream, contentType, CacheKind.Image).ConfigureAwait(false);

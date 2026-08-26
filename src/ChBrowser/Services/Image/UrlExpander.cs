@@ -41,7 +41,8 @@ public sealed record ExpandResult(string? Url, ExpandOutcome Outcome)
 /// 画像ホスティングではないページ URL を、実体画像 URL へ非同期展開するサービス。
 ///
 /// <para>
-/// 対象: x.com (Twitter) / pixiv。imgur のような同期 (URL 形だけで決まる) 展開は JS 側で完結
+/// 対象: x.com (Twitter) / pixiv / imgur アルバムページ。imgur 単画像ページ
+/// (<c>imgur.com/&lt;id&gt;</c>) のような同期 (URL 形だけで決まる) 展開は JS 側で完結
 /// しているのでここでは扱わない。
 /// </para>
 ///
@@ -52,6 +53,9 @@ public sealed record ExpandResult(string? Url, ExpandOutcome Outcome)
 ///     テキストのみツイートは <see cref="ExpandOutcome.NoMedia"/> を返し、JS 側でスロットごと削除させる。</description></item>
 ///   <item><description>pixiv → <c>www.pixiv.net/ajax/illust/&lt;id&gt;</c> (Referer 必須)。<c>urls.regular</c> を返す。
 ///     R-18 や非公開作品はログインが必要なため <see cref="ExpandOutcome.Unavailable"/> を返す。</description></item>
+///   <item><description>imgur アルバム → アルバムページ HTML の <c>&lt;meta property="og:image"&gt;</c>
+///     (表紙サムネイル)。削除済み (HTTP 404 / 410) は <see cref="ExpandOutcome.NoMedia"/>、
+///     それ以外の取得失敗・マークアップ変化は <see cref="ExpandOutcome.Unavailable"/> (= 再試行可)。</description></item>
 /// </list>
 /// 結果は in-memory <see cref="ConcurrentDictionary{TKey,TValue}"/> でセッション中キャッシュ。
 /// <see cref="ExpandOutcome.Unavailable"/> は次回呼び出しで再試行可能にするためキャッシュから外す。
@@ -72,6 +76,20 @@ public sealed class UrlExpander : IDisposable
         @"^https?://(?:www\.)?pixiv\.net/(?:en/)?artworks/(?<id>\d+)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    /// <summary>imgur のアルバムページ (gallery/ は複数形フォーマットが流動的なため対象外、t/ はタグ一覧)。</summary>
+    private static readonly Regex ImgurAlbumRe = new(
+        @"^https?://(?:www\.|m\.)?imgur\.com/a/(?<id>[A-Za-z0-9]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>アルバムページ HTML から表紙サムネイルを取り出す og:image meta タグ。
+    /// 実マークアップは "<c>&lt;meta property="og:image" data-react-helmet="true" content="..."&gt;</c>"
+    /// のように property / content 間に他属性が挟まるため、タグ内なら任意の位置を許容する
+    /// ([^&gt;] でタグ境界を超えないので隣接タグへの誤マッチは起きない)。</summary>
+    private static readonly Regex OgImageRe = new(
+        "<meta\\b[^>]*?property=[\"']og:image[\"'][^>]*?content=[\"'](?<url>[^\"']+)[\"']"
+        + "|<meta\\b[^>]*?content=[\"'](?<url>[^\"']+)[\"'][^>]*?property=[\"']og:image[\"']",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public UrlExpander()
     {
         var handler = new SocketsHttpHandler
@@ -90,9 +108,9 @@ public sealed class UrlExpander : IDisposable
         _http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("ja,en;q=0.8");
     }
 
-    /// <summary>URL が非同期展開対象 (x.com / pixiv 等) かを高速に判定。</summary>
+    /// <summary>URL が非同期展開対象 (x.com / pixiv / imgur アルバム等) かを高速に判定。</summary>
     public static bool IsAsyncExpandable(string url) =>
-        !string.IsNullOrEmpty(url) && (TwitterRe.IsMatch(url) || PixivRe.IsMatch(url));
+        !string.IsNullOrEmpty(url) && (TwitterRe.IsMatch(url) || PixivRe.IsMatch(url) || ImgurAlbumRe.IsMatch(url));
 
     /// <summary>
     /// URL を実体画像 URL に展開。返値の <see cref="ExpandResult.Outcome"/> で 3 値判別。
@@ -124,6 +142,9 @@ public sealed class UrlExpander : IDisposable
 
             var px = PixivRe.Match(url);
             if (px.Success) return await ExpandPixivAsync(px.Groups["id"].Value).ConfigureAwait(false);
+
+            var im = ImgurAlbumRe.Match(url);
+            if (im.Success) return await ExpandImgurAlbumAsync(im.Groups["id"].Value).ConfigureAwait(false);
 
             return ExpandResult.Unavailable;
         }
@@ -277,6 +298,43 @@ public sealed class UrlExpander : IDisposable
         if (urls.TryGetProperty("original", out u) && u.ValueKind == JsonValueKind.String) return ExpandResult.Of(u.GetString()!);
         if (urls.TryGetProperty("small",    out u) && u.ValueKind == JsonValueKind.String) return ExpandResult.Of(u.GetString()!);
         return ExpandResult.Unavailable;
+    }
+
+    // ---------------------------------------------------------------
+    // imgur — アルバムページの og:image (表紙サムネイル)
+    // ---------------------------------------------------------------
+
+    /// <summary>imgur アルバムページを取得し、og:image (= 表紙サムネイル) を実体画像 URL として返す。
+    /// アルバムは複数画像を持つため「先頭 1 枚のサムネ」を出す挙動になる (クリックでアルバムページ自体を開く)。
+    /// 削除済み (404 / 410) は NoMedia (= JS でスロット削除)。マークアップ変化等で og:image が
+    /// 取れない場合は確定できないので Unavailable (= 再試行可) にする。</summary>
+    private async Task<ExpandResult> ExpandImgurAlbumAsync(string albumId)
+    {
+        var pageUrl = $"https://imgur.com/a/{albumId}";
+        using var req = new HttpRequestMessage(HttpMethod.Get, pageUrl);
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
+
+        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        if (!res.IsSuccessStatusCode)
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[UrlExpand] imgur album={albumId} → HTTP {(int)res.StatusCode}");
+            // 明示的な削除は確定情報。それ以外 (429 / 5xx / リダイレクト失敗等) は再試行可。
+            return res.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone
+                ? ExpandResult.NoMedia
+                : ExpandResult.Unavailable;
+        }
+
+        var html = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+        var og = OgImageRe.Match(html);
+        if (!og.Success)
+        {
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[UrlExpand] imgur album={albumId}: og:image not found");
+            return ExpandResult.Unavailable;
+        }
+        // content 属性内の HTML エンティティ (&amp; 等) をデコードしてから渡す。
+        return ExpandResult.Of(WebUtility.HtmlDecode(og.Groups["url"].Value));
     }
 
     public void Dispose() => _http.Dispose();

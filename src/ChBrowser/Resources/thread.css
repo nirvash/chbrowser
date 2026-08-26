@@ -228,14 +228,9 @@ img.inline-image:fullscreen {
         #ececec 16px);
 }
 
-/* x.com / pixiv 等の非同期展開に失敗 (媒体なし / login 要 / API ダウン) */
-.image-slot.expand-failed {
-    background: #fafafa;
-    cursor: default;
-}
-.image-slot.expand-failed:hover {
-    border-color: #ddd;
-}
+/* 非同期展開失敗 (x.com / pixiv / imgur アルバム等)。見た目は load-failed と共通
+ * (= テーマの image-404.png + クリック再試行)。expand-failed は「展開まで失敗した」ことを
+ * 示す意味クラスで、表示制御は load-failed 側に統一している */
 
 /* ---- 動画 / YouTube スロット ----
  * 画像 (240×240) より少し横長の 16:9 比率を使う。サムネ・iframe・<video> いずれも 16:9 が標準。

@@ -425,8 +425,34 @@
     // host を限定せず sssp:// 全般を拾う (= o.5ch.io 等のアップローダ host も対象にするため)。
     // URL_OR_ANCHOR_RE の他の alt より先に置いて優先マッチさせる (= truncated の "s"/"ps" 等への巻き込みを避ける)。
     // 末尾の anchor 部 group 2 = ">>..." 表示テキスト全体、group 3 = 番号指定 (例 "3-5,7")。
+    //
+    // 裸ドメイン形 (group 4 = ドメイン部) は NG ワード回避のため "https://" 等を省いた文字列
+    // (例 imgur.com/a/Hogehoge / bbs.punipuni.eu/test/read.cgi/<dir>/<key>) を拾う alt。
+    //   - 実体は常に https:// と解釈する (= bareToHttps)。
+    //   - ラベルは [A-Za-z0-9-] / 最終ラベル (TLD) は英字 2+ 文字限定
+    //     (= "0.774" や IP アドレス "192.168.0.1" の誤検出を防ぐ)。
+    //   - パス ("/" 以降) を必須にする。パス無しの "英字.英字" トークンは誤検出が支配的なため
+    //     対象外 (例 テンプレ FAQ の "Q.NovelAI"、箇条書きの "1.user"、単語 "hoge.piyo")。
+    //     スレでスキーム省略で貼られるのはパス付き URL が実質すべてなので実害はない。
+    //   - 直前が URL/email トークン構成文字 ([A-Za-z0-9._-/@:]) なら不成立
+    //     (= 長いトークンの途中や user@example.com のドメイン部分を拾わない)。
+    //   - TLD がファイル拡張子っぽいトークン ("read.cgi/JNVA/<key>" 等。パス有りでもドメイン部が
+    //     "xxx.dat" / "xxx.cgi" 形のもの) は bareDomainTldIsFileExt で弾く (= 判定は「ドメイン部」の
+    //     最終ラベルのみ。パス末尾の拡張子は対象外なので example.com/files/report.pdf はリンク化される)。
+    //   - スキーム付き alt を全て先に試すため https://imgur.com/x 等が二重に link 化されることはない。
+    const BARE_DOMAIN_PATH_CHARS = '[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]';
+    // capture (= URL_OR_ANCHOR_RE の group 4) は「ドメイン部」のみ。port / path は group 外
+    // (= bareDomainTldIsFileExt の判定をドメイン最終ラベルに限定するため。
+    //   capture に path を含めると "example.com/files/report.pdf" まで拡張子拒否されて取りこぼす)。
+    const BARE_DOMAIN_SRC =
+        '((?:[A-Za-z0-9](?:[A-Za-z0-9\\-]*[A-Za-z0-9])?\\.)+[A-Za-z]{2,})'
+        + '(?::\\d{1,5})?(?:\\/' + BARE_DOMAIN_PATH_CHARS + '*)';
     const URL_OR_ANCHOR_RE =
-        /(sssp:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+|https?:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+|(?<![A-Za-z])(?:ttps?|tps?|ps?|s)?:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+)|(>>\s*(\d+(?:\s*-\s*\d+)?(?:\s*[,，、]\s*\d+(?:\s*-\s*\d+)?)*))/g;
+        new RegExp('(sssp://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+'
+             + '|https?://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+'
+             + '|(?<![A-Za-z])(?:ttps?|tps?|ps?|s)?://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+)'
+             + '|(>>\\s*(\\d+(?:\\s*-\\s*\\d+)?(?:\\s*[,，、]\\s*\\d+(?:\\s*-\\s*\\d+)?)*))'
+             + '|(?<![A-Za-z0-9._\\-/@:])' + BARE_DOMAIN_SRC, 'g');
 
     /** ">>" 後の番号指定文字列 (例 "3-5,7、9") を {from,to} 範囲オブジェクト配列に分解する。
      *  カンマは半角"," / 全角"，" / 読点"、" を許容。各範囲は from<=to に正規化。数字が取れない部分は無視。 */
@@ -489,6 +515,43 @@
         const rest   = matched.slice(i); // '://...' 部分
         if (prefix === '' || prefix.endsWith('s')) return 'https' + rest;
         return 'http' + rest;
+    }
+
+    // ---------- 裸ドメイン (スキーム完全省略) URL の linkify ----------
+    // NG ワード回避で "https://" を省いた文字列 (例 imgur.com/a/Hogehoge) を https:// として解釈する。
+    /** 裸ドメイン URL を実体の https:// 形に正規化する (= 表示は元文字列のまま維持)。 */
+    function bareToHttps(s) {
+        return 'https://' + s;
+    }
+    // 裸ドメイン候補の「ドメイン部の最終ラベル (TLD)」がファイル拡張子と同名ならリンク化しない。
+    // パス必須化により "1787631575.dat" / "report.pdf" / "config.json" 等は構造的に除外済みだが、
+    // パス付きでもドメイン部が "xxx.cgi" / "xxx.dat" 形のもの ("read.cgi/JNVA/<key>" 等) が残るため保持。
+    // 判定対象はドメイン部のみでパス末尾は問わない (= example.com/files/report.pdf は正当な URL なのでリンク化)。
+    // 実在 TLD との重複 (zip / mov / ai 等) はあるが、裸ドメインでそれらを書く用法は稀であり
+    // 誤リンク防止の利益が上回るため拒否リスト方式を採る。
+    const BARE_DOMAIN_FILE_EXT = new Set([
+        // 画像 / 動画 / 音声
+        'png', 'jpg', 'jpeg', 'jpe', 'gif', 'webp', 'bmp', 'svg', 'ico', 'icns',
+        'tif', 'tiff', 'avif', 'heic', 'heif',
+        'mp4', 'm4v', 'webm', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'mpg', 'mpeg', 'ts',
+        'mp3', 'wav', 'flac', 'ogg', 'm4a', 'opus', 'aac', 'mid', 'midi',
+        // ドキュメント / データ
+        'txt', 'text', 'md', 'json', 'xml', 'html', 'htm', 'css', 'js', 'mjs', 'cjs',
+        'ts', 'tsx', 'jsx', 'csv', 'tsv', 'pdf', 'dat', 'log', 'cfg', 'ini', 'conf',
+        'yml', 'yaml', 'sql', 'db', 'sqlite',
+        // アーカイブ / バイナリ / 実行形式
+        'zip', 'rar', '7z', 'lzh', 'lha', 'tar', 'gz', 'bz2', 'xz', 'zst', 'tgz',
+        'exe', 'dll', 'msi', 'bat', 'cmd', 'ps1', 'sh', 'bash', 'iso', 'img', 'dmg',
+        'bin', 'apk', 'jar', 'class', 'so', 'dylib',
+        // フォント / デザイン
+        'ttf', 'otf', 'woff', 'woff2', 'eot', 'psd', 'ai', 'xcf', 'clip', 'sai',
+        // スクリプト言語
+        'php', 'asp', 'aspx', 'jsp', 'cgi', 'pl', 'py', 'rb',
+    ]);
+    function bareDomainTldIsFileExt(domain) {
+        const i = domain.lastIndexOf('.');
+        if (i < 0) return false;
+        return BARE_DOMAIN_FILE_EXT.has(domain.slice(i + 1).toLowerCase());
     }
 
     // 5ch.io / 5ch.net / bbspink.com の <c>/test/read.cgi/&lt;dir&gt;/&lt;key&gt;(/&lt;postSpec&gt;)?</c> URL を検出。
@@ -578,6 +641,14 @@
                     // 省略形 (ttp:// / s:// 等) の場合は data-url 側だけ正規化して、表示は元のまま残す。
                     const normalized = normalizeUrlScheme(m[1]);
                     html += renderExternalLink(normalized, m[1]);
+                }
+            } else if (m[4]) {
+                // 裸ドメイン形 (imgur.com/a/Hogehoge 等): 実体は https://、表示は元文字列のまま。
+                // TLD が拡張子っぽいトークン ("1787631575.dat" 等) は誤リンク防止でただのテキストに戻す。
+                if (bareDomainTldIsFileExt(m[4])) {
+                    html += escapeHtml(m[0]);
+                } else {
+                    html += renderExternalLink(bareToHttps(m[0]), m[0]);
                 }
             } else {
                 // m[2] = ">>..." 表示テキスト, m[3] = 番号指定 (例 "3-5,7")
@@ -702,6 +773,9 @@
         /^https?:\/\/(?:www\.|m\.|mobile\.)?(?:twitter|x|fxtwitter|vxtwitter)\.com\/[A-Za-z0-9_]+\/status\/\d+/i,
         // pixiv — ajax/illust API で展開
         /^https?:\/\/(?:www\.)?pixiv\.net\/(?:en\/)?artworks\/\d+/i,
+        // imgur アルバム — アルバムページの og:image (表紙サムネ) を C# 側が取得して展開。
+        // 単画像ページ imgur.com/<id> は URL_EXPANDERS の同期展開で先に処理される。
+        /^https?:\/\/(?:www\.|m\.)?imgur\.com\/a\/[A-Za-z0-9]+/i,
     ];
 
     function isExpandableAsync(url) {
@@ -710,7 +784,7 @@
     }
 
     /** URL に対応するメディアスロット HTML を返す。マッチしないなら空文字。
-     *  画像 (直リンク / imgur 等)、直リンク動画、YouTube、x.com/pixiv 非同期展開対象を扱う。 */
+     *  画像 (直リンク / imgur 等)、直リンク動画、YouTube、x.com/pixiv/imgur アルバム非同期展開対象を扱う。 */
     function buildMediaSlotForUrl(href) {
         // 1) YouTube — サムネイル (i.ytimg.com) を画像スロットとしてロードし、クリックでデフォルトブラウザに開く
         const ytId = extractYouTubeId(href);
@@ -1604,17 +1678,27 @@
 
     // ---------- リッチスクロールバー ----------
     /** 本文中に「インライン画像化される URL」(直リンク / 同期展開 / 非同期展開 すべて含む) が 1 つでもあるか。 */
-    // URL_OR_ANCHOR_RE と同じ prefix セット (linkify と media 検出を一致させるため、省略形 / sssp にも追従)。
-    // 省略形は negative lookbehind で「直前が英字でない」を要求する (ftp:// 等の別スキーム名の誤検出回避)。
+    // URL_OR_ANCHOR_RE の scheme / 裸ドメイン alt と同じ prefix セット (linkify と media 検出を一致させるため、
+    // 省略形 / sssp / 裸ドメインにも追従)。省略形は negative lookbehind で「直前が英字でない」を要求する。
     // sssp:// は専用 alt として先頭に置く (= 通常画像貼り付けをサムネ/スクロールバー判定に乗せるため)。
     const BODY_URL_RE =
-        /sssp:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+|https?:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+|(?<![A-Za-z])(?:ttps?|tps?|ps?|s)?:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]+/gi;
+        new RegExp('sssp://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+'
+             + '|https?://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+'
+             + '|(?<![A-Za-z])(?:ttps?|tps?|ps?|s)?://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+'
+             + '|(?<![A-Za-z0-9._\\-/@:])' + BARE_DOMAIN_SRC, 'gi');
     /** BODY_URL_RE のマッチを「サムネ/動画判定に使う実体 URL」に正規化する。
-     *  sssp アイコン (ディレクトリ配下) は媒体扱いしないので null を返す (= スキップ)。 */
-    function normalizeBodyMediaUrl(u) {
+     *  bareDomain には裸ドメイン alt 検出時の group 1 (= ドメイン部) を渡す。
+     *  sssp アイコン (ディレクトリ配下) と拡張子っぽい裸ドメイントークン ("xxx.dat" 等) は
+     *  媒体扱いしないので null を返す (= スキップ)。 */
+    function normalizeBodyMediaUrl(u, bareDomain) {
         if (isSsspUrl(u)) {
             if (isSsspIcon(u)) return null; // アイコンはサムネ/媒体マーカ対象外
             return ssspToHttps(u);
+        }
+        if (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(u)) {
+            // 裸ドメイン形: 拡張子っぽいトークンは除外、それ以外は https:// 付きに正規化。
+            if (bareDomainTldIsFileExt(bareDomain || u)) return null;
+            return bareToHttps(u);
         }
         return normalizeUrlScheme(u);
     }
@@ -1623,7 +1707,7 @@
         BODY_URL_RE.lastIndex = 0;
         let m;
         while ((m = BODY_URL_RE.exec(body)) !== null) {
-            const u = normalizeBodyMediaUrl(m[0]);
+            const u = normalizeBodyMediaUrl(m[0], m[1]);
             if (!u) continue;
             if (getInlineImageSrc(u)) return true;
             if (isExpandableAsync(u)) return true;
@@ -1637,13 +1721,20 @@
         BODY_URL_RE.lastIndex = 0;
         let m;
         while ((m = BODY_URL_RE.exec(body)) !== null) {
-            const u = normalizeBodyMediaUrl(m[0]);
+            const u = normalizeBodyMediaUrl(m[0], m[1]);
             if (!u) continue;
             if (isVideoUrl(u)) return true;
             if (extractYouTubeId(u)) return true;
         }
         return false;
     }
+
+    /** URL マーカー用の簡易判定 (scheme 付き / 省略形 / 裸ドメインのいずれかがあれば真)。
+     *  BODY_URL_RE と prefix セットを揃える (= 省略形 / sssp / 裸ドメインにも追従)。 */
+    const HAS_URL_RE =
+        new RegExp('https?://\\S'
+             + '|(?<![A-Za-z])(?:ttps?|tps?|ps?|s)?://\\S'
+             + '|(?<![A-Za-z0-9._\\-/@:])' + BARE_DOMAIN_SRC);
 
     /** 全トラックのマーカーを再計算。setPosts/appendPosts/setViewMode の各 render 後に呼ぶ。 */
     function updateRichScrollbar() {
@@ -1666,9 +1757,9 @@
         for (const post of allPosts) {
             const refs     = reverseIdx.get(post.number);
             const popular  = refs && refs.length >= POPULAR_THRESHOLD;
-            // 省略形 (ttp:// 等) もスクロールバーの URL マーカに反映するため、prefix セットを揃える。
-            // 省略形は直前が英字でないことを要求 (sssp:// 等の別スキーム名の suffix を誤判定しない)。
-            const hasUrl   = /https?:\/\/\S|(?<![A-Za-z])(?:ttps?|tps?|ps?|s)?:\/\/\S/.test(post.body || '');
+            // 省略形 (ttp:// 等) / 裸ドメイン (imgur.com/x 等) もスクロールバーの URL マーカに反映するため、
+            // prefix セットを揃える。省略形は直前が英字でないことを要求 (sssp:// 等の別スキーム名の誤判定しない)。
+            const hasUrl   = HAS_URL_RE.test(post.body || '');
             const hasImage = bodyContainsImage(post.body);
             const hasVideo = bodyContainsVideo(post.body);
             if (!popular && !hasUrl && !hasImage && !hasVideo) continue;
@@ -1881,16 +1972,14 @@
         if (!slot.classList.contains('deferred')) return;
         slot.dataset.metaState = 'resolved';
 
-        // 非同期展開対象の slot で resolvedUrl が無い → 展開失敗 (媒体無し / login 要 / API ダウン)。
-        // 「クリックで再試行」プレースホルダにする (= 自動再試行はしない、ユーザクリック時のみ再要求)。
+        // 非同期展開対象の slot で resolvedUrl が無い → 展開失敗 (媒体無し / login 要 / API ダウン /
+        // 削除済みアルバム等)。load-failed と共通のテーマ代替画像 (image-404.png) 表示にする
+        // (= 画像未配置環境ではテキスト placeholder へフォールバック)。クリックで再試行可。
         const isAsyncSlot = slot.classList.contains('async');
         if (isAsyncSlot && !meta.resolvedUrl) {
             slot.classList.remove('deferred');
-            slot.classList.add('expand-failed');
-            const text = document.createElement('span');
-            text.className = 'image-placeholder-text';
-            text.textContent = '画像取得失敗 — クリックで再試行';
-            slot.appendChild(text);
+            slot.classList.add('expand-failed', 'load-failed');
+            showLoadFailedPlaceholder(slot, '画像取得失敗 — クリックで再試行');
             return;
         }
 
@@ -2197,6 +2286,16 @@
             slot.classList.remove('load-failed');
             const failedArt = slot.querySelector('.image-404');
             if (failedArt) failedArt.remove();
+
+            // サムネ抽出失敗済み (= 削除済み / 404 等で <video> として読めない URL)。
+            // 再生ボタンを出す意味がないので load-failed (= テーマの image-404.png) へ置き換える。
+            // クリック (= playMedia 経路) で失敗状態が解消され再抽出 / 再 DL されるまでこの表示を保つ。
+            if (!state.hasThumb && state.thumbExtractFailed) {
+                slot.dataset.cacheState = 'failed';
+                slot.classList.add('load-failed');
+                showLoadFailedPlaceholder(slot, '動画取得失敗 — クリックで再試行');
+                return;
+            }
 
             // 再生前状態なのでアクションボタン列を保証 (冪等)
             ensureVideoPlayActions(slot);

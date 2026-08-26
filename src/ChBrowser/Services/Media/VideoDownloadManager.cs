@@ -238,6 +238,16 @@ public sealed class VideoDownloadManager
                 // Content-Type 不明時は URL 拡張子から推定するため SaveAsync 側に任せる (= "video/mp4" でも可)。
                 contentType = "video/mp4";
             }
+            else if (!contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)
+                     && !contentType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                // 動画でない応答 (= imgur の削除済み動画は imgur トップの text/html へリダイレクトされ
+                // HTTP 200 が返る等)。HTML を .mp4 としてキャッシュすると「キャッシュ済みなのに再生不能」
+                // の状態を作ってしまうため失敗扱いにする。確定的削除判定 (Gone) はしない
+                // (= 一時的なエラーページの可能性も残るため、再試行で復活すれば記録は解消される)。
+                Debug.WriteLine($"[VideoDownload] non-video content-type '{contentType}' url={url}");
+                return (false, false);
+            }
 
             using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
             await _cache.SaveAsync(url, stream, contentType, CacheKind.Video).ConfigureAwait(false);

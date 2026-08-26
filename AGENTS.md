@@ -107,6 +107,20 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 - 本文内の `/test/read.cgi/<dir>/<key>(/<postNo>)?` URL は JS 側 `FIVECH_THREAD_RE` で検出され
   `.thread-link` になる。クリック → `{type:'openUrl'}` → `HandleOpenUrl` が `AddressBarParser.Parse`
   (C# 側の純粋関数パーサ) で判定してアプリ内オープン or 外部ブラウザ。ホバーでタイトル+レス数プレビュー
+- 本文 linkify の URL 検出は `URL_OR_ANCHOR_RE` 1 本で行い、prefix セットは 4 alt =
+  sssp:// / フル形 (https?://) / 省略形 (ttp:// 等。直前が英字なら不成立) /
+  **裸ドメイン形** (`imgur.com/a/X` 等スキーム完全省略。capture group 4 = ドメイン部)。
+  裸ドメイン形の規則 (= issue #6「本文記載の URL っぽい文字列のリンク化」):
+  実体は常に `https://` 固定で正規化し表示テキストは元文字列のまま (= 省略形と同じ方針)。
+  パス (`/` 以降) 必須 (= パス無し "英字.英字" はテンプレ FAQ の `Q.NovelAI` や箇条書き
+  `1.user` 等の誤検出が支配的のため対象外。スレに貼られる裸 URL は実質すべてパス付きなので
+  取りこぼしはない)、TLD は英字 2+ 文字限定 (`0.774` / IP アドレス / `v1.2.3` を排除)、
+  ドメイン部最終ラベルが拡張子っぽいトークン (`read.cgi/JNVA/<key>` 等) は `BARE_DOMAIN_FILE_EXT`
+  拒否リストで除外 (= 判定はドメイン部のみ。パス末尾の拡張子は対象外なので
+  `example.com/files/x.pdf` は正しくリンク化される)。既知限界として `cat～box.moe` のように
+  ドメイン内部へ文字を挿入する NG 回避記法は残滓 (`box.moe/`) が別リンク化される = 汎用ルールでは
+  区別不可能なため許容。同期対象: `BODY_URL_RE` / `HAS_URL_RE` (リッチスクロールバー判定)、
+  C# 側 `MediaUrlExtractor.BodyUrlRe` (先読み抽出)
 - スレ内動画の再生要素生成は `playMedia()` の 1 箇所のみ (クリックで `<video controls autoplay>` 生成)。
   サムネ抽出用の非表示 `<video>` は別経路 (`extractAndCacheVideoThumbnail`, canvas から 240px JPEG を
   `videoThumbnailCache` メッセージで C# へ)
@@ -132,6 +146,20 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
   設定は `PrefetchImagesOnThreadLoad` (既定 ON) / `PrefetchVideosOnThreadLoad` (既定 OFF)。
   DL 完了は `ThreadDisplayPane.WireVideoDownloadCompletionToPane` が全タブ WebView へ
   `videoCacheState` broadcast する (先読み起因完了には要求元記録が無いため要求元限定 push では反映されない)
+- 非同期 URL 展開は `Services/Image/UrlExpander.cs`: x.com → api.fxtwitter.com JSON
+  (引用 RT の quote 側メディアも探索)、pixiv → ajax/illust (Referer 必須)、imgur アルバム
+  (`imgur.com/a/<id>`) → アルバムページ HTML の og:image (表紙サムネ。404/410 = NoMedia)。
+  JS 側のパターン集合は thread.js `ASYNC_EXPANDER_RES` で同期して維持する。
+  展開結果は 3 値 (Resolved / NoMedia = スロットごと削除 / Unavailable = クリック再試行可)
+- 削除済みメディアの扱い: imgur は削除済み画像を **removed.png へのリダイレクト (HTTP 200)** で返すため、
+  `ImageMetaService` が HEAD 最終 URI (`IsImgurRemovedPlaceholder`) で検出して tracker 記録 +
+  imageLoadFailed=true (= スロットはテーマの image-404.png 表示。先読みもキャッシュしない)。
+  削除済み動画は imgur トップ HTML へのリダイレクト (200 text/html) になるため
+  `VideoDownloadManager.DownloadAsync` が video/* / octet-stream 以外の content-type を失敗扱いにする
+  (= HTML を .mp4 としてキャッシュする「キャッシュ済みなのに再生不能」事故の防止)。 Gone (404/410/403)
+  判定はしない (= 一時的エラーページの可能性を残す)。サムネ抽出失敗済み動画
+  (`thumbExtractFailed=true` & サムネ無し) のスロットも load-failed (404 アート) 表示になり、
+  展開失敗スロット (expand-failed) も load-failed と見た目を統一 (= 意味クラスとしてのみ保持)
 - 前後スレナビ (`OpenNavTargetAsync`) は**移動元スレがお気に入りの場合のみ**移動先を自動でお気に入り追加する
   (= 連番チェーンを読み進めた先をすべて先読み対象に揃える。移動元未登録なら連鎖も自動登録も起きない)
 - AI 生成画像メタデータは `Services/Image/AiImageMetadataService.cs` (NuGet 依存ゼロの手製パーサ):
