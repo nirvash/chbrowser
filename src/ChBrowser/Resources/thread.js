@@ -5157,6 +5157,13 @@ function findReadProgressMaxNumber() {
                     }
                     break;
                 }
+                case 'pageZoomState':
+                    // WebView2 のページズームは CSS の px も拡大するため、投稿ヘッダだけは
+                    // CSS サイズを倍率で割って最終表示を 14px 以下に保つ。
+                    if (typeof msg.zoom === 'number' && msg.zoom > 0) {
+                        document.documentElement.style.setProperty('--chb-page-zoom', String(msg.zoom));
+                    }
+                    break;
                 case 'jumpToUnread': {
                     // 「未」ボタン: 既に見た範囲の下端 (maxSeenDocY) を基準に、表示順で最初の未見レスへジャンプ。
                     // 全件既見の場合はドキュメント末尾へスクロールする。

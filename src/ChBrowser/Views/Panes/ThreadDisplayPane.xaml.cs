@@ -44,6 +44,7 @@ public partial class ThreadDisplayPane : UserControl
             SendPageZoomCompensate(wv, wv.ZoomFactor, zoom);
             var before = wv.ZoomFactor;
             wv.ZoomFactor = zoom;
+            SendPageZoomState(wv, zoom);
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[pageZoom] broadcast: {before:F3} -> {zoom:F3} (wv#{wv.GetHashCode() % 10000})");
         }
@@ -282,6 +283,7 @@ public partial class ThreadDisplayPane : UserControl
                 + $" wv.ZoomFactor={wv.ZoomFactor:F3} -> config={cfgZ:F3} (clamped={z:F3})"
                 + $" apply={Math.Abs(wv.ZoomFactor - z) > 0.001}");
             if (Math.Abs(wv.ZoomFactor - z) > 0.001) wv.ZoomFactor = z;
+            SendPageZoomState(wv, z);
         }
 
         if (!_seenInitialReady.TryGetValue(wv, out _))
@@ -928,6 +930,18 @@ public partial class ThreadDisplayPane : UserControl
         {
             type = "pageZoomCompensate",
             k    = Math.Clamp(toZoom / fromZoom, 0.1, 10.0),
+        });
+        wv.CoreWebView2.PostWebMessageAsJson(json);
+    }
+
+    /// <summary>投稿ヘッダの最終文字サイズ上限を維持するため、現在の WebView ページズームを JS へ渡す。</summary>
+    private static void SendPageZoomState(WebView2 wv, double zoom)
+    {
+        if (wv.CoreWebView2 is null || zoom <= 0) return;
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "pageZoomState",
+            zoom = Math.Clamp(zoom, 0.5, 3.0),
         });
         wv.CoreWebView2.PostWebMessageAsJson(json);
     }

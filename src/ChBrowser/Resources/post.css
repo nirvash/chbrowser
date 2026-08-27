@@ -36,6 +36,12 @@
 .post-no.has-replies-few  { color: #af00cf; }
 .post-no.has-replies-many { color: #ff0000; }
 
+/* レス番号・名前・日時・ID のヘッダ行は本文より一段小さくして、本文を主役にする。 */
+.post-header {
+    /* WebView のページズーム後も 14px を超えないよう、現在倍率で打ち消す。 */
+    font-size: min(0.875em, calc(14px / var(--chb-page-zoom, 1)));
+}
+
 .post-name {
     color: #006400;
 }
