@@ -80,3 +80,6 @@ src/ChBrowser/Resources/icon/preview_*.png
 
 # --- ローカル環境メモ (デイリー利用 exe の配置先等、マシン固有情報のため commit しない) ---
 /LOCAL.md
+
+# --- Release staging output ---
+/.release-staging/
