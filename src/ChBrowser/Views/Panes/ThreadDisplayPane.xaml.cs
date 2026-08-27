@@ -1393,9 +1393,12 @@ public partial class ThreadDisplayPane : UserControl
         if (sender is not WebView2 wv) return;
         if (wv.DataContext is not ThreadTabViewModel tab) return;
         if (Vm is not { } main) return;
-        if (!payload.TryGetProperty("postNumber", out var numProp)) return;
-        if (numProp.ValueKind != JsonValueKind.Number) return;
-        if (!numProp.TryGetInt32(out var num)) return;
+        int? num = null;
+        if (payload.TryGetProperty("postNumber", out var numProp) && numProp.ValueKind == JsonValueKind.Number)
+        {
+            if (!numProp.TryGetInt32(out var parsed)) return;
+            num = parsed;
+        }
 
         // 投稿内オフセット (= アンカー投稿下端から viewport 下端までの px) と
         // 完全復元用の絶対位置 (scrollY / ドキュメント高さ) を添えて送る。

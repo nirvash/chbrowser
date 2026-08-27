@@ -3014,27 +3014,27 @@
      *  streaming 中: allPosts.length < N の段階では繰り延べ (= 続く batch 到着で再度呼ばれる)。 */
     function tryScrollToTarget() {
         if (userHasScrolled) return;
-        if (pendingScrollTarget == null) return;
         if (allPosts.length === 0) return;
 
         const vh0 = document.documentElement.clientHeight;
 
         // ---- 完全復元パス (優先): 環境一致時は絶対 scrollY への復元を試みる ----
-        // ドキュメント高さが保存時まで育っていれば即確定。育っていない間は
-        // 1.5s だけ繰り延べ (画像レイアウト待ち)。超えたらレス番号経路へフォールバック。
+        // 保存位置の viewport 下端まで描画できれば、文書末尾の高さが変わっていても復元できる。
+        // 画像が viewport 上端に掛かる場合は「完全に読み終えた投稿」が取れないことがあるため、
+        // 投稿番号の有無より先にこの経路を試す。育っていない間は 1.5s だけ繰り延べる。
         if (pendingScrollExactY != null) {
             const dh = document.documentElement.scrollHeight;
-            const dhd = dh - pendingScrollExactDocH;
-            if (Math.abs(dhd) <= 2) {
+            const desiredBottom = pendingScrollExactY + vh0;
+            if (dh >= desiredBottom - 2 || performance.now() - pendingScrollExactSince >= 1500) {
                 const maxS = Math.max(0, dh - vh0);
                 window.scrollTo(0, Math.min(pendingScrollExactY, maxS));
                 pendingScrollExactY = null;
                 return;
             }
-            if (dhd > 2 || performance.now() - pendingScrollExactSince >= 1500) { pendingScrollExactY = null; } /* doc grew/changed -> fallback */
-            else { return; } /* still converging -> keep waiting */ // 繰り延べ
-            pendingScrollExactY = null; // 諦めてレス番号経路へフォールバック
+            return; // 画像スロット等のレイアウト確定待ち
         }
+
+        if (pendingScrollTarget == null) return;
 
         // 投稿内オフセットの適用 (全アライン経路の共通出口)。
         const applyOffset = () => {
@@ -3131,7 +3131,18 @@ function findReadProgressMaxNumber() {
         for (const p of root.querySelectorAll('.post')) {
             const r0 = p.getBoundingClientRect();
             if (r0.height === 0) continue; // filter-hidden 等はスキップ
-            if (directContentBottom(p) > vh) break;     // 表示順で最初の下端切れ投稿 → 直前までが読了位置
+            if (directContentBottom(p) > vh) {
+                // この投稿の内容が viewport を下へはみ出している (= 完全には読了していない)。
+                // 画像等でこの投稿が viewport 上端にかかっており、これより前に完全読了が無い場合、
+                // 直前の投稿番号を返すと復元時に大きく戻ってしまう。代わりにこの投稿自身を
+                // アンカーとして返し、次回起動時に近い位置から復元できるようにする。
+                if (lastValid == null && r0.bottom > 0) {
+                    const noEl = p.querySelector('.post-no[data-number]');
+                    const num  = noEl ? parseInt(noEl.dataset.number, 10) : NaN;
+                    if (!isNaN(num)) lastValid = { num, el: p };
+                }
+                break;
+            }
             const noEl = p.querySelector('.post-no[data-number]');
             const num  = noEl ? parseInt(noEl.dataset.number, 10) : NaN;
             if (!isNaN(num)) lastValid = { num, el: p };
@@ -3149,12 +3160,14 @@ function findReadProgressMaxNumber() {
             // という feedback loop で target がドリフトする。
             if (!userHasScrolled) return;
             const res = findReadProgressMaxNumber();
-            if (res === null) return;
-            const { num, el: anchorEl } = res;
+            const num = res ? res.num : null;
+            const anchorEl = res ? res.el : null;
 
             // 投稿内オフセット: アンカー投稿下端から viewport 下端までの px
             // (= 読了投稿の下端より下、さらに読み進めた量)。復元時に block:'end' 揃え後に加算する。
-            const offsetPx = Math.max(0, document.documentElement.clientHeight - anchorEl.getBoundingClientRect().bottom);
+            const offsetPx = anchorEl
+                ? Math.max(0, document.documentElement.clientHeight - anchorEl.getBoundingClientRect().bottom)
+                : 0;
 
             // 同一レス番号内の読み進みでも offset は変わるため、両方一致の時だけ再送スキップ。
             const last = scrollSaveLastSent;

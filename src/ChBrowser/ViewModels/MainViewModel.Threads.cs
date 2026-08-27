@@ -1161,13 +1161,17 @@ public sealed partial class MainViewModel
     /// これにより通常のスクロール中に頻繁な disk I/O が走らず、idx.json の hot-write も発生しない。
     ///
     /// 引数の <paramref name="readMaxPostNumber"/> は JS の <c>findReadProgressMaxNumber</c> が算定する
-    /// 「先頭から連番が途切れず下端まで見終えた最大番号」(= 読了 prefix の最大番号)。 </summary>
-    public void UpdateScrollPosition(Board board, string threadKey, int readMaxPostNumber, double offsetPx, double scrollY, double docHeight)
+    /// 「先頭から連番が途切れず下端まで見終えた最大番号」(= 読了 prefix の最大番号)。
+    /// 投稿画像が viewport を占める場合は null になり得るが、その場合も絶対位置は保存する。 </summary>
+    public void UpdateScrollPosition(Board board, string threadKey, int? readMaxPostNumber, double offsetPx, double scrollY, double docHeight)
     {
         var tab = FindThreadTab(board, threadKey);
         if (tab is null) return;
-        tab.ScrollTargetPostNumber = readMaxPostNumber;
-        tab.ScrollTargetOffsetPx   = offsetPx;
+        if (readMaxPostNumber is int number)
+        {
+            tab.ScrollTargetPostNumber = number;
+            tab.ScrollTargetOffsetPx   = offsetPx;
+        }
         tab.ScrollTargetScrollY    = scrollY;
         tab.ScrollTargetDocHeight  = docHeight;
         // 環境値は保存時 (Flush) に CurrentConfig から stamp する
@@ -1180,17 +1184,19 @@ public sealed partial class MainViewModel
     /// 既存値の不要な上書きを避けるためである。 </summary>
     public void FlushScrollPositionToDisk(ThreadTabViewModel tab)
     {
-        if (tab.ScrollTargetPostNumber is not int n) return;
+        int? n = tab.ScrollTargetPostNumber;
+        if (!n.HasValue && !tab.ScrollTargetScrollY.HasValue) return;
         try
         {
             var existing = _threadIndex.Load(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey);
             // 既存値と同じなら disk write を省略 (= 単なる cosmetic IO 抑止)
             if (existing?.LastReadPostNumber == n
                 && existing?.ScrollOffsetPx == (tab.ScrollTargetOffsetPx ?? 0)
-                && existing?.ScrollY == (tab.ScrollTargetScrollY ?? 0)) return;
+                && existing?.ScrollY == (tab.ScrollTargetScrollY ?? 0)
+                && existing?.DocHeight == (tab.ScrollTargetDocHeight ?? 0)) return;
             var updated = (existing ?? new ThreadIndex(null, null)) with
             {
-                LastReadPostNumber = n,
+                LastReadPostNumber = n == 0 ? existing?.LastReadPostNumber : n,
                 ScrollOffsetPx     = tab.ScrollTargetOffsetPx ?? 0,
                 ScrollY            = tab.ScrollTargetScrollY ?? 0,
                 DocHeight          = tab.ScrollTargetDocHeight ?? 0,

@@ -181,6 +181,10 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
 - スレ表示のスクロール復元: idx.json の読了レス番号 + 投稿内オフセット (px) を基本とし、
   保存環境 (スロットスケール / ページズーム / ドキュメント高さ) が一致する場合は
   絶対 scrollY による完全復元を優先する (thread.js tryScrollToTarget の exact パス)
+- `findReadProgressMaxNumber` は「下端まで見えている投稿」を読了位置として返すが、
+  投稿画像が viewport 上端にかかって全投稿が下端切れの状態では null になりうる。
+  この場合は viewport 上端にかかっている投稿自身をアンカーとして返し、
+  復元用の投稿番号が失われてスレッド先頭に戻るのを防ぐ
 - スレ表示の Ctrl+ホイールは WebView2 標準ズームではなく**ページズーム倍率**
   (`AppConfig.ThreadPageZoom` 0.5–3.0) の変更に割り当てて永続化する
   (thread.js が wheel を preventDefault → `threadPageZoomDelta` → ペインが `wv.ZoomFactor` 設定 +
