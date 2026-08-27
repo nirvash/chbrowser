@@ -733,11 +733,12 @@ body.slot-resizing * {
 .new-posts-mark-band {
     margin: 4px 0 6px 0;
     padding: 1px 0;
-    border-top: 1px dashed #1e88e5;
-    color: #1565c0;
+    border-top: 1px dashed #1565c0;
+    color: #0d47a1;
     font-size: 11px;
+    font-weight: 600;
     text-align: center;
-    background: rgba(30, 136, 229, 0.06);
+    background: rgba(21, 101, 192, 0.12);
     user-select: none;
 }
 .new-posts-mark-band::before { content: '— 以降新レス —'; }

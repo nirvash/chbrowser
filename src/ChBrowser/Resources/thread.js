@@ -3064,13 +3064,11 @@
                 applyOffset();
                 return;
             }
-            // 新着あり → 旧レスの末尾 = 「以降新レス」ラベル。ラベルを画面下端に置く
-            // (= 旧レスが画面を満たし、新着はラベルの下=画面外。閉じたときの位置を再現)。
+            // 新着あり → 旧レスの末尾 = 「以降新レス」ラベル。ラベルとその直前の 1 行を
+            // viewport 内に残す (= 未読境界を見失わず、そのまま続きを読み始められる)。
             const label = document.getElementById('new-posts-mark-band');
             if (label) {
-                const r  = label.getBoundingClientRect();
-                const vh = document.documentElement.clientHeight;
-                if (Math.abs(r.bottom - vh) > 4) label.scrollIntoView({ block: 'end' });
+                scrollToUnreadBoundary(label, markPostNumber);
                 applyOffset();
                 return;
             }
@@ -5147,7 +5145,14 @@ function findReadProgressMaxNumber() {
                     const target = document.getElementById('r' + msg.number);
                     closeFrom(0);
                     if (target) {
-                        target.scrollIntoView({ block: 'start' });
+                        // 差分取得後に新着先頭へ飛ぶ場合は、単に先頭レスを画面上端へ置かず
+                        // 「以降新レス」帯とその直前 1 行を残す。文脈を保ったまま未読先頭を強調する。
+                        const label = document.getElementById('new-posts-mark-band');
+                        if (msg.number === markPostNumber && label) {
+                            scrollToUnreadBoundary(label, msg.number);
+                        } else {
+                            target.scrollIntoView({ block: 'start' });
+                        }
                         markScrollTarget(target);
                     }
                     break;
@@ -5211,6 +5216,27 @@ function findReadProgressMaxNumber() {
     // 解除してから付け直す (= 常時に出ているターゲットは高々 1 つ)。配色は post.css の
     // .post.chb-scroll-target / @keyframes chb-scroll-flash で定義、テーマ側で上書き可能。
     var _scrollTargetTimer = null;
+    /** 未読境界を viewport 上端寄りに置き、直前レスの本文 1 行程度も見える位置へ移動する。
+     *  targetNumber があればその先頭未読レスを一時ハイライトする。 */
+    function scrollToUnreadBoundary(label, targetNumber) {
+        const style = window.getComputedStyle(document.body);
+        const lineHeight = parseFloat(style.lineHeight);
+        const precedingLinePx = Number.isFinite(lineHeight) ? lineHeight : 20;
+        const labelRect = label.getBoundingClientRect();
+        // ラベルの直前に本文 1 行分と少しの余白を残す。
+        // 帯の直後から新レス本文を連続して読めるよう、viewport 上端寄りに置く。
+        const desiredTop = Math.max(0, precedingLinePx + 12);
+        const labelDocTop = labelRect.top + window.scrollY;
+        const maxTop = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        const targetTop = Math.max(0, Math.min(labelDocTop - desiredTop, maxTop));
+        if (Math.abs(window.scrollY - targetTop) > 1) window.scrollTo(0, targetTop);
+
+        if (typeof targetNumber === 'number') {
+            const target = document.getElementById('r' + targetNumber);
+            if (target) markScrollTarget(target);
+        }
+    }
+
     function markScrollTarget(el) {
         document.querySelectorAll('.chb-scroll-target').forEach(function (n) {
             if (n !== el) n.classList.remove('chb-scroll-target');
