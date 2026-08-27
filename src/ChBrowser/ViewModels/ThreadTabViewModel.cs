@@ -50,7 +50,7 @@ public sealed class JumpToUnreadRequest
 {
 }
 
-/// <summary>前スレ / 次スレナビゲーションの候補 1 件。ツールバー ⏮ ⏭ ボタンの右クリックメニューや
+/// <summary>前スレ / 次スレナビゲーションの候補 1 件。ツールバー 前 / 次 ボタンの右クリックメニューや
 /// 🚫 除外メニューに並べる。解決ロジック本体は MainViewModel.ThreadNav.cs 参照。</summary>
 /// <param name="Key">候補スレの key (= スレ立て epoch 秒)。</param>
 /// <param name="Title">候補スレのタイトル (subject.txt 由来。不明なら空文字)。</param>
@@ -80,9 +80,9 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     public IRelayCommand WriteCommand           { get; }
     /// <summary>ツールバー「AI」ボタン用。このスレの内容を文脈に LLM チャットウィンドウを開く。</summary>
     public IRelayCommand AiChatCommand          { get; }
-    /// <summary>ツールバー ⏮ (前スレへ) ボタン用。MainViewModel.OpenNavTargetAsync への橋渡し。</summary>
+    /// <summary>ツールバー「前」(前スレへ) ボタン用。MainViewModel.OpenNavTargetAsync への橋渡し。</summary>
     public IRelayCommand GoPrevThreadCommand    { get; }
-    /// <summary>ツールバー ⏭ (次スレへ) ボタン用。</summary>
+    /// <summary>ツールバー「次」(次スレへ) ボタン用。</summary>
     public IRelayCommand GoNextThreadCommand    { get; }
     /// <summary>ツールバー「未」ボタン用。最初の未読レスにジャンプする。</summary>
     public IRelayCommand JumpToUnreadCommand    { get; }
@@ -93,7 +93,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     // idx.json の PrevThreadKey / NextThreadKey / NavExcludedKeys (= 確定・除外の永続値) を
     // MainViewModel が読み、解決結果と合わせて以下の ObservableProperty に流し込む。
 
-    /// <summary>前スレ候補一覧 (有力順)。⏮ 右クリックメニュー / 🚫 除外メニューの素。</summary>
+    /// <summary>前スレ候補一覧 (有力順)。「前」右クリックメニュー / 🚫 除外メニューの素。</summary>
     [ObservableProperty]
     private IReadOnlyList<ThreadNavCandidate>? _prevNavCandidates;
 
@@ -101,7 +101,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     [ObservableProperty]
     private IReadOnlyList<ThreadNavCandidate>? _nextNavCandidates;
 
-    /// <summary>現在採用中の前スレ key (= ⏮ で開く先)。自動推測 / 確定値どちらか。null = 不明でボタン無効。</summary>
+    /// <summary>現在採用中の前スレ key (= 「前」で開く先)。自動推測 / 確定値どちらか。null = 不明でボタン無効。</summary>
     [ObservableProperty]
     private string? _prevNavKey;
 
@@ -113,7 +113,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     [ObservableProperty]
     private bool _isPrevNavConfirmed;
 
-    /// <summary>現在採用中の次スレ key (= ⏭ で開く先)。null = 不明でボタン無効。</summary>
+    /// <summary>現在採用中の次スレ key (= 「次」で開く先)。null = 不明でボタン無効。</summary>
     [ObservableProperty]
     private string? _nextNavKey;
 
@@ -159,10 +159,10 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         OnPropertyChanged(nameof(ConfirmNavToolTip));
     }
 
-    /// <summary>前スレが確定している (= ⏮ が押せる)。XAML IsEnabled bind 用。</summary>
+    /// <summary>前スレが確定している (= 「前」が押せる)。XAML IsEnabled bind 用。</summary>
     public bool HasPrevNav => !string.IsNullOrEmpty(PrevNavKey);
 
-    /// <summary>次スレが確定している (= ⏭ が押せる)。</summary>
+    /// <summary>次スレが確定している (= 「次」が押せる)。</summary>
     public bool HasNextNav => !string.IsNullOrEmpty(NextNavKey);
 
     /// <summary>✅ 確定ボタンが押せるか = 「未確定の採用 target」が少なくとも片方ある。
@@ -174,11 +174,11 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     public bool HasNavCandidates =>
         (PrevNavCandidates?.Count ?? 0) > 0 || (NextNavCandidates?.Count ?? 0) > 0;
 
-    /// <summary>⏮ ボタンの ToolTip 文字列 (採用中スレタイトル + 確定/推測表示)。</summary>
+    /// <summary>「前」ボタンの ToolTip 文字列 (採用中スレタイトル + 確定/推測表示)。</summary>
     public string PrevNavToolTip => HasPrevNav
         ? $"前スレへ移動: {PrevNavTitle} [{ShortKey(PrevNavKey)}]{(IsPrevNavConfirmed ? " (確定)" : " (自動推測)")} — 右クリックで候補一覧"
         : "前スレ: 不明 (レス 1〜5 にリンクが無く、板でも推測できません)";
-    /// <summary>⏭ ボタンの ToolTip 文字列。</summary>
+    /// <summary>「次」ボタンの ToolTip 文字列。</summary>
     public string NextNavToolTip => HasNextNav
         ? $"次スレへ移動: {NextNavTitle} [{ShortKey(NextNavKey)}]{(IsNextNavConfirmed ? " (確定)" : " (自動推測)")} — 右クリックで候補一覧"
         : "次スレ: 未検出 (後半レスにリンクが無く、板でも推測できません)";

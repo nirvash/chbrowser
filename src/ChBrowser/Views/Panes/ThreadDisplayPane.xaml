@@ -208,10 +208,10 @@
                     </Button>
                 </StackPanel>
 
-                <!-- 前スレ / 次スレナビゲーション (⏮ ⏭ 🚫 ✅)。
+                <!-- 前スレ / 次スレナビゲーション (前 / 次 / 🚫 / ✅)。
                      解決ロジックは MainViewModel.ThreadNav.cs、メニュー構築は code-behind
                      (NavButton_RightClick / NavExcludeButton_Click) 参照。
-                     ⏮ ⏭ : 採用中 target へ移動 (右クリックで候補一覧)。target 不明時は個別に無効。
+                     前 / 次 : 採用中 target へ移動 (右クリックで候補一覧)。target 不明時は個別に無効。
                      🚫    : 荒らし / 間違い候補の除外登録メニュー。
                      ✅    : 現採用 target を「本物」として確定 (idx.json へ永続化)。 -->
                 <StackPanel DockPanel.Dock="Left"

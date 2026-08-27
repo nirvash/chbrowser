@@ -203,7 +203,12 @@ public sealed partial class MainViewModel
     /// <paramref name="stateHint"/> はスレ一覧側で表示していたマーク状態 (Dropped 等) を引き継ぐためのヒント。
     /// <paramref name="activate"/>=false で呼ぶと SelectedThreadTab を切り替えない (= お気に入り一括オープン等の
     /// 多数追加でペインがチカチカするのを避けるため。ユーザの単発操作経路はデフォルトの true で OK)。</summary>
-    public async Task OpenThreadAsync(Board board, ThreadInfo info, LogMarkState? stateHint = null, bool activate = true)
+    public async Task OpenThreadAsync(
+        Board board,
+        ThreadInfo info,
+        LogMarkState? stateHint = null,
+        bool activate = true,
+        bool fetchRemote = true)
     {
         // 既存タブがあれば (どのペインでも)、アクティブにした上で差分取得を走らせる
         foreach (var existing in AllThreadTabs)
@@ -213,7 +218,8 @@ public sealed partial class MainViewModel
                 existing.ThreadKey           == info.Key)
             {
                 MaybeActivateThreadTab(existing, activate);
-                await RefreshThreadAsync(existing).ConfigureAwait(true);
+                if (fetchRemote)
+                    await RefreshThreadAsync(existing).ConfigureAwait(true);
                 return;
             }
         }
@@ -269,6 +275,17 @@ public sealed partial class MainViewModel
             else
             {
                 tab.StatusMessage = $"{info.Title} を取得中...";
+            }
+
+            // 起動時の非アクティブタブ復元では、保存済み dat の表示だけで止める。
+            // 過去スレも含めた全タブへの GET を避け、サーバー確認は復元時に選ばれていた
+            // アクティブタブだけに限定する。
+            if (!fetchRemote)
+            {
+                tab.StatusMessage = local is { Posts.Count: > 0 }
+                    ? $"{info.Title}: {local.Posts.Count} レス (キャッシュ)"
+                    : $"{info.Title}: キャッシュ未取得";
+                return;
             }
 
             // ---- Step 2: サーバから取得 ----
@@ -344,7 +361,10 @@ public sealed partial class MainViewModel
         {
             tab.IsBusy = false;
             // 前後スレナビの自動解決 (404 fallback でタブ削除済みの場合はスキップ)。
-            if (AllThreadTabs.Contains(tab)) KickNavResolve(tab);
+            // 起動時に非アクティブとして復元したタブは、dat 更新だけでなく
+            // 前後スレ候補の title probe も行わない。選択時の
+            // HandleActiveSelectedTabChanged で必要になった分だけ解決する。
+            if (fetchRemote && AllThreadTabs.Contains(tab)) KickNavResolve(tab);
         }
     }
 
@@ -1282,16 +1302,30 @@ public sealed partial class MainViewModel
         //     (= 開いた直後に group.Tabs にタブが入っているので、選択インデックスもその場で復元できる)。
         if (hasPanes)
         {
+            var restoredPanes = saved.ThreadPanes!;
+            var remoteFetchPane = restoredPanes.FirstOrDefault(p =>
+                string.Equals(p.PaneKey, saved.ActiveThreadPaneKey, StringComparison.Ordinal))
+                ?? restoredPanes[^1];
             // ペイン別復元。各保存ペインのキーを、レイアウト復元時に再構成済みのグループ (MainWindow.ReconcilePanesToLayout)
             // と突き合わせる。見つからなければアクティブペインへフォールバック (= レイアウトと open_tabs の不整合時の保険)。
-            foreach (var paneEntry in saved.ThreadPanes!)
+            foreach (var paneEntry in restoredPanes)
             {
                 var group = ThreadPaneGroups.FirstOrDefault(g => string.Equals(g.PaneKey, paneEntry.PaneKey, StringComparison.Ordinal))
                             ?? _activeThreadGroup;
                 SetActiveThreadGroup(group); // 以降に開くタブはこのペインへ入る
-                foreach (var entry in paneEntry.Tabs)
+                var selectedIndex = paneEntry.SelectedIndex >= 0 && paneEntry.SelectedIndex < paneEntry.Tabs.Count
+                    ? paneEntry.SelectedIndex
+                    : 0;
+                for (var index = 0; index < paneEntry.Tabs.Count; index++)
                 {
-                    try { _ = OpenThreadFromListAsync(entry.Host, entry.DirectoryName, entry.Key, entry.Title, activate: false); }
+                    var entry = paneEntry.Tabs[index];
+                    var fetchRemote = ReferenceEquals(paneEntry, remoteFetchPane) && index == selectedIndex;
+                    try
+                    {
+                        _ = OpenThreadFromListAsync(
+                            entry.Host, entry.DirectoryName, entry.Key, entry.Title,
+                            activate: false, fetchRemote: fetchRemote);
+                    }
                     catch (Exception ex)
                     {
                         ChBrowser.Services.Logging.LogService.Instance.Write(
@@ -1309,9 +1343,16 @@ public sealed partial class MainViewModel
         else
         {
             // 旧形式 (v1): フラットなスレタブをアクティブ (= 単一) ペインへ復元。
-            foreach (var entry in saved.ThreadTabs)
+            for (var index = 0; index < saved.ThreadTabs.Count; index++)
             {
-                try { _ = OpenThreadFromListAsync(entry.Host, entry.DirectoryName, entry.Key, entry.Title); }
+                var entry = saved.ThreadTabs[index];
+                var fetchRemote = index == saved.ThreadTabs.Count - 1;
+                try
+                {
+                    _ = OpenThreadFromListAsync(
+                        entry.Host, entry.DirectoryName, entry.Key, entry.Title,
+                        activate: fetchRemote, fetchRemote: fetchRemote);
+                }
                 catch (Exception ex)
                 {
                     ChBrowser.Services.Logging.LogService.Instance.Write(
@@ -1409,11 +1450,18 @@ public sealed partial class MainViewModel
     /// <summary>JS の openThread メッセージ (host/dir/key/title 同梱) からスレを開く。
     /// 通常の板タブ・お気に入りディレクトリ展開タブの両方の経路でこれを呼ぶ。
     /// <paramref name="activate"/>=false で呼ぶと SelectedThreadTab を切り替えない (= お気に入り一括オープン用)。</summary>
-    public Task OpenThreadFromListAsync(string host, string directoryName, string key, string title, LogMarkState? stateHint = null, bool activate = true)
+    public Task OpenThreadFromListAsync(
+        string host,
+        string directoryName,
+        string key,
+        string title,
+        LogMarkState? stateHint = null,
+        bool activate = true,
+        bool fetchRemote = true)
     {
         var board = ResolveBoard(host, directoryName, "");
         var info  = new ThreadInfo(key, title, 0, 0); // PostCount/Order は dat 取得後に意味を持たない
-        return OpenThreadAsync(board, info, stateHint, activate);
+        return OpenThreadAsync(board, info, stateHint, activate, fetchRemote);
     }
 
     /// <summary>(host, dir, key) で開いている ThreadTab を引く。なければ null。</summary>

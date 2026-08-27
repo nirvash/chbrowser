@@ -672,7 +672,7 @@ public sealed class ThreadToolset : IAgentToolset
                 function = new
                 {
                     name        = "get_nav_state",
-                    description = "attached スレッドの前後スレナビゲーション (⏮ ⏭) 状態を返す。" +
+                    description = "attached スレッドの前後スレナビゲーション (前 / 次) 状態を返す。" +
                                   "解決済みの前 / 次スレ (key・タイトル・URL・確定済みか) と、未確定なら候補一覧 (有力順) を含む。" +
                                   "「次スレ開いて」「前のスレに戻って」系の依頼ではまずこれを呼び、" +
                                   "解決済みなら open_next_thread / open_prev_thread、未解決なら find_next_thread_candidates で探す。" +
@@ -691,7 +691,7 @@ public sealed class ThreadToolset : IAgentToolset
                 function = new
                 {
                     name        = "open_next_thread",
-                    description = "attached スレッドの「次スレ」へ移動する (= ツールバー ⏭ ボタン相当)。解決済み target をアプリで開く。" +
+                    description = "attached スレッドの「次スレ」へ移動する (= ツールバー「次」ボタン相当)。解決済み target をアプリで開く。" +
                                   "未解決の場合はエラー + 上位候補が返るので、find_next_thread_candidates(direction=\"next\") や" +
                                   " list_threads で本物を特定して set_nav_target(action=\"adopt\", side=\"next\", key=...) で採用してから再試行する。" +
                                   "attached が無い場合はエラー。",
@@ -709,7 +709,7 @@ public sealed class ThreadToolset : IAgentToolset
                 function = new
                 {
                     name        = "open_prev_thread",
-                    description = "attached スレッドの「前スレ」へ移動する (= ツールバー ⏮ ボタン相当)。" +
+                    description = "attached スレッドの「前スレ」へ移動する (= ツールバー「前」ボタン相当)。" +
                                   "挙動と未解決時の対処は open_next_thread と同じ (side が \"prev\" になるだけ)。",
                     parameters  = new
                     {
@@ -752,7 +752,7 @@ public sealed class ThreadToolset : IAgentToolset
                 function = new
                 {
                     name        = "set_nav_target",
-                    description = "attached スレッドの前後スレナビ状態を変更する (= ⏮ ⏭ 右クリックメニュー相当)。\n" +
+                    description = "attached スレッドの前後スレナビ状態を変更する (= 「前」/「次」の右クリックメニュー相当)。\n" +
                                   "- action=\"adopt\": 数字 key を side (\"prev\"|\"next\") スレとして**採用 + 確定し、アプリでそのスレを開く**。\n" +
                                   "- action=\"exclude\": key を除外リストへ永続登録して再解決する (荒らし / 誤爆候補の排除)。\n" +
                                   "- action=\"clear\": side 側の確定値を解除して自動推測に戻す。\n" +
@@ -2349,8 +2349,8 @@ public sealed class ThreadToolset : IAgentToolset
         {
             var prev = _getNavSide(true);
             var next = _getNavSide(false);
-            sb.Append("- 前スレ (⏮): ").AppendLine(FormatNavSideLine(prev));
-            sb.Append("- 次スレ (⏭): ").AppendLine(FormatNavSideLine(next));
+            sb.Append("- 前スレ (前): ").AppendLine(FormatNavSideLine(prev));
+            sb.Append("- 次スレ (次): ").AppendLine(FormatNavSideLine(next));
             if (!string.IsNullOrEmpty(next.Key))
                 sb.AppendLine("  「次スレへ移動して」系は open_next_thread で即応答できる。");
         }

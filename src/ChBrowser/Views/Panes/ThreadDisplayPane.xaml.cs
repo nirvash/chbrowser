@@ -1678,7 +1678,7 @@ public partial class ThreadDisplayPane : UserControl
     }
 
     // -----------------------------------------------------------------
-    // 前スレ / 次スレナビゲーション (ツールバー ⏮ ⏭ 🚫 ✅)
+    // 前スレ / 次スレナビゲーション (ツールバー 前 / 次 / 🚫 / ✅)
     // 解決ロジック本体は ViewModels/MainViewModel.ThreadNav.cs。
     // -----------------------------------------------------------------
 
@@ -1688,7 +1688,7 @@ public partial class ThreadDisplayPane : UserControl
     private void NavNextButton_RightClick(object sender, MouseButtonEventArgs e)
         => ShowNavCandidateMenu(sender as Button, isPrev: false);
 
-    /// <summary>⏮ / ⏭ 右クリック。有力順の候補メニューを開く。
+    /// <summary>「前」/「次」右クリック。有力順の候補メニューを開く。
     /// 候補クリック = 「その場で採用 + 確定 + オープン」。乱立板では
     /// 「開く → 違ったら 🚫 で除外 or 次候補を選択」を繰り返して正解に辿り着く。</summary>
     private void ShowNavCandidateMenu(Button? btn, bool isPrev)

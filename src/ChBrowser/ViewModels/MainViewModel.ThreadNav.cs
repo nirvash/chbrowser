@@ -10,7 +10,7 @@ using ChBrowser.Services.Url;
 
 namespace ChBrowser.ViewModels;
 
-/// <summary>前スレ / 次スレナビゲーション (ツールバー ⏮ ⏭ 🚫 ✅)。
+/// <summary>前スレ / 次スレナビゲーション (ツールバー 前 / 次 / 🚫 / ✅)。
 ///
 /// 解決の流れ (<see cref="ResolveThreadChainAsync"/>= スレオープン完了 / 差分取得完了のたびに自動実行):
 ///   1. 自レス本文から same-board のスレリンクを抽出 (前 = レス 1〜5、次 = 後半 50%)
@@ -23,7 +23,7 @@ namespace ChBrowser.ViewModels;
 ///   4. idx.json の確定値 (PrevThreadKey / NextThreadKey) があればそれを最優先
 ///
 /// ユーザ操作:
-///   - ⏮ ⏭ 左クリック   : 採用中 target を開く。間違っていたら…
+///   - 前 / 次 左クリック : 採用中 target を開く。間違っていたら…
 ///   - 右クリック         : 有力順候補メニュー → 選択で採用 + オープン (繰り返して正解へ)
 ///   - 🚫                 : 荒らし / 間違い候補を除外登録 (NavExcludedKeys に永続化、以降の ranking 対象外)
 ///   - ✅                 : 現採用 target を「本物」として確定 (永続化、以降の自動解決で不変)
@@ -190,41 +190,6 @@ public sealed partial class MainViewModel
         // 隣接スレのテンプレが自スレを前スレとして宣言していればそこから前後関係が分かる。
         InferNavFromSiblingTabs(tab);
 
-        // 自分が持つ前後宣言を使って、まだ埋まっていない兄弟タブを強制再解決する。
-        // (= 起動時の同時解決で「兄弟より先に解決してしまい、逆引きが不発 × count キャッシュで凍結」
-        //   したタブを救済する。片側が埋まれば以降は発火しないので連鎖は有限回で収束する。)
-        KickDependentSiblings(tab);
-    }
-
-    /// <summary>自タブ (<paramref name="tab"/>) が宣言する前後関係の相手タブのうち、対応する側が
-    /// 未決 (null) のものを force 再解決する。
-    ///
-    /// 例: 自タブの前スレ = U なのに U の次スレが未決 → U を再解決させると
-    /// <see cref="InferNavFromSiblingTabs"/> が自タブの宣言を読んで U の次スレを埋める。</summary>
-    private void KickDependentSiblings(ThreadTabViewModel tab)
-    {
-        if (!ulong.TryParse(tab.ThreadKey, out var myNum)) return;
-
-        foreach (var u in AllThreadTabs)
-        {
-            if (ReferenceEquals(u, tab)) continue;
-            if (!string.Equals(u.Board.DirectoryName, tab.Board.DirectoryName, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!string.Equals(DataPaths.ExtractRootDomain(u.Board.Host),
-                               DataPaths.ExtractRootDomain(tab.Board.Host), StringComparison.OrdinalIgnoreCase)) continue;
-            if (!ulong.TryParse(u.ThreadKey, out var uNum)) continue;
-
-            var uDeclaredAsMyPrev = u.PrevNavKey == tab.ThreadKey ||
-                                    (u.PrevNavCandidates?.Any(c => c.Key == tab.ThreadKey) ?? false);
-            var uDeclaredAsMyNext = u.NextNavKey == tab.ThreadKey ||
-                                    (u.NextNavCandidates?.Any(c => c.Key == tab.ThreadKey) ?? false);
-
-            // 自タブが「前スレ = U」を宣言し、U (より古い) が次スレ未決 → U を再解決させる。
-            if (uDeclaredAsMyPrev && myNum > uNum && u.NextNavKey is null)
-                KickNavResolve(u, force: true);
-            // 自タブが「次スレ = U」を宣言し、U (より新しい) が前スレ未決 → U を再解決させる。
-            else if (uDeclaredAsMyNext && myNum < uNum && u.PrevNavKey is null)
-                KickNavResolve(u, force: true);
-        }
     }
 
     /// <summary>開いている他タブの解決結果を逆参照して、自スレの前後候補を補完する。
@@ -232,7 +197,7 @@ public sealed partial class MainViewModel
     /// 主目的は短命スレ落ちスレの救済: 10 レス程度で死んだスレは本文に次スレリンクが存在しないが、
     /// 翌日立て直された同系列スレ (= 後継) のテンプレ 1 が「前スレ: 自スレ」を宣言しているので、
     /// その宣言を逆に辿れば自スレの次スレが分かる。ユーザは通常、隣接スレを開いた状態で
-    /// ⏮ / ⏭ を辿るため、兄弟タブはほぼ常に解決済みとして機能する。
+    /// 前 / 次 を辿るため、兄弟タブはほぼ常に解決済みとして機能する。
     ///
     /// 注意: 兄弟タブがまだ未解決のときは拾えない (= 兄弟の解決完了後に自タブが再解決されれば拾う)。</summary>
     private void InferNavFromSiblingTabs(ThreadTabViewModel tab)
@@ -698,10 +663,10 @@ public sealed partial class MainViewModel
     }
 
     // -----------------------------------------------------------------
-    // ユーザ操作 (⏮ ⏭ 🚫 ✅ / 候補メニュー / 手動 URL)
+    // ユーザ操作 (前 / 次 / 🚫 / ✅ / 候補メニュー / 手動 URL)
     // -----------------------------------------------------------------
 
-    /// <summary>⏮ / ⏭ クリック。採用中 target を開く (既存タブがあればアクティブ化 + 差分取得)。
+    /// <summary>前 / 次 クリック。採用中 target を開く (既存タブがあればアクティブ化 + 差分取得)。
     /// target 未決 (= ボタン無効状態) では何もしない。
     ///
     /// <para>移動元スレがお気に入り登録済みの場合、移動先スレを未登録なら自動でお気に入りに追加する
@@ -873,11 +838,12 @@ public sealed partial class MainViewModel
         _threadIndex.Save(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey, mutate(existing));
     }
 
-    /// <summary>OpenThreadAsync / RefreshThreadAsync の完了フックや選択時セーフティネットから呼ぶ
-    /// fire-and-forget 解決起動。ユーザ操作由来 (手動設定等) は force=true で本文キャッシュを無視する。
+    /// <summary>アクティブタブの OpenThreadAsync / RefreshThreadAsync 完了フックや選択時セーフティネットから呼ぶ
+    /// fire-and-forget 解決起動。非アクティブタブは選択されるまで解決しない。ユーザ操作由来 (手動設定等) は force=true で本文キャッシュを無視する。
     /// 併せて板のローカルログ key キャッシュを無効化する (= 直前の取得で新規 dat が落ちているかもしれない)。</summary>
     private void KickNavResolve(ThreadTabViewModel tab, bool force = false)
     {
+        if (!ReferenceEquals(_activeThreadGroup.SelectedTab, tab)) return;
         _navLogKeysCache.Remove((tab.Board.Host, tab.Board.DirectoryName));
         _ = ResolveThreadChainAsync(tab, force);
     }
