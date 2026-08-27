@@ -725,6 +725,20 @@ public sealed partial class MainViewModel
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[threadNav] auto-favorite (source was favorited): {key} \"{title}\"");
         }
+
+        // 移動元スレがルートにお気に入りされていて、次スレが解決済みなら
+        // シリーズフォルダへ整理する (= 前スレがお気に入りのままルートに残る問題の修正)。
+        if (srcFavorited && tab.HasNextNav)
+        {
+            var srcFav = Favorites.FindThread(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey);
+            if (srcFav is { Parent: null })
+            {
+                var folder = Favorites.GetOrCreateRootFolder(DeriveSeriesFolderName(tab.Title));
+                Favorites.MoveIntoFolder(srcFav, folder);
+                ChBrowser.Services.Logging.LogService.Instance.Write(
+                    $"[threadNav] reorganized source into folder: {tab.ThreadKey} \"{tab.Title}\" → \"{folder.Name}\"");
+            }
+        }
     }
 
     /// <summary>✅ 確定ボタン。両サイドの現採用 target を idx.json へ永続化して confirmed にする。
