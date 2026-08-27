@@ -208,7 +208,8 @@ public sealed partial class MainViewModel
         ThreadInfo info,
         LogMarkState? stateHint = null,
         bool activate = true,
-        bool fetchRemote = true)
+        bool fetchRemote = true,
+        int? insertAtIndex = null)
     {
         // 既存タブがあれば (どのペインでも)、アクティブにした上で差分取得を走らせる
         foreach (var existing in AllThreadTabs)
@@ -250,7 +251,10 @@ public sealed partial class MainViewModel
         tab.IsFavorited = Favorites.IsThreadFavorited(board.Host, board.DirectoryName, info.Key);
         tab.State       = stateHint ?? LogMarkState.Cached;
 
-        ThreadTabs.Add(tab);
+        if (insertAtIndex is int index)
+            ThreadTabs.Insert(Math.Clamp(index, 0, ThreadTabs.Count), tab);
+        else
+            ThreadTabs.Add(tab);
         MaybeActivateThreadTab(tab, activate);
 
         try

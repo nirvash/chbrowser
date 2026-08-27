@@ -678,10 +678,20 @@ public sealed partial class MainViewModel
         var key = isPrev ? tab.PrevNavKey : tab.NextNavKey;
         if (string.IsNullOrEmpty(key)) return;
         var title = isPrev ? tab.PrevNavTitle : tab.NextNavTitle;
+        // 未オープンの遷移先は、次なら現在の直左、前なら直右に挿入する。
+        // 既存タブの場合は OpenThreadAsync 側でそのタブをアクティブ化するだけで、並びは変えない。
+        var sourceGroup = GroupOf(tab);
+        var sourceIndex = sourceGroup?.Tabs.IndexOf(tab) ?? -1;
+        var insertAtIndex = sourceIndex >= 0
+            ? (isPrev ? sourceIndex + 1 : sourceIndex)
+            : (int?)null;
         var srcFavorited = Favorites.IsThreadFavorited(tab.Board.Host, tab.Board.DirectoryName, tab.ThreadKey);
         ChBrowser.Services.Logging.LogService.Instance.Write(
             $"[threadNav] open {(isPrev ? "prev" : "next")}: {key} \"{title}\" from {tab.ThreadKey}");
-        await OpenThreadAsync(tab.Board, new ThreadInfo(key, title ?? "", 0, 0)).ConfigureAwait(true);
+        await OpenThreadAsync(
+            tab.Board,
+            new ThreadInfo(key, title ?? "", 0, 0),
+            insertAtIndex: insertAtIndex).ConfigureAwait(true);
 
         // 移動元がお気に入りなら移動先を自動登録 (既存登録 / オープン失敗でタブ削除済みのときは何もしない)。
         if (srcFavorited && Favorites.FindThread(tab.Board.Host, tab.Board.DirectoryName, key) is null)
