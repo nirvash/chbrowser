@@ -321,7 +321,23 @@
                     </ToggleButton>
                     <ToggleButton Style="{StaticResource ToolbarToggleIconButton}"
                                   IsChecked="{Binding SelectedTab.IsMediaFilterOn}"
-                                  ToolTip="画像 / 動画 URL を含むレスのみ表示。人気トグルと OR 動作">
+                                  ToolTip="画像 / 動画 URL を含むレスのみ表示。人気トグルと OR 動作"
+                                  ContextMenuService.IsEnabled="True"
+                                  PreviewMouseRightButtonDown="MediaFilterButton_PreviewMouseRightButtonDown">
+                        <ToggleButton.ContextMenu>
+                            <ContextMenu Opened="MediaFilterContextMenu_Opened">
+                                <MenuItem Header="対象レスのみを表示" IsCheckable="True"
+                                          Tag="postsOnly" Click="MediaFilterOption_Click" />
+                                <MenuItem Header="プロンプトを含む" IsCheckable="True"
+                                          Tag="withPrompt" Click="MediaFilterOption_Click" />
+                                <MenuItem Header="画像" IsCheckable="True"
+                                          Tag="images" Click="MediaFilterOption_Click" />
+                                <MenuItem Header="動画" IsCheckable="True"
+                                          Tag="videos" Click="MediaFilterOption_Click" />
+                                <MenuItem Header="404を除外" IsCheckable="True"
+                                          Tag="exclude404" Click="MediaFilterOption_Click" />
+                            </ContextMenu>
+                        </ToggleButton.ContextMenu>
                         <TextBlock Text="🖼" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </ToggleButton>
 

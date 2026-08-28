@@ -150,6 +150,13 @@ public sealed record AppConfig
     /// 旧 config 値 "DedupTree" は読み込み時に dedupTree2 へ解決される (CreateThreadTab の switch)。</summary>
     public string DefaultThreadViewMode { get; init; } = "DedupTree2";
 
+    /// <summary>スレのメディアフィルタ詳細オプション。ツールバーの右クリックメニューから変更し、次回起動時にも復元する。</summary>
+    public bool MediaFilterPostsOnly { get; init; } = false;
+    public bool MediaFilterWithPrompt { get; init; } = false;
+    public bool MediaFilterImages { get; init; } = true;
+    public bool MediaFilterVideos { get; init; } = true;
+    public bool MediaFilterExclude404 { get; init; } = false;
+
     /// <summary>画像 HEAD 自動取得しきい値 (MB)。これ以上の画像はクリックされるまで取得しない。即時反映。</summary>
     public int ImageSizeThresholdMb { get; init; } = 5;
 

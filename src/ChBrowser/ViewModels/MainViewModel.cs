@@ -717,6 +717,18 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         PersistConfigCallback?.Invoke(next);
     }
 
+    private void PersistThreadFilterOptions(ThreadTabViewModel tab)
+    {
+        UpdateAndPersistConfig(c => c with
+        {
+            MediaFilterPostsOnly = tab.MediaFilterPostsOnly,
+            MediaFilterWithPrompt = tab.MediaFilterWithPrompt,
+            MediaFilterImages = tab.MediaFilterImages,
+            MediaFilterVideos = tab.MediaFilterVideos,
+            MediaFilterExclude404 = tab.MediaFilterExclude404,
+        });
+    }
+
     /// <summary>NgService への外部アクセス (NgWindow から再ロード等を呼ぶため)。</summary>
     public ChBrowser.Services.Ng.NgService NgService => _ng;
 

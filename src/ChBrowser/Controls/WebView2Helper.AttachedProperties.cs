@@ -339,6 +339,11 @@ public static partial class WebView2Helper
             textQuery   = filter.TextQuery,
             popularOnly = filter.PopularOnly,
             mediaOnly   = filter.MediaOnly,
+            mediaPostsOnly = filter.MediaPostsOnly,
+            mediaWithPrompt = filter.MediaWithPrompt,
+            mediaImages = filter.MediaImages,
+            mediaVideos = filter.MediaVideos,
+            mediaExclude404 = filter.MediaExclude404,
         }, PostJsonOptions);
         _ = PostJsonWhenReadyAsync(wv, json, NavScope.ThreadShell);
     }

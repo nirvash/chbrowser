@@ -65,6 +65,8 @@ public sealed record ThreadNavCandidate(string Key, string Title, int PostCount,
 /// </summary>
 public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDisplayBinding, IPaneTab
 {
+    private readonly Action<ThreadTabViewModel>? _filterOptionsChanged;
+    private bool _suppressFilterOptionsChanged;
     public Board  Board     { get; }
     public string ThreadKey { get; }
 
@@ -400,6 +402,21 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     [ObservableProperty]
     private bool _isMediaFilterOn;
 
+    [ObservableProperty]
+    private bool _mediaFilterPostsOnly;
+
+    [ObservableProperty]
+    private bool _mediaFilterWithPrompt;
+
+    [ObservableProperty]
+    private bool _mediaFilterImages = true;
+
+    [ObservableProperty]
+    private bool _mediaFilterVideos = true;
+
+    [ObservableProperty]
+    private bool _mediaFilterExclude404;
+
     /// <summary>現在のフィルタ条件。<see cref="SearchQuery"/> / <see cref="IsPopularFilterOn"/> /
     /// <see cref="IsMediaFilterOn"/> から合成され、<see cref="ChBrowser.Controls.WebView2Helper"/> の
     /// FilterPush 添付プロパティ経由で JS に push される。各タブが独立した状態を持つ。</summary>
@@ -409,6 +426,35 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     partial void OnSearchQueryChanged(string value)        => RebuildFilter();
     partial void OnIsPopularFilterOnChanged(bool value)    => RebuildFilter();
     partial void OnIsMediaFilterOnChanged(bool value)      => RebuildFilter();
+    partial void OnMediaFilterPostsOnlyChanged(bool value)  => OnMediaFilterOptionChanged();
+    partial void OnMediaFilterWithPromptChanged(bool value) => OnMediaFilterOptionChanged();
+    partial void OnMediaFilterImagesChanged(bool value)     => OnMediaFilterOptionChanged();
+    partial void OnMediaFilterVideosChanged(bool value)     => OnMediaFilterOptionChanged();
+    partial void OnMediaFilterExclude404Changed(bool value) => OnMediaFilterOptionChanged();
+
+    private void OnMediaFilterOptionChanged()
+    {
+        RebuildFilter();
+        if (!_suppressFilterOptionsChanged) _filterOptionsChanged?.Invoke(this);
+    }
+
+    public void ApplyPersistedMediaFilterOptions(AppConfig config)
+    {
+        _suppressFilterOptionsChanged = true;
+        try
+        {
+            MediaFilterPostsOnly = config.MediaFilterPostsOnly;
+            MediaFilterWithPrompt = config.MediaFilterWithPrompt;
+            MediaFilterImages = config.MediaFilterImages;
+            MediaFilterVideos = config.MediaFilterVideos;
+            MediaFilterExclude404 = config.MediaFilterExclude404;
+        }
+        finally
+        {
+            _suppressFilterOptionsChanged = false;
+        }
+        RebuildFilter();
+    }
 
     private void RebuildFilter()
     {
@@ -417,7 +463,12 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         Filter = new ThreadFilter(
             TextQuery:   SearchQuery ?? "",
             PopularOnly: IsPopularFilterOn,
-            MediaOnly:   IsMediaFilterOn);
+            MediaOnly:   IsMediaFilterOn,
+            MediaPostsOnly: MediaFilterPostsOnly,
+            MediaWithPrompt: MediaFilterWithPrompt,
+            MediaImages: MediaFilterImages,
+            MediaVideos: MediaFilterVideos,
+            MediaExclude404: MediaFilterExclude404);
     }
 
     IReadOnlyCollection<int> IThreadDisplayBinding.OwnPostNumbers => OwnPostNumbers;
@@ -441,6 +492,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         Board                                board,
         ThreadInfo                           info,
         Action<ThreadTabViewModel>           closeCallback,
+        Action<ThreadTabViewModel>?          filterOptionsChanged = null,
         Action<ThreadTabViewModel>?          deleteCallback         = null,
         Action<ThreadTabViewModel>?          refreshCallback        = null,
         Action<ThreadTabViewModel>?          addToFavoritesCallback = null,
@@ -449,6 +501,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
         Action<ThreadTabViewModel>?          goPrevThreadCallback   = null,
         Action<ThreadTabViewModel>?          goNextThreadCallback   = null)
     {
+        _filterOptionsChanged = filterOptionsChanged;
         Board                  = board;
         ThreadKey              = info.Key;
         Title                  = info.Title;

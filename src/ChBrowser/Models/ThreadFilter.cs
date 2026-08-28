@@ -20,8 +20,14 @@ namespace ChBrowser.Models;
 public sealed record ThreadFilter(
     string TextQuery   = "",
     bool   PopularOnly = false,
-    bool   MediaOnly   = false)
+    bool   MediaOnly   = false,
+    bool   MediaPostsOnly = false,
+    bool   MediaWithPrompt = false,
+    bool   MediaImages = true,
+    bool   MediaVideos = true,
+    bool   MediaExclude404 = false)
 {
     /// <summary>すべての条件が「指定なし」相当か。true なら JS 側はフィルタを切る (= 全レス可視)。</summary>
-    public bool IsEmpty => string.IsNullOrEmpty(TextQuery) && !PopularOnly && !MediaOnly;
+    public bool IsEmpty => string.IsNullOrEmpty(TextQuery) && !PopularOnly && !MediaOnly
+                           && !MediaPostsOnly && !MediaWithPrompt && MediaImages && MediaVideos && !MediaExclude404;
 }

@@ -51,6 +51,7 @@
      *  appendPosts (flat) で増分更新。返信数バッジ生成のために常に最新を保つ。 */
     let currentReverseIndex = new Map();
     let viewMode = 'flat';
+    let filterRestoreViewMode = null;
 
     // スクロール対象レス番号。setPosts / appendPosts のメッセージから受け取り、
     // 対象レスが DOM に現れたタイミングで scrollIntoView してクリアする。
@@ -115,7 +116,7 @@
     //   - textQuery (= AND 条件): 本文に含まれていれば match (= 大文字小文字無視)。空なら本文条件なし。
     //   - popularOnly + mediaOnly (= 互いに OR): どちらかでも ON なら、その条件に match するレスだけ表示。
     //     両方 OFF なら toggle 条件なし (textQuery のみで判定)。
-    let currentFilter = { textQuery: '', popularOnly: false, mediaOnly: false };
+    let currentFilter = { textQuery: '', popularOnly: false, mediaOnly: false, mediaPostsOnly: false, mediaWithPrompt: false, mediaImages: true, mediaVideos: true, mediaExclude404: false };
 
     // popularOnly フィルタの「展開済み include 集合」キャッシュ。
     // tree / dedupTree モードでは popular レス自身 + その配下 (= 返信チェイン) を全て表示する仕様で、
@@ -184,10 +185,50 @@
         const medOn = currentFilter.mediaOnly === true;
         if (popOn || medOn) {
             const popMatch = popOn && popularIncludeCache && popularIncludeCache.has(post.number);
-            const medMatch = medOn && (bodyContainsImage(post.body) || bodyContainsVideo(post.body));
+            const medMatch = medOn && mediaPostMatches(post);
             if (!popMatch && !medMatch) return false;
         }
         return true;
+    }
+
+    function mediaPostMatches(post) {
+        if (!post) return false;
+        const hasImage = bodyContainsImage(post.body);
+        const hasVideo = bodyContainsVideo(post.body);
+        if (!hasImage && !hasVideo) return false;
+        if (!currentFilter.mediaImages && !currentFilter.mediaVideos) return false;
+        if (!currentFilter.mediaImages && hasImage && !hasVideo) return false;
+        if (!currentFilter.mediaVideos && hasVideo && !hasImage) return false;
+        const postEl = document.getElementById('r' + post.number);
+        if (currentFilter.mediaExclude404 && !postHasNon404Media(postEl)) return false;
+        if (!currentFilter.mediaWithPrompt) return true;
+        if (!postEl) return false;
+        return Array.from(postEl.querySelectorAll('.image-slot')).some(function (slot) {
+            // ツリー内にネストされた子レスのメディアを、親レス自身のものとして数えない。
+            if (slot.closest('.post') !== postEl) return false;
+            const isVideo = slot.classList.contains('video');
+            if ((isVideo && !currentFilter.mediaVideos) || (!isVideo && !currentFilter.mediaImages)) return false;
+            const meta = aiMetaCache.get(slot.dataset.src);
+            return meta && meta !== 'pending' && meta !== 'no-data'
+                && (meta.positive || meta.negative);
+        });
+    }
+
+    function isVideoMediaSlot(slot) {
+        return slot.classList.contains('video') || slot.dataset.mediaType === 'video' || slot.dataset.mediaType === 'youtube';
+    }
+
+    function postHasNon404Media(postEl) {
+        // 未照会のメディアは404と断定しない。404アート/取得失敗として確定したスロットだけ除外する。
+        if (!postEl) return true;
+        const slots = Array.from(postEl.querySelectorAll('.image-slot')).filter(function (slot) {
+            if (slot.closest('.post') !== postEl) return false;
+            return isVideoMediaSlot(slot) ? currentFilter.mediaVideos : currentFilter.mediaImages;
+        });
+        if (slots.length === 0) return true;
+        return slots.some(function (slot) {
+            return !slot.classList.contains('load-failed') && slot.dataset.cacheState !== 'failed';
+        });
     }
 
     /** 現状の DOM 内全 .post に対して filter-hidden クラスを付け外しする。
@@ -228,9 +269,11 @@
             el.classList.add('filter-hidden');
             if (matched) matchedEls.push(el);
         });
+        // 一致レス自身は、表示モードに関わらず必ず可視化する。
+        matchedEls.forEach(function (el) { el.classList.remove('filter-hidden'); });
         // 2nd pass: match 要素自身と、それを内包する祖先 .post (= 親レス) を可視化する。
         //   子レスが hit したら親レスも表示することで、ツリーの文脈ごと検索結果に残す。
-        matchedEls.forEach(function (el) {
+        if (!requiresDirectPostResults()) matchedEls.forEach(function (el) {
             let cur = el;
             while (cur && cur !== root) {
                 if (cur.classList && cur.classList.contains('post')) cur.classList.remove('filter-hidden');
@@ -251,6 +294,33 @@
             else                                  block.classList.add('filter-hidden');
         });
         applySearchHighlightToAll();
+    }
+
+    function requiresDirectPostResults() {
+        return currentFilter.mediaOnly
+            && (currentFilter.mediaPostsOnly || currentFilter.mediaWithPrompt);
+    }
+
+    function updateFilterViewMode() {
+        if (requiresDirectPostResults()) {
+            if (filterRestoreViewMode === null && viewMode !== 'flat') filterRestoreViewMode = viewMode;
+            if (viewMode !== 'flat') {
+                viewMode = 'flat';
+                if (allPosts.length > 0) renderCurrentViewMode();
+                return true;
+            }
+            return false;
+        }
+        if (filterRestoreViewMode !== null) {
+            const restore = filterRestoreViewMode;
+            filterRestoreViewMode = null;
+            if (viewMode !== restore) {
+                viewMode = restore;
+                if (allPosts.length > 0) renderCurrentViewMode();
+                return true;
+            }
+        }
+        return false;
     }
 
     /** スレッド内の全 .post-body 配下のテキストノードを走査し、textQuery に一致する箇所を
@@ -1380,6 +1450,7 @@
         markNewPosts();
         recomputeMetaMaps();
         decorateMeta();
+        requestPromptMetadataForFilter();
         applyFilterToAllPosts();
     }
 
@@ -2097,6 +2168,7 @@
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage({ type: 'imageLoadFailed', url: url });
             }
+            if (currentFilter.mediaOnly && currentFilter.mediaExclude404) applyFilterToAllPosts();
         }, { once: true });
         slot.appendChild(img);
 
@@ -2192,6 +2264,25 @@
         if (window.chrome && window.chrome.webview) {
             window.chrome.webview.postMessage({ type: 'aiMetadataRequest', url: url });
         }
+    }
+
+    /** 「プロンプトを含む」フィルタ用に、描画済みの全メディア URL のローカルキャッシュを照会する。
+     *  スロットは平坦化時に deferred へ作り直されるため、表示済みかではなく C# 側の実キャッシュを正本にする。 */
+    function requestPromptMetadataForFilter() {
+        if (!currentFilter.mediaOnly || !currentFilter.mediaWithPrompt) return;
+        document.querySelectorAll('.image-slot').forEach(function (slot) {
+            const url = slot.dataset.src;
+            if (!url) return;
+            // 先読み完了イベントを取り逃がした動画でも、フィルタ開始時に実キャッシュ状態を再照会する。
+            // 応答の applyVideoCacheState が hasVideo=true を反映し、下のメタ再照会へつなぐ。
+            if (isVideoMediaSlot(slot) && slot.dataset.promptVideoStateQueried !== '1') {
+                slot.dataset.promptVideoStateQueried = '1';
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ type: 'videoCacheQuery', url: url });
+                }
+            }
+            requestAiMetaForBadge(url);
+        });
     }
 
     /**
@@ -2375,6 +2466,7 @@
                 if (badge) { badge.textContent = '未DL'; badge.style.display = ''; }
             }
         });
+        if (currentFilter.mediaOnly && (currentFilter.mediaWithPrompt || currentFilter.mediaExclude404)) applyFilterToAllPosts();
     }
 
     /** bytes を人間可読のサイズ表記 (B / KB / MB / GB) に整形。
@@ -2746,6 +2838,7 @@
         document.querySelectorAll('.image-slot.deferred').forEach(function (slot) {
             if (slot.dataset.src === url) applyMetaToSlot(slot, meta);
         });
+        if (currentFilter.mediaOnly && currentFilter.mediaExclude404) applyFilterToAllPosts();
     }
 
     // ============================================================
@@ -2939,6 +3032,7 @@
             if (meta.generator) applyGeneratorBadge(slot, meta);
             ensureAiPromptButton(slot, meta);
         });
+        if (currentFilter.mediaOnly && currentFilter.mediaWithPrompt) applyFilterToAllPosts();
     }
 
     // スクロール / ウィンドウサイズ変更でもポップアップは消す (位置がずれるため)。
@@ -4880,6 +4974,7 @@ function findReadProgressMaxNumber() {
         });
 
         observeImageSlots(root);
+        requestPromptMetadataForFilter();
         tryScrollToTarget();
         updateRichScrollbar();
         updateNewPostsMarkBand();
@@ -4918,6 +5013,14 @@ function findReadProgressMaxNumber() {
         const next = mode || 'flat';
         // 未知のモード文字列は無視 (= C# 側 enum と JS 側 strategy table の値が同期している前提)。
         if (!Object.prototype.hasOwnProperty.call(VIEW_MODE_STRATEGIES, next)) return;
+        if (requiresDirectPostResults()) {
+            filterRestoreViewMode = next;
+            if (viewMode !== 'flat') {
+                viewMode = 'flat';
+                if (allPosts.length > 0) renderCurrentViewMode();
+            }
+            return;
+        }
         if (next === viewMode) return;
         viewMode = next;
         if (allPosts.length > 0) renderCurrentViewMode();
@@ -5009,7 +5112,13 @@ function findReadProgressMaxNumber() {
                                 textQuery:   typeof msg.filter.textQuery === 'string' ? msg.filter.textQuery : '',
                                 popularOnly: msg.filter.popularOnly === true,
                                 mediaOnly:   msg.filter.mediaOnly   === true,
-                            };
+                                mediaPostsOnly: msg.filter.mediaPostsOnly === true,
+                                mediaWithPrompt: msg.filter.mediaWithPrompt === true,
+                        mediaImages: msg.filter.mediaImages !== false,
+                        mediaVideos: msg.filter.mediaVideos !== false,
+                        mediaExclude404: msg.filter.mediaExclude404 === true,
+                    };
+                    updateFilterViewMode();
                         }
                         debugLog('resyncThreadState: viewMode=' + viewMode
                             + ', posts=' + (Array.isArray(msg.posts) ? msg.posts.length : 0)
@@ -5031,8 +5140,15 @@ function findReadProgressMaxNumber() {
                         textQuery:   typeof msg.textQuery === 'string' ? msg.textQuery : '',
                         popularOnly: msg.popularOnly === true,
                         mediaOnly:   msg.mediaOnly   === true,
+                        mediaPostsOnly: msg.mediaPostsOnly === true,
+                        mediaWithPrompt: msg.mediaWithPrompt === true,
+                        mediaImages: msg.mediaImages !== false,
+                        mediaVideos: msg.mediaVideos !== false,
+                        mediaExclude404: msg.mediaExclude404 === true,
                     };
-                    applyFilterToAllPosts();
+                    const filterViewChanged = updateFilterViewMode();
+                    requestPromptMetadataForFilter();
+                    if (!filterViewChanged) applyFilterToAllPosts();
                     break;
                 case 'setMarkPostNumber':
                     // 「以降新レス」ラベル位置の単独 push (= 新着 0 件 refresh で mark を null クリアする等)。

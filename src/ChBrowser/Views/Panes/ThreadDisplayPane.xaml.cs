@@ -62,6 +62,55 @@ public partial class ThreadDisplayPane : UserControl
         btn.ContextMenu.IsOpen          = true;
     }
 
+    private void MediaFilterButton_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ToggleButton button || button.ContextMenu is null) return;
+        button.ContextMenu.PlacementTarget = button;
+        button.ContextMenu.Placement = PlacementMode.Bottom;
+        button.ContextMenu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void MediaFilterContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu menu
+            || menu.PlacementTarget is not ToggleButton button
+            || button.DataContext is not ThreadPaneGroupViewModel group
+            || group.SelectedTab is not { } tab) return;
+
+        foreach (var item in menu.Items.OfType<MenuItem>())
+        {
+            item.IsChecked = item.Tag switch
+            {
+                "postsOnly" => tab.MediaFilterPostsOnly,
+                "withPrompt" => tab.MediaFilterWithPrompt,
+                "images" => tab.MediaFilterImages,
+                "videos" => tab.MediaFilterVideos,
+                "exclude404" => tab.MediaFilterExclude404,
+                _ => item.IsChecked,
+            };
+        }
+    }
+
+    private void MediaFilterOption_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem item) return;
+        var menu = ItemsControl.ItemsControlFromItemContainer(item) as ContextMenu;
+        if (menu is null
+            || menu.PlacementTarget is not ToggleButton button
+            || button.DataContext is not ThreadPaneGroupViewModel group
+            || group.SelectedTab is not { } tab) return;
+
+        switch (item.Tag as string)
+        {
+            case "postsOnly": tab.MediaFilterPostsOnly = item.IsChecked; break;
+            case "withPrompt": tab.MediaFilterWithPrompt = item.IsChecked; break;
+            case "images": tab.MediaFilterImages = item.IsChecked; break;
+            case "videos": tab.MediaFilterVideos = item.IsChecked; break;
+            case "exclude404": tab.MediaFilterExclude404 = item.IsChecked; break;
+        }
+    }
+
     /// <summary>このペインの DataContext (= 担当するスレ表示グループ, 複数ペイン化 Phase 2)。
     /// 静的ペインは MainWindow が、動的ペインは生成側が DataContext にグループ VM を設定する。</summary>
     private ThreadPaneGroupViewModel? Group => DataContext as ThreadPaneGroupViewModel;

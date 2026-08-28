@@ -1497,6 +1497,7 @@ public sealed partial class MainViewModel
         var tab = new ThreadTabViewModel(
             board, info,
             closeCallback:          t => RemoveThreadTab(t),
+            filterOptionsChanged:   PersistThreadFilterOptions,
             deleteCallback:         t => DeleteThreadLog(t),
             refreshCallback:        t => _ = RefreshThreadAsync(t, scrollToFirstNewPost: true),
             addToFavoritesCallback: t => ToggleThreadFavorite(t),
@@ -1514,6 +1515,7 @@ public sealed partial class MainViewModel
             "DedupTree2" => ThreadViewMode.DedupTree2,
             _            => ThreadViewMode.Flat,
         };
+        tab.ApplyPersistedMediaFilterOptions(CurrentConfig);
         return tab;
     }
 }
