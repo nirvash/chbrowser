@@ -87,6 +87,7 @@ public partial class ThreadDisplayPane : UserControl
                 "images" => tab.MediaFilterImages,
                 "videos" => tab.MediaFilterVideos,
                 "exclude404" => tab.MediaFilterExclude404,
+                "reachableOnly" => tab.MediaFilterReachableOnly,
                 _ => item.IsChecked,
             };
         }
@@ -108,6 +109,7 @@ public partial class ThreadDisplayPane : UserControl
             case "images": tab.MediaFilterImages = item.IsChecked; break;
             case "videos": tab.MediaFilterVideos = item.IsChecked; break;
             case "exclude404": tab.MediaFilterExclude404 = item.IsChecked; break;
+            case "reachableOnly": tab.MediaFilterReachableOnly = item.IsChecked; break;
         }
     }
 

@@ -726,6 +726,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
             MediaFilterImages = tab.MediaFilterImages,
             MediaFilterVideos = tab.MediaFilterVideos,
             MediaFilterExclude404 = tab.MediaFilterExclude404,
+            MediaFilterReachableOnly = tab.MediaFilterReachableOnly,
         });
     }
 

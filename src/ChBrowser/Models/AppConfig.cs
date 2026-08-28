@@ -156,6 +156,7 @@ public sealed record AppConfig
     public bool MediaFilterImages { get; init; } = true;
     public bool MediaFilterVideos { get; init; } = true;
     public bool MediaFilterExclude404 { get; init; } = false;
+    public bool MediaFilterReachableOnly { get; init; } = false;
 
     /// <summary>画像 HEAD 自動取得しきい値 (MB)。これ以上の画像はクリックされるまで取得しない。即時反映。</summary>
     public int ImageSizeThresholdMb { get; init; } = 5;

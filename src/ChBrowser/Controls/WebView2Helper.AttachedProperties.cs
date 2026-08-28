@@ -344,6 +344,7 @@ public static partial class WebView2Helper
             mediaImages = filter.MediaImages,
             mediaVideos = filter.MediaVideos,
             mediaExclude404 = filter.MediaExclude404,
+            mediaReachableOnly = filter.MediaReachableOnly,
         }, PostJsonOptions);
         _ = PostJsonWhenReadyAsync(wv, json, NavScope.ThreadShell);
     }

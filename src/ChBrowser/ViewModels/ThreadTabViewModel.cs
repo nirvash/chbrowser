@@ -417,6 +417,9 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     [ObservableProperty]
     private bool _mediaFilterExclude404;
 
+    [ObservableProperty]
+    private bool _mediaFilterReachableOnly;
+
     /// <summary>現在のフィルタ条件。<see cref="SearchQuery"/> / <see cref="IsPopularFilterOn"/> /
     /// <see cref="IsMediaFilterOn"/> から合成され、<see cref="ChBrowser.Controls.WebView2Helper"/> の
     /// FilterPush 添付プロパティ経由で JS に push される。各タブが独立した状態を持つ。</summary>
@@ -431,6 +434,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     partial void OnMediaFilterImagesChanged(bool value)     => OnMediaFilterOptionChanged();
     partial void OnMediaFilterVideosChanged(bool value)     => OnMediaFilterOptionChanged();
     partial void OnMediaFilterExclude404Changed(bool value) => OnMediaFilterOptionChanged();
+    partial void OnMediaFilterReachableOnlyChanged(bool value) => OnMediaFilterOptionChanged();
 
     private void OnMediaFilterOptionChanged()
     {
@@ -448,6 +452,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
             MediaFilterImages = config.MediaFilterImages;
             MediaFilterVideos = config.MediaFilterVideos;
             MediaFilterExclude404 = config.MediaFilterExclude404;
+            MediaFilterReachableOnly = config.MediaFilterReachableOnly;
         }
         finally
         {
@@ -468,7 +473,8 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
             MediaWithPrompt: MediaFilterWithPrompt,
             MediaImages: MediaFilterImages,
             MediaVideos: MediaFilterVideos,
-            MediaExclude404: MediaFilterExclude404);
+            MediaExclude404: MediaFilterExclude404,
+            MediaReachableOnly: MediaFilterReachableOnly);
     }
 
     IReadOnlyCollection<int> IThreadDisplayBinding.OwnPostNumbers => OwnPostNumbers;

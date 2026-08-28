@@ -6,6 +6,7 @@
 // 受信メッセージ:
 //   { type: 'setConfig', popularThreshold?, imageSizeThresholdMb?, idHighlightThreshold?,
 //     metaPopupClickOnly?, videoLoop?, imageClickMaximize?, slotScale?, debug? }        — Phase 11 設定の即時反映
+//   { type: 'setFilter', mediaReachableOnly? } — 生存確認済みメディアだけを残すフィルタの即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
 //   { type: 'jumpToUnread' }                                        — 「未」ボタン: 既見範囲の下端から最初の未見レスへジャンプ
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
@@ -116,7 +117,7 @@
     //   - textQuery (= AND 条件): 本文に含まれていれば match (= 大文字小文字無視)。空なら本文条件なし。
     //   - popularOnly + mediaOnly (= 互いに OR): どちらかでも ON なら、その条件に match するレスだけ表示。
     //     両方 OFF なら toggle 条件なし (textQuery のみで判定)。
-    let currentFilter = { textQuery: '', popularOnly: false, mediaOnly: false, mediaPostsOnly: false, mediaWithPrompt: false, mediaImages: true, mediaVideos: true, mediaExclude404: false };
+    let currentFilter = { textQuery: '', popularOnly: false, mediaOnly: false, mediaPostsOnly: false, mediaWithPrompt: false, mediaImages: true, mediaVideos: true, mediaExclude404: false, mediaReachableOnly: false };
 
     // popularOnly フィルタの「展開済み include 集合」キャッシュ。
     // tree / dedupTree モードでは popular レス自身 + その配下 (= 返信チェイン) を全て表示する仕様で、
@@ -201,6 +202,7 @@
         if (!currentFilter.mediaVideos && hasVideo && !hasImage) return false;
         const postEl = document.getElementById('r' + post.number);
         if (currentFilter.mediaExclude404 && !postHasNon404Media(postEl)) return false;
+        if (currentFilter.mediaReachableOnly && !postHasReachableMedia(postEl)) return false;
         if (!currentFilter.mediaWithPrompt) return true;
         if (!postEl) return false;
         return Array.from(postEl.querySelectorAll('.image-slot')).some(function (slot) {
@@ -228,6 +230,21 @@
         if (slots.length === 0) return true;
         return slots.some(function (slot) {
             return !slot.classList.contains('load-failed') && slot.dataset.cacheState !== 'failed';
+        });
+    }
+
+    /** 生存確認済み = 画像は HEAD/キャッシュで正常応答、動画はサムネ抽出または本体キャッシュに成功。
+     *  未試行・応答待ち・取得失敗は false のままなので、このフィルタでは除外する。 */
+    function postHasReachableMedia(postEl) {
+        // 描画前は provisional に通す。DOM を作ってから照会しないと、未確認レスを永続的に
+        // 描画できず、画像 HEAD / 動画サムネ抽出を開始する手段も失われる。
+        if (!postEl) return true;
+        return Array.from(postEl.querySelectorAll('.image-slot')).some(function (slot) {
+            if (slot.closest('.post') !== postEl) return false;
+            if (isVideoMediaSlot(slot)) {
+                return currentFilter.mediaVideos && slot.dataset.mediaReachable === 'true';
+            }
+            return currentFilter.mediaImages && slot.dataset.mediaReachable === 'true';
         });
     }
 
@@ -1451,6 +1468,7 @@
         recomputeMetaMaps();
         decorateMeta();
         requestPromptMetadataForFilter();
+        requestMediaReachabilityForFilter();
         applyFilterToAllPosts();
     }
 
@@ -2168,7 +2186,7 @@
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage({ type: 'imageLoadFailed', url: url });
             }
-            if (currentFilter.mediaOnly && currentFilter.mediaExclude404) applyFilterToAllPosts();
+            if (currentFilter.mediaOnly && (currentFilter.mediaExclude404 || currentFilter.mediaReachableOnly)) applyFilterToAllPosts();
         }, { once: true });
         slot.appendChild(img);
 
@@ -2285,6 +2303,25 @@
         });
     }
 
+    /** 「生存確認済みのみ」用に、描画済みメディアの到達可能性を全件照会する。
+     *  画像は C# の HEAD、動画はサムネ抽出/本体キャッシュ状態で判定するため、本体DLは要求しない。 */
+    function requestMediaReachabilityForFilter() {
+        if (!currentFilter.mediaOnly || !currentFilter.mediaReachableOnly) return;
+        document.querySelectorAll('.image-slot').forEach(function (slot) {
+            const url = slot.dataset.src;
+            if (!url) return;
+            if (isVideoMediaSlot(slot)) {
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ type: 'videoCacheQuery', url: url });
+                }
+            } else {
+                const cached = imageMetaCache.get(url);
+                if (cached) applyImageMeta(url, cached);
+                else postImageMetaRequest(url);
+            }
+        });
+    }
+
     /**
      * Phase 5 新仕様: 動画スロットの「状態問い合わせ + 反映」フロー。
      * IntersectionObserver で viewport に近づいたら C# に状態を問い合わせる。
@@ -2345,6 +2382,7 @@
         if (!url) return;
         const slots = document.querySelectorAll('.image-slot.video[data-media-type="video"][data-src="' + cssEscape(url) + '"]');
         slots.forEach(function (slot) {
+            slot.dataset.mediaReachable = (state.hasThumb || state.hasVideo) ? 'true' : 'false';
             // downloadFailed の場合は状態を反映する。
             // 再生中スロットは <video> の死活で分岐する: ストリーミング再生が生きている
             // (= video.error 未発生 / 並列 DL だけ失敗したケース) なら従来どおり「取得失敗」
@@ -2466,7 +2504,7 @@
                 if (badge) { badge.textContent = '未DL'; badge.style.display = ''; }
             }
         });
-        if (currentFilter.mediaOnly && (currentFilter.mediaWithPrompt || currentFilter.mediaExclude404)) applyFilterToAllPosts();
+        if (currentFilter.mediaOnly && (currentFilter.mediaWithPrompt || currentFilter.mediaExclude404 || currentFilter.mediaReachableOnly)) applyFilterToAllPosts();
     }
 
     /** bytes を人間可読のサイズ表記 (B / KB / MB / GB) に整形。
@@ -2835,10 +2873,12 @@
     /** 同じ URL を持つ全 deferred スロットに HEAD 結果を一括適用。 */
     function applyImageMeta(url, meta) {
         imageMetaCache.set(url, meta);
-        document.querySelectorAll('.image-slot.deferred').forEach(function (slot) {
-            if (slot.dataset.src === url) applyMetaToSlot(slot, meta);
+        document.querySelectorAll('.image-slot').forEach(function (slot) {
+            if (isVideoMediaSlot(slot) || slot.dataset.src !== url) return;
+            slot.dataset.mediaReachable = (meta.ok && !meta.imageLoadFailed) ? 'true' : 'false';
+            if (slot.classList.contains('deferred')) applyMetaToSlot(slot, meta);
         });
-        if (currentFilter.mediaOnly && currentFilter.mediaExclude404) applyFilterToAllPosts();
+        if (currentFilter.mediaOnly && (currentFilter.mediaExclude404 || currentFilter.mediaReachableOnly)) applyFilterToAllPosts();
     }
 
     // ============================================================
@@ -4975,6 +5015,7 @@ function findReadProgressMaxNumber() {
 
         observeImageSlots(root);
         requestPromptMetadataForFilter();
+        requestMediaReachabilityForFilter();
         tryScrollToTarget();
         updateRichScrollbar();
         updateNewPostsMarkBand();
@@ -5117,6 +5158,7 @@ function findReadProgressMaxNumber() {
                         mediaImages: msg.filter.mediaImages !== false,
                         mediaVideos: msg.filter.mediaVideos !== false,
                         mediaExclude404: msg.filter.mediaExclude404 === true,
+                        mediaReachableOnly: msg.filter.mediaReachableOnly === true,
                     };
                     updateFilterViewMode();
                         }
@@ -5145,9 +5187,11 @@ function findReadProgressMaxNumber() {
                         mediaImages: msg.mediaImages !== false,
                         mediaVideos: msg.mediaVideos !== false,
                         mediaExclude404: msg.mediaExclude404 === true,
+                        mediaReachableOnly: msg.mediaReachableOnly === true,
                     };
                     const filterViewChanged = updateFilterViewMode();
                     requestPromptMetadataForFilter();
+                    requestMediaReachabilityForFilter();
                     if (!filterViewChanged) applyFilterToAllPosts();
                     break;
                 case 'setMarkPostNumber':
@@ -5250,6 +5294,7 @@ function findReadProgressMaxNumber() {
                                 size:        (typeof msg.size === 'number' ? msg.size : null),
                                 cached:      !!msg.cached,
                                 resolvedUrl: (typeof msg.resolvedUrl === 'string' ? msg.resolvedUrl : null),
+                                imageLoadFailed: msg.imageLoadFailed === true,
                             });
                         }
                     }

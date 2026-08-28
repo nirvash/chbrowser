@@ -336,6 +336,8 @@
                                           Tag="videos" Click="MediaFilterOption_Click" />
                                 <MenuItem Header="404を除外" IsCheckable="True"
                                           Tag="exclude404" Click="MediaFilterOption_Click" />
+                                <MenuItem Header="生存確認済みのみ" IsCheckable="True"
+                                          Tag="reachableOnly" Click="MediaFilterOption_Click" />
                             </ContextMenu>
                         </ToggleButton.ContextMenu>
                         <TextBlock Text="🖼" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center" />
