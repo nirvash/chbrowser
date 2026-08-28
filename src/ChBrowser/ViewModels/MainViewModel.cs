@@ -276,7 +276,11 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     public ThreadTabViewModel? SelectedThreadTab
     {
         get => _activeThreadGroup.SelectedTab;
-        set => _activeThreadGroup.SelectedTab = value;
+        set
+        {
+            _activeThreadGroup.SelectedTab = value;
+            OnSelectedThreadTabForAutoRefresh(value);
+        }
     }
 
     /// <summary>open API 群の <c>activate</c> 引数共通実装。
@@ -317,6 +321,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     /// 各タブの IsSelected (= WebView 可視制御) はペイン単位で <see cref="ThreadPaneGroupViewModel"/> 側が更新する。</summary>
     private void HandleActiveSelectedTabChanged(ThreadTabViewModel? value)
     {
+        OnSelectedThreadTabForAutoRefresh(value);
         // ステータスバーの「あぼーん N」「dat サイズ」を選択タブのものに更新
         AboneStatus    = value is null ? "あぼーん 0" : $"あぼーん {value.HiddenCount}";
         DatSizeStatus  = value is null ? ""           : FormatDatSize(value.DatSize);
@@ -752,6 +757,8 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     public void ApplyConfig(AppConfig config)
     {
         CurrentConfig = config;
+        if (IsAutoRefreshEnabled)
+            _autoRefreshTimer.Interval = TimeSpan.FromMinutes(Math.Max(1, config.ThreadAutoRefreshIntervalMinutes));
 
         // (デバッグ) 自動リカバリ停止 + 分析ログのフラグを実行時へ同期 (起動時 + 設定即時反映の両経路を通る)。
         ChBrowser.Services.Logging.DebugFlags.DisableRecoveryAndLog = config.DebugDisableRecovery;

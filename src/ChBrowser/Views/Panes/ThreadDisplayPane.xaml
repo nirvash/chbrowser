@@ -326,6 +326,12 @@
                     </ToggleButton>
 
                     <!-- 差分取得 -->
+                    <ToggleButton Style="{StaticResource ToolbarToggleIconButton}"
+                                  IsChecked="{Binding Main.IsAutoRefreshEnabled, Mode=TwoWay}"
+                                  Command="{Binding Main.ToggleAutoRefreshCommand}"
+                                  ToolTip="定期巡回">
+                        <TextBlock Text="⟳" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </ToggleButton>
                     <Button Style="{StaticResource ToolbarIconButton}"
                             Command="{Binding SelectedTab.RefreshCommand}"
                             ToolTip="このスレの差分を取得 (新着レスを末尾に追加)">

@@ -185,6 +185,7 @@ public sealed record AppConfig
     /// スライダのサムネイルスケール (<see cref="ThreadSlotScale"/>) とは独立で、
     /// テキスト等も含めた全体拡大。即時反映 + 永続化。</summary>
     public double ThreadPageZoom { get; init; } = 1.0;
+    public int ThreadAutoRefreshIntervalMinutes { get; init; } = 30;
 
     /// <summary>画像サムネイル (読み込み済み) をクリックしたときの挙動。
     /// false (既定): 画像ビューアウィンドウで開く。true: 動画の ⛶ と同じくスレ表示内で

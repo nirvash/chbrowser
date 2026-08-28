@@ -138,7 +138,7 @@ public sealed partial class MainViewModel
     /// <returns>「新着先頭へスクロール」(<see cref="RefreshThreadAsync"/>) 用の飛び先候補 =
     /// 今回の差分で実際に JS へ append できた先頭レス番号。新着 0 件 / dat 縮小 / 初取得相当
     /// (prevCount=0) / 新着が全件 NG 非表示のときは null (= スクロールしない)。</returns>
-    private int? ApplyFetchDelta(ThreadTabViewModel tab, int prevCount, DatFetchResult result, string headerForStatus)
+    private int? ApplyFetchDelta(ThreadTabViewModel tab, int prevCount, DatFetchResult result, string headerForStatus, bool preserveNewPostsMarker = false)
     {
         ChBrowser.Services.Logging.LogService.Instance.Write(
             $"[fetchDelta] {headerForStatus}: prevCount={prevCount}, result.Count={result.Posts.Count}");
@@ -153,7 +153,7 @@ public sealed partial class MainViewModel
             int? appendedFirst;
             if (prevCount > 0)
             {
-                tab.MarkPostNumber = prevCount + 1;
+                if (!preserveNewPostsMarker) tab.MarkPostNumber = prevCount + 1;
                 appendedFirst = AppendPostsWithNg(tab, added, isIncremental: true);
                 ChBrowser.Services.Logging.LogService.Instance.Write(
                     $"[fetchDelta]   → set tab.MarkPostNumber={prevCount + 1}, then AppendPostsWithNg(added={added.Count}, incremental=true) → firstAppended={appendedFirst?.ToString() ?? "null"}");
@@ -177,7 +177,7 @@ public sealed partial class MainViewModel
         {
             // 新着 0 件: 既存の「以降新レス」ラベルを消す (= mark 消去 → MarkPostNumberPush で JS にも push)。
             // 仕様: 状態マーク変更が起きるイベントなので、HasReplyToOwn も false にリセット (= 上書き許可)。
-            tab.MarkPostNumber = null;
+            if (!preserveNewPostsMarker) tab.MarkPostNumber = null;
             tab.HasReplyToOwn  = false;
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[fetchDelta]   → 新着 0 件、tab.MarkPostNumber=null、HasReplyToOwn=false");
@@ -187,7 +187,7 @@ public sealed partial class MainViewModel
         else
         {
             // dat 縮小も「新着情報のクリア」と同等扱い (= mark / HasReplyToOwn 両方クリア)。
-            tab.MarkPostNumber = null;
+            if (!preserveNewPostsMarker) tab.MarkPostNumber = null;
             tab.HasReplyToOwn  = false;
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[fetchDelta]   → dat 縮小、tab.MarkPostNumber=null、HasReplyToOwn=false");
@@ -378,7 +378,7 @@ public sealed partial class MainViewModel
     /// <param name="scrollToFirstNewPost">手動差分取得 (= 🔄 ボタン / ショートカット等) のとき true。
     /// 新着があった場合に新着先頭レスまでスクロールさせる。スレ一覧再クリックや書き込み後の
     /// 自動取得など非手動経路は false (= 従来どおり読書位置を維持)。</param>
-    public async Task RefreshThreadAsync(ThreadTabViewModel tab, bool scrollToFirstNewPost = false)
+    public async Task RefreshThreadAsync(ThreadTabViewModel tab, bool scrollToFirstNewPost = false, bool preserveNewPostsMarker = false)
     {
         if (tab.IsBusy) return;
 
@@ -393,7 +393,7 @@ public sealed partial class MainViewModel
 
             var noProgress = new Progress<IReadOnlyList<Post>>(_ => { });
             var result     = await _datClient.FetchStreamingAsync(tab.Board, tab.ThreadKey, noProgress).ConfigureAwait(true);
-            var firstNew   = ApplyFetchDelta(tab, prevCount, result, tab.Header);
+            var firstNew   = ApplyFetchDelta(tab, prevCount, result, tab.Header, preserveNewPostsMarker);
 
             SaveFetchedPostCount(tab.Board, tab.ThreadKey, result.Posts.Count);
             tab.FetchedPostCount = result.Posts.Count;

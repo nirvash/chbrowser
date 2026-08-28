@@ -84,6 +84,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool   _metaPopupClickOnly    = true;
     [ObservableProperty] private double _threadSlotScale       = 1.0;
     [ObservableProperty] private double _threadPageZoom        = 1.0;
+    [ObservableProperty] private int    _threadAutoRefreshIntervalMinutes = 30;
     [ObservableProperty] private bool   _imageClickMaximize    = false;
     [ObservableProperty] private bool   _videoLoop             = false;
     [ObservableProperty] private int    _cacheMaxMb            = 1024;
@@ -347,6 +348,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         MetaPopupClickOnly           = initial.MetaPopupClickOnly;
         ThreadSlotScale              = initial.ThreadSlotScale;
         ThreadPageZoom               = initial.ThreadPageZoom;
+        ThreadAutoRefreshIntervalMinutes = initial.ThreadAutoRefreshIntervalMinutes;
         ImageClickMaximize           = initial.ImageClickMaximize;
         VideoLoop                    = initial.VideoLoop;
         CacheMaxMb                   = initial.CacheMaxMb;
@@ -563,6 +565,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         MetaPopupClickOnly          = MetaPopupClickOnly,
         ThreadSlotScale             = ThreadSlotScale,
         ThreadPageZoom              = ThreadPageZoom,
+        ThreadAutoRefreshIntervalMinutes = Math.Clamp(ThreadAutoRefreshIntervalMinutes, 1, 1440),
         ImageClickMaximize          = ImageClickMaximize,
         VideoLoop                   = VideoLoop,
         CacheMaxMb                  = CacheMaxMb,
@@ -591,6 +594,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _initialConfig = latest;
         ThreadPageZoom = latest.ThreadPageZoom;
+        ThreadAutoRefreshIntervalMinutes = latest.ThreadAutoRefreshIntervalMinutes;
     }
 
     public void RefreshCacheSizeDisplay()
