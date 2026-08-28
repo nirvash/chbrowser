@@ -4805,7 +4805,9 @@ function findReadProgressMaxNumber() {
         if (isNewRefresh) {
             for (const n of sessionNewPostNumbers) {
                 const el = document.getElementById('r' + n);
-                if (el) el.classList.remove('is-new');
+                if (el) {
+                    el.classList.remove('is-new');
+                }
             }
             vm().promoteOnNewRefresh(root);
             sessionNewPostNumbers.clear();
@@ -5259,12 +5261,22 @@ function findReadProgressMaxNumber() {
 
     function markScrollTarget(el) {
         document.querySelectorAll('.chb-scroll-target').forEach(function (n) {
-            if (n !== el) n.classList.remove('chb-scroll-target');
+            n.classList.remove('chb-scroll-target');
         });
         // 同一要素への再トリガでもアニメーションを最初から再生させるため、一度外して reflow を挟む。
         el.classList.remove('chb-scroll-target');
         void el.offsetWidth;
         el.classList.add('chb-scroll-target');
+        // ツリー表示では対象レスが親 .post の内側にあるため、祖先も同じ一時強調を付ける。
+        let parent = el.parentElement;
+        while (parent) {
+            if (parent.classList.contains('post')) {
+                parent.classList.remove('chb-scroll-target');
+                void parent.offsetWidth;
+                parent.classList.add('chb-scroll-target');
+            }
+            parent = parent.parentElement;
+        }
         if (_scrollTargetTimer) clearTimeout(_scrollTargetTimer);
         _scrollTargetTimer = setTimeout(function () {
             document.querySelectorAll('.chb-scroll-target').forEach(function (n) {
