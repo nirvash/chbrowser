@@ -74,8 +74,10 @@ public static class AddressBarParser
     private static bool IsAllowedHost(string host)
         =>     string.Equals(host, "5ch.io",     StringComparison.OrdinalIgnoreCase)
            ||  string.Equals(host, "bbspink.com", StringComparison.OrdinalIgnoreCase)
+           ||  string.Equals(host, "punipuni.eu", StringComparison.OrdinalIgnoreCase)
            ||  host.EndsWith(".5ch.io",      StringComparison.OrdinalIgnoreCase)
-           ||  host.EndsWith(".bbspink.com", StringComparison.OrdinalIgnoreCase);
+           ||  host.EndsWith(".bbspink.com", StringComparison.OrdinalIgnoreCase)
+           ||  host.EndsWith(".punipuni.eu", StringComparison.OrdinalIgnoreCase);
 }
 
 public enum AddressBarTargetKind

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -90,6 +91,23 @@ public sealed class BbsmenuClient
                 CategoryName:   menu.CategoryName ?? "(無名)",
                 CategoryNumber: menu.CategoryNumber ?? 0,
                 Boards:         boards));
+        }
+
+        // ぷにぷに板は menu.5ch.io の bbsmenu.json に含まれないため、固定で補う。
+        const string punipuniHost = "bbs.punipuni.eu";
+        const string punipuniDirectory = "vaporeon";
+        var alreadyRegistered = categories.Any(c =>
+            c.Boards.Any(b => string.Equals(b.Host, punipuniHost, StringComparison.OrdinalIgnoreCase)
+                           && b.DirectoryName == punipuniDirectory));
+        if (!alreadyRegistered)
+        {
+            categories.Add(new BoardCategory(
+                CategoryName: "ぷにぷに",
+                CategoryNumber: int.MaxValue,
+                Boards: new[]
+                {
+                    new Board(punipuniDirectory, "ぷにぷに", $"https://{punipuniHost}/{punipuniDirectory}/", "ぷにぷに", 0),
+                }));
         }
 
         return categories;

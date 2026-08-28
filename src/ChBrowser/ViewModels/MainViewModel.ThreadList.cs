@@ -272,7 +272,7 @@ public sealed partial class MainViewModel
         var items   = new List<ThreadListItem>();
         var favSet  = Favorites.CollectFavoriteThreadKeys();
 
-        foreach (var rootDomain in new[] { "5ch.io", "bbspink.com" })
+        foreach (var rootDomain in new[] { "5ch.io", "bbspink.com", "punipuni.eu" })
         {
             var rootDir = System.IO.Path.Combine(_paths.Root, rootDomain);
             if (!System.IO.Directory.Exists(rootDir)) continue;
