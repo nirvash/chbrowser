@@ -481,7 +481,7 @@
     }
 
     // ---------- regexes (本文/名前テキストを安全な HTML に変換) ----------
-    const TAG_BLOCK_RE     = /<(a|b|small)\b([^>]*)>([\s\S]*?)<\/\1>|<\/?[a-z][^>]*>/gi;
+    const TAG_BLOCK_RE     = /<(a|b|small|span)\b([^>]*)>([\s\S]*?)<\/\1>|<\/?[a-z][^>]*>/gi;
     const HREF_RE          = /href\s*=\s*["']([^"']+)["']/i;
     // 単独 / 範囲(N-M) / それらをカンマ(半角"," 全角"，" 読点"、")で連ねたリスト (例: 3 / 3-5 / 3,5 / 3-5,7、9)。
     // group 1 = ">>" を除いた番号指定全体 (= parseAnchorRanges に渡す)。
@@ -661,6 +661,16 @@
         return { host: host, dir: m[2], key: m[3], postNo: postNo };
     }
 
+    const FUTABA_THREAD_RE = /^https?:\/\/([A-Za-z0-9.-]+)\/([A-Za-z0-9]+)\/res\/(\d+)\.htm(?:[?#].*)?$/i;
+    function parseFutabaThreadUrl(href) {
+        if (!href) return null;
+        const m = FUTABA_THREAD_RE.exec(href);
+        if (!m) return null;
+        const host = m[1].toLowerCase();
+        if (host !== '2chan.net' && !host.endsWith('.2chan.net')) return null;
+        return { host: host, dir: m[2], key: m[3], postNo: 0 };
+    }
+
     function buildBodyHtml(rawText) {
         if (!rawText) return '';
         // Defensive <br> → \n
@@ -679,6 +689,10 @@
                 html += '<b>' + escapeHtml(stripTags(m[3] || '')) + '</b>';
             } else if (tag === 'small') {
                 html += '<small>' + escapeHtml(stripTags(m[3] || '')) + '</small>';
+            } else if (tag === 'span' && /\bclass\s*=\s*["']?futaba-quote\b/i.test(m[2] || '')) {
+                html += '<span class="futaba-quote">' + escapeHtml(stripTags(m[3] || '')) + '</span>';
+            } else if (tag === 'span') {
+                html += escapeHtml(stripTags(m[3] || ''));
             } else if (/^<hr\b[^>]*\/?>$/i.test(m[0])) {
                 // <hr> は本文区切り (= >>1 の "VIPQ2_EXTDAT:..." メタ情報の手前など) に出るので、
                 // そのまま <hr> 要素として残す。属性は受け付けず単純な <hr> に正規化。
@@ -758,9 +772,9 @@
         // 5ch.io / bbspink.com スレ URL は同スレ内アンカー (= 旧 HREF_ANCHOR_RE 経路) ではなく、
         // ホバーでスレタイトル + 対象レス本文を出す thread-link として扱う。
         // (URL に board / key が含まれており、現スレと違う可能性がある以上、postNo だけ取って同スレ扱いするのは不正確)
-        const fiveCh = parseFiveChThreadUrl(href);
-        if (fiveCh) {
-            return renderThreadLink(href, inner, fiveCh);
+        const thread = parseFiveChThreadUrl(href) || parseFutabaThreadUrl(href);
+        if (thread) {
+            return renderThreadLink(href, inner, thread);
         }
         const hrefA = HREF_ANCHOR_RE.exec(href);
         if (hrefA) {

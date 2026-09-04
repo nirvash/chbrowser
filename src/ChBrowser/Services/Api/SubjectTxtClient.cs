@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ChBrowser.Models;
 using ChBrowser.Services.Storage;
+using ChBrowser.Services.Url;
 
 namespace ChBrowser.Services.Api;
 
@@ -34,6 +35,9 @@ public sealed class SubjectTxtClient
     /// <summary>サーバから subject.txt を取得し、SJIS バイトのまま保存して返す。</summary>
     public async Task<IReadOnlyList<ThreadInfo>> FetchAndSaveAsync(Board board, CancellationToken ct = default)
     {
+        if (FutabaUrl.IsFutabaHost(board.Host))
+            return await new FutabaCatalogClient(_client).FetchAsync(board, ct).ConfigureAwait(false);
+
         // board.Url は末尾 '/' 付き想定 (例: "https://hayabusa9.5ch.io/news/")
         var url = board.Url.TrimEnd('/') + "/subject.txt";
 

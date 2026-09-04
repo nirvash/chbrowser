@@ -1,0 +1,31 @@
+<UserControl x:Class="ChBrowser.Views.Settings.FutabaPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:ChBrowser.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}">
+    <StackPanel>
+        <TextBlock Text="カタログ画像サイズ (px)" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <TextBlock Text="各スレのサムネイル表示サイズです。64～320 px。" Foreground="#666" Margin="0,0,0,4" />
+        <TextBox Text="{Binding FutabaCatalogThumbnailSize, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay, Delay=300}" Width="80" HorizontalAlignment="Left" Margin="0,0,0,16" />
+        <TextBlock Text="題名の最大文字数" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <TextBlock Text="カタログカードに表示する題名の上限です。20～500文字。" Foreground="#666" Margin="0,0,0,4" />
+        <TextBox Text="{Binding FutabaCatalogTitleMaxChars, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay, Delay=300}" Width="80" HorizontalAlignment="Left" Margin="0,0,0,16" />
+        <TextBlock Text="題名の位置" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <ComboBox SelectedValue="{Binding FutabaCatalogTitlePosition, Mode=TwoWay}" SelectedValuePath="Tag" Width="140" HorizontalAlignment="Left" Margin="0,0,0,16">
+            <ComboBoxItem Content="画像の右" Tag="right" />
+            <ComboBoxItem Content="画像の下" Tag="bottom" />
+        </ComboBox>
+        <TextBlock Text="題名の行数" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <ComboBox SelectedValue="{Binding FutabaCatalogTitleLineLimit, Mode=TwoWay}" SelectedValuePath="Tag" Width="140" HorizontalAlignment="Left" Margin="0,0,0,16">
+            <ComboBoxItem Content="1行" Tag="1" />
+            <ComboBoxItem Content="2行" Tag="2" />
+            <ComboBoxItem Content="無制限" Tag="0" />
+        </ComboBox>
+        <TextBlock Text="横のグリッド数" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <TextBlock Text="カタログで横一列に並べるカード数です。1～12。" Foreground="#666" Margin="0,0,0,4" />
+        <TextBox Text="{Binding FutabaCatalogColumns, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay, Delay=300}" Width="80" HorizontalAlignment="Left" />
+    </StackPanel>
+</UserControl>

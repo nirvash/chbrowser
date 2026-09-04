@@ -10,6 +10,11 @@ html, body {
     padding: 0;
 }
 
+/* ふたばの <font color="#789922">…</font> 由来の引用。 */
+.futaba-quote {
+    color: #789922;
+}
+
 body {
     font-family: 'MS Pゴシック', 'MS PGothic', monospace;
     font-size: 16px;

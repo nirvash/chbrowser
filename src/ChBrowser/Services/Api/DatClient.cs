@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ChBrowser.Models;
 using ChBrowser.Services.Storage;
+using ChBrowser.Services.Url;
 
 namespace ChBrowser.Services.Api;
 
@@ -48,6 +49,16 @@ public sealed class DatClient
         IProgress<IReadOnlyList<Post>>     progress,
         CancellationToken                  ct = default)
     {
+        if (FutabaUrl.IsFutabaHost(board.Host))
+        {
+            var futaba = new FutabaThreadClient(_client);
+            var bytes = await futaba.FetchBytesAsync(board, threadKey, ct).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(_paths.FutabaThreadHtmlPath(board.Host, board.DirectoryName, threadKey), bytes, ct).ConfigureAwait(false);
+            var result = new DatFetchResult(FutabaThreadClient.Parse(bytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey))), bytes.LongLength);
+            if (result.Posts.Count > 0) progress.Report(result.Posts);
+            return result;
+        }
+
         var url  = $"{board.Url.TrimEnd('/')}/dat/{threadKey}.dat";
         var path = _paths.DatPath(board.Host, board.DirectoryName, threadKey);
 
@@ -197,9 +208,11 @@ public sealed class DatClient
     public bool DeleteLog(Board board, string threadKey)
     {
         var datPath = _paths.DatPath(board.Host, board.DirectoryName, threadKey);
+        var futabaPath = _paths.FutabaThreadHtmlPath(board.Host, board.DirectoryName, threadKey);
         var idxPath = _paths.IdxJsonPath(board.Host, board.DirectoryName, threadKey);
         var any = false;
         if (File.Exists(datPath)) { File.Delete(datPath); any = true; }
+        if (File.Exists(futabaPath)) { File.Delete(futabaPath); any = true; }
         if (File.Exists(idxPath)) { File.Delete(idxPath); }
         return any;
     }
@@ -208,6 +221,15 @@ public sealed class DatClient
     /// 読み取りは FileShare.ReadWrite (= 取得中の追記書き込みと共存する)。</summary>
     public async Task<DatFetchResult?> LoadFromDiskAsync(Board board, string threadKey, CancellationToken ct = default)
     {
+        if (FutabaUrl.IsFutabaHost(board.Host))
+        {
+            var futabaPath = _paths.FutabaThreadHtmlPath(board.Host, board.DirectoryName, threadKey);
+            if (!File.Exists(futabaPath)) return null;
+            var htmlBytes = await File.ReadAllBytesAsync(futabaPath, ct).ConfigureAwait(false);
+            var posts = FutabaThreadClient.Parse(htmlBytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey)));
+            return new DatFetchResult(posts, htmlBytes.LongLength);
+        }
+
         var path = _paths.DatPath(board.Host, board.DirectoryName, threadKey);
         if (!File.Exists(path)) return null;
 

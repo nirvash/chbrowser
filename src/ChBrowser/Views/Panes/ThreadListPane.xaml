@@ -72,6 +72,23 @@
                 <!-- ボタン群は右端固定。SearchBoxToggle はその間 (= last child fill) に配置して
                      ペイン幅が狭くても × ボタンが画面内に残るようにする。 -->
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Click="ToggleCatalogViewButton_Click" ToolTip="ふたばカタログ表示を切り替え">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource ToolbarIconButton}">
+                                <Setter Property="IsEnabled" Value="False" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedTab.SupportsCatalogView}" Value="True">
+                                        <Setter Property="IsEnabled" Value="True" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding SelectedTab.IsCatalogView}" Value="True">
+                                        <Setter Property="Background" Value="#CCE5FF" />
+                                        <Setter Property="BorderBrush" Value="#88B0DD" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <TextBlock Text="▦" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
                     <!-- 更新 (= 選択中のスレ一覧タブを再取得)。タブ種別 (板 / 全ログ / お気に入り) を問わず動作する。
                          SelectedTab が null なら無効化。 -->
                     <Button Click="RefreshThreadListButton_Click"

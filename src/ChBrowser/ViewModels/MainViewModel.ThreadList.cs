@@ -41,7 +41,9 @@ public sealed partial class MainViewModel
                 // 初期化: 板自身がお気に入り登録済みか (= ツールバーの ★ ボタンの押下状態)。
                 // 後続の登録/削除操作で RefreshFavoritedStateOfAllTabs が再同期する。
                 IsBoardFavorited = Favorites.FindBoard(board.Host, board.DirectoryName) is not null,
+                IsCatalogView = CurrentConfig.FutabaCatalogView,
             };
+            tab.ApplyCatalogAppearance(CurrentConfig.FutabaCatalogThumbnailSize, CurrentConfig.FutabaCatalogTitleMaxChars, CurrentConfig.FutabaCatalogColumns, CurrentConfig.FutabaCatalogTitlePosition, CurrentConfig.FutabaCatalogTitleLineLimit);
             ThreadListTabs.Add(tab);
         }
         MaybeActivateThreadListTab(tab, activate);
@@ -176,6 +178,15 @@ public sealed partial class MainViewModel
                 return BuildFavoritesAggregateItemsAsync(tab, folder.DisplayName, folder.Children);
         }
         return Task.CompletedTask;
+    }
+
+    /// <summary>ふたば板タブのカタログ表示を全タブで同期し、次回起動用にも保存する。</summary>
+    public void SetFutabaCatalogView(bool enabled)
+    {
+        UpdateAndPersistConfig(c => c with { FutabaCatalogView = enabled });
+        foreach (var tab in AllThreadListTabs)
+            if (tab.SupportsCatalogView)
+                tab.IsCatalogView = enabled;
     }
 
     // -----------------------------------------------------------------

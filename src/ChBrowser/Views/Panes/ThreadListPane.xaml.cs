@@ -49,6 +49,12 @@ public partial class ThreadListPane : UserControl
         Vm?.OpenNewThreadDialog();
     }
 
+    private void ToggleCatalogViewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (Group?.SelectedTab is { SupportsCatalogView: true } tab)
+            Vm?.SetFutabaCatalogView(!tab.IsCatalogView);
+    }
+
     /// <summary>選択中のスレ一覧タブを再取得する。タブ種別 (板 / 全ログ / お気に入り) を問わず
     /// MainViewModel.RefreshThreadListTabAsync が適切に振り分ける。タブ未選択なら no-op。</summary>
     private void RefreshThreadListButton_Click(object sender, RoutedEventArgs e)
@@ -200,7 +206,9 @@ public partial class ThreadListPane : UserControl
     /// <summary>{board, key} → 5ch.io 系の read.cgi 形式 URL を組み立てる
     /// (= <see cref="ThreadTabViewModel.Url"/> と同じ形式で揃える)。</summary>
     private static string ThreadUrl(ThreadListRowContext ctx)
-        => $"https://{ctx.Board.Host}/test/read.cgi/{ctx.Board.DirectoryName}/{ctx.ThreadKey}/";
+        => ChBrowser.Services.Url.FutabaUrl.IsFutabaHost(ctx.Board.Host)
+            ? ChBrowser.Services.Url.FutabaUrl.BuildThreadUrl(ctx.Board.Host, ctx.Board.DirectoryName, ctx.ThreadKey)
+            : $"https://{ctx.Board.Host}/test/read.cgi/{ctx.Board.DirectoryName}/{ctx.ThreadKey}/";
 
     /// <summary>スレ一覧行の右クリックメニュー操作で必要な値を 1 つに束ねた immutable record。
     /// Board は <see cref="MainViewModel.ResolveBoard"/> で解決済み (= bbsmenu 未登録の板でも fallback Board が入る)。</summary>

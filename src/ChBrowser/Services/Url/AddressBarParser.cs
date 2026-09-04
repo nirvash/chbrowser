@@ -17,6 +17,14 @@ public static class AddressBarParser
         @"^/test/read\.cgi/(?<dir>[A-Za-z0-9]+)/(?<key>[0-9]+)(?:/(?<post>[0-9]+))?.*$",
         RegexOptions.Compiled);
 
+    private static readonly Regex FutabaThreadPathRegex = new(
+        @"^/(?<dir>[A-Za-z0-9]+)/res/(?<key>[0-9]+)\.htm$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex FutabaBoardPathRegex = new(
+        @"^/(?<dir>[A-Za-z0-9]+)/futaba\.htm$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>入力テキストを解釈し、対応する <see cref="AddressBarTarget"/> を返す。
     /// 5ch.io / bbspink.com 以外のホスト、URL として parse できないテキスト、認識不能なパスは
     /// すべて <see cref="AddressBarTargetKind.Invalid"/> を返す。
@@ -46,6 +54,8 @@ public static class AddressBarParser
 
         // スレ判定が先 (= /test/read.cgi/<dir>/<key>/)。Board の方が短い path にマッチするので後判定。
         var threadMatch = ThreadPathRegex.Match(path);
+        if (!threadMatch.Success && FutabaUrl.IsFutabaHost(host))
+            threadMatch = FutabaThreadPathRegex.Match(path);
         if (threadMatch.Success)
         {
             var postGroup = threadMatch.Groups["post"];
@@ -59,6 +69,8 @@ public static class AddressBarParser
         }
 
         var boardMatch = BoardPathRegex.Match(path);
+        if (!boardMatch.Success && FutabaUrl.IsFutabaHost(host))
+            boardMatch = FutabaBoardPathRegex.Match(path);
         if (boardMatch.Success)
         {
             return new AddressBarTarget(
@@ -75,6 +87,7 @@ public static class AddressBarParser
         =>     string.Equals(host, "5ch.io",     StringComparison.OrdinalIgnoreCase)
            ||  string.Equals(host, "bbspink.com", StringComparison.OrdinalIgnoreCase)
            ||  string.Equals(host, "punipuni.eu", StringComparison.OrdinalIgnoreCase)
+           ||  FutabaUrl.IsFutabaHost(host)
            ||  host.EndsWith(".5ch.io",      StringComparison.OrdinalIgnoreCase)
            ||  host.EndsWith(".bbspink.com", StringComparison.OrdinalIgnoreCase)
            ||  host.EndsWith(".punipuni.eu", StringComparison.OrdinalIgnoreCase);
@@ -103,5 +116,7 @@ public sealed record AddressBarTarget(
     public string BoardUrl => Kind == AddressBarTargetKind.Board ? $"https://{Host}/{Directory}/" : "";
 
     /// <summary>Thread の正規 URL (= "https://&lt;host&gt;/test/read.cgi/&lt;dir&gt;/&lt;key&gt;/")。Kind!=Thread のときは空。</summary>
-    public string ThreadUrl => Kind == AddressBarTargetKind.Thread ? $"https://{Host}/test/read.cgi/{Directory}/{ThreadKey}/" : "";
+    public string ThreadUrl => Kind != AddressBarTargetKind.Thread ? ""
+        : FutabaUrl.IsFutabaHost(Host) ? FutabaUrl.BuildThreadUrl(Host, Directory, ThreadKey)
+        : $"https://{Host}/test/read.cgi/{Directory}/{ThreadKey}/";
 }

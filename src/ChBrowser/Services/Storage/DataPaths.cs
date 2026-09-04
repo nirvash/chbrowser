@@ -61,6 +61,7 @@ public sealed class DataPaths
     public string RootBbspink     => EnsureDir(Path.Combine(Root, "bbspink.com"));
 
     public string BbsmenuJsonPath   => Path.Combine(Root5chIo, "bbsmenu.json");
+    public string FutabaBbsmenuHtmlPath => Path.Combine(AppDir, "futaba-bbsmenu.html");
     public string LayoutJsonPath    => Path.Combine(AppDir, "layout.json");
     public string FavoritesJsonPath => Path.Combine(AppDir, "favorites.json");
 
@@ -111,6 +112,10 @@ public sealed class DataPaths
 
     public string DatPath(string host, string directoryName, string threadKey)
         => Path.Combine(BoardDir(host, directoryName), threadKey + ".dat");
+
+    /// <summary>ふたばスレ HTML のローカルキャッシュ。</summary>
+    public string FutabaThreadHtmlPath(string host, string directoryName, string threadKey)
+        => Path.Combine(BoardDir(host, directoryName), threadKey + ".futaba.htm");
 
     public string IdxJsonPath(string host, string directoryName, string threadKey)
         => Path.Combine(BoardDir(host, directoryName), threadKey + ".idx.json");

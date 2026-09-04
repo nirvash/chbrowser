@@ -8,4 +8,5 @@ public sealed record ThreadInfo(
     string Key,        // 例: "1234567890" (dat ファイル名 = スレッド作成 epoch)
     string Title,      // 例: "スレタイトル"
     int    PostCount,  // 例: 123
-    int    Order);     // subject.txt 上の出現順 (1 始まり)
+    int    Order,     // subject.txt 上の出現順 (1 始まり)
+    string? ThumbnailUrl = null);
