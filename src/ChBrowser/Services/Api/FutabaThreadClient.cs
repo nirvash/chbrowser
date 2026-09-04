@@ -22,6 +22,7 @@ public sealed class FutabaThreadClient
     private static readonly Regex AttachmentRe = new(@"<a\s+[^>]*href\s*=\s*(?:['""])?(?<url>[^'""\s>]+)(?:['""])?[^>]*>\s*<img\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex QuoteFontRe = new(@"<font\b[^>]*\bcolor\s*=\s*(?:['""])?#789922(?:['""])?[^>]*>(?<body>.*?)</font>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex FontTagRe = new(@"</?font\b[^>]*>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex SoudaneRe = new(@"<a\b[^>]*\bclass\s*=\s*['""]?sod['""]?[^>]*>\s*そうだねx(?<count>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex FutabaDateRe = new(@"^(?<yy>\d{2})/(?<mm>\d{2})/(?<dd>\d{2})(?<dow>\([^)]*\))(?<time>\d{2}:\d{2}:\d{2})(?:\.(?<frac>\d{1,2}))?$", RegexOptions.Compiled);
 
     private readonly MonazillaClient _client;
@@ -77,7 +78,8 @@ public sealed class FutabaThreadClient
             if (attachments.Count > 0) body = string.Join("\n", attachments) + "\n" + body;
             if (posts.Count == 0) body = "[[CHB_FUTABA_OP]]" + body;
 
-            posts.Add(new Post(number, name, "", date, "", body, posts.Count == 0 ? title : null));
+            int? soudane = SoudaneRe.Match(content) is { Success: true } soudaneMatch && int.TryParse(soudaneMatch.Groups["count"].Value, out var sc) ? sc : null;
+            posts.Add(new Post(number, name, "", date, "", body, posts.Count == 0 ? title : null, soudane));
         }
         return posts;
     }

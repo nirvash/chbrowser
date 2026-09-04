@@ -83,6 +83,9 @@
     color: #666;
 }
 
+.post-soudane { float: right; color: #777; font-size: 11px; margin-left: 8px; }
+.post-soudane span { margin-left: 2px; }
+
 /* ふたばの1レス目は添付画像を上、本文を下へ置く。 */
 .post.futaba-op {
     display: flex;

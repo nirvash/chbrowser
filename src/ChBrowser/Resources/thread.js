@@ -1141,6 +1141,7 @@
             media:          built.media,
             replyCount:     count,
             replyNumbers:   replies.join(','),       // バッジの data-replies 用 (ホバーポップアップで使う)
+            soudaneCount:   Number.isInteger(p.soudaneCount) ? p.soudaneCount : 0,
             hasFewReplies:  count >= REPLY_TIER_PINK && count < REPLY_TIER_RED,
             hasManyReplies: count >= REPLY_TIER_RED,
             isOwn:          ownPostNumbers.has(num), // 「自分の書き込み」バッジ表示用

@@ -11,4 +11,5 @@ public sealed record Post(
     string  DateText,       // 例: "2026/04/25(土) 12:34:56.78"
     string  Id,             // 例: "abc1234" (ID: の後ろ)、無ければ空文字
     string  Body,           // 本文 (HTML デコード済み、改行は \n)
-    string? ThreadTitle);   // 1 レス目のみ。それ以外は null
+    string? ThreadTitle,      // 1 レス目のみ。それ以外は null
+    int? SoudaneCount = null); // ふたば「そうだね」数
