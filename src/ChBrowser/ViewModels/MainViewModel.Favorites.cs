@@ -71,6 +71,12 @@ public sealed partial class MainViewModel
     /// タブ未オープン等で次スレの有無を判定できない場合は従来どおりルート直下に入る。</summary>
     public void ToggleThreadFavorite(Board board, string threadKey, string title)
     {
+        // 一覧の再描画途中などで JS から空タイトルが届くことがある。
+        // その値を永続化すると、次回以降にお気に入り名を復元できなくなるため、
+        // 既に開いているタブの確定タイトルを優先して補う。
+        if (string.IsNullOrWhiteSpace(title))
+            title = FindThreadTab(board, threadKey)?.Title ?? "";
+
         var existing = Favorites.FindThread(board.Host, board.DirectoryName, threadKey);
         if (existing is not null)
         {

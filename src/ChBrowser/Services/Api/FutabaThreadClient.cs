@@ -22,6 +22,7 @@ public sealed class FutabaThreadClient
     private static readonly Regex AttachmentRe = new(@"<a\s+[^>]*href\s*=\s*(?:['""])?(?<url>[^'""\s>]+)(?:['""])?[^>]*>\s*<img\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex QuoteFontRe = new(@"<font\b[^>]*\bcolor\s*=\s*(?:['""])?#789922(?:['""])?[^>]*>(?<body>.*?)</font>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex FontTagRe = new(@"</?font\b[^>]*>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FutabaDateRe = new(@"^(?<yy>\d{2})/(?<mm>\d{2})/(?<dd>\d{2})(?<dow>\([^)]*\))(?<time>\d{2}:\d{2}:\d{2})(?:\.(?<frac>\d{1,2}))?$", RegexOptions.Compiled);
 
     private readonly MonazillaClient _client;
 
@@ -60,7 +61,7 @@ public sealed class FutabaThreadClient
             var name = NameRe.Match(content) is { Success: true } nameMatch
                 ? nameMatch.Groups["name"].Value.Trim() : "";
             var date = DateRe.Match(content) is { Success: true } dateMatch
-                ? WebUtility.HtmlDecode(dateMatch.Groups["date"].Value).Trim() : "";
+                ? NormalizeDate(WebUtility.HtmlDecode(dateMatch.Groups["date"].Value).Trim()) : "";
             var body = QuoteFontRe.Replace(bodyMatch.Groups["body"].Value, "<span class=\"futaba-quote\">${body}</span>");
             body = FontTagRe.Replace(body, "");
             // ふたば本文の &gt; は引用記号として表示する。未デコードのまま JS で escape すると &amp;gt; と文字列表示される。
@@ -74,9 +75,19 @@ public sealed class FutabaThreadClient
                 if (Uri.TryCreate(pageUri, rawUrl, out var absolute)) attachments.Add(absolute.AbsoluteUri);
             }
             if (attachments.Count > 0) body = string.Join("\n", attachments) + "\n" + body;
+            if (posts.Count == 0) body = "[[CHB_FUTABA_OP]]" + body;
 
             posts.Add(new Post(number, name, "", date, "", body, posts.Count == 0 ? title : null));
         }
         return posts;
+    }
+
+    private static string NormalizeDate(string value)
+    {
+        var match = FutabaDateRe.Match(value);
+        if (!match.Success) return value;
+        var year = 2000 + int.Parse(match.Groups["yy"].Value);
+        var fraction = match.Groups["frac"].Success ? $".{match.Groups["frac"].Value.PadRight(2, '0')}" : "";
+        return $"{year:0000}/{match.Groups["mm"].Value}/{match.Groups["dd"].Value}{match.Groups["dow"].Value} {match.Groups["time"].Value}{fraction}";
     }
 }

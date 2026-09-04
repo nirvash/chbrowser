@@ -29,9 +29,9 @@ public sealed class FutabaCatalogClient
 
     public FutabaCatalogClient(MonazillaClient client) => _client = client;
 
-    public async Task<IReadOnlyList<ThreadInfo>> FetchAsync(Board board, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ThreadInfo>> FetchAsync(Board board, int? sort = null, CancellationToken ct = default)
     {
-        var url = FutabaUrl.BuildCatalogUrl(board.Host, board.DirectoryName);
+        var url = FutabaUrl.BuildCatalogUrl(board.Host, board.DirectoryName, sort);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("Cookie", CatalogSettingsCookie);
         using var response = await _client.Http.SendAsync(request, ct).ConfigureAwait(false);

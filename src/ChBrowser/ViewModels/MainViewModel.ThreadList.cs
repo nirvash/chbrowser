@@ -11,6 +11,26 @@ namespace ChBrowser.ViewModels;
 /// <summary>スレ一覧タブ (板タブ / 全ログ / お気に入り集約) の取得・構築・更新の dispatcher。</summary>
 public sealed partial class MainViewModel
 {
+    private int _futabaCatalogSortIndex;
+    private static readonly string[] FutabaCatalogSortNames = { "カタログ順", "新しい順", "古い順", "レス数が多い順", "勢い順", "レス数が少ない順" };
+
+    public string FutabaCatalogSortName => FutabaCatalogSortNames[_futabaCatalogSortIndex];
+    public int FutabaCatalogSortIndex => _futabaCatalogSortIndex;
+
+    public async Task CycleFutabaCatalogSortAsync()
+    {
+        await SetFutabaCatalogSortAsync((_futabaCatalogSortIndex + 1) % FutabaCatalogSortNames.Length).ConfigureAwait(true);
+    }
+
+    public async Task SetFutabaCatalogSortAsync(int index)
+    {
+        if (index < 0 || index >= FutabaCatalogSortNames.Length) return;
+        _futabaCatalogSortIndex = index;
+        UpdateAndPersistConfig(c => c with { FutabaCatalogSortIndex = index });
+        OnPropertyChanged(nameof(FutabaCatalogSortName));
+        if (SelectedThreadListTab is { Board: { } board } tab && tab.SupportsCatalogView)
+            await RefreshThreadListTabAsync(tab).ConfigureAwait(true);
+    }
     /// <summary>「全ログ」タブ識別用の固定 Guid (= <see cref="Guid.Empty"/> はお気に入り仮想ルートが使うので衝突回避)。</summary>
     private static readonly Guid AllLogsTabId = new("ffffffff-ffff-ffff-ffff-fffffffffffe");
 
@@ -56,7 +76,10 @@ public sealed partial class MainViewModel
             tab.Header        = $"{board.BoardName} (取得中)";
             tab.StatusMessage = $"{board.BoardName} のスレ一覧を取得中...";
 
-            var subjectThreads = await _subjectClient.FetchAndSaveAsync(board).ConfigureAwait(true);
+            int? futabaSort = ChBrowser.Services.Url.FutabaUrl.IsFutabaHost(board.Host)
+                ? _futabaCatalogSortIndex switch { 0 => 0, 1 => 1, 2 => 2, 3 => 3, 4 => 6, 5 => 4, _ => 0 }
+                : null;
+            var subjectThreads = await _subjectClient.FetchAndSaveAsync(board, futabaSort).ConfigureAwait(true);
 
             // ローカル dat があるが subject.txt にもう無いスレ (= dat 落ち) も一覧に含める
             var subjectKeys  = new HashSet<string>(subjectThreads.Select(t => t.Key));
@@ -73,7 +96,6 @@ public sealed partial class MainViewModel
                 droppedList.Add(new ThreadInfo(key, title, postCount, order));
             }
             var allThreads = subjectThreads.Concat(droppedList).ToList();
-
             var states = new Dictionary<string, LogMarkState>(BuildLogStates(board, allThreads));
             foreach (var key in droppedKeys) states[key] = LogMarkState.Dropped;
 

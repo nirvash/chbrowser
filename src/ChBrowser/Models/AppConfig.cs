@@ -245,6 +245,7 @@ public sealed record AppConfig
 
     /// <summary>ふたば板のスレ一覧をカタログ表示で開く。板をまたいで共有し、即時保存する。</summary>
     public bool FutabaCatalogView { get; init; }
+    public int FutabaCatalogSortIndex { get; init; }
     public int FutabaCatalogThumbnailSize { get; init; } = 120;
     public int FutabaCatalogTitleMaxChars { get; init; } = 100;
     public int FutabaCatalogColumns { get; init; } = 5;

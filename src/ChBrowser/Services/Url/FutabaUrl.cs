@@ -15,6 +15,6 @@ public static class FutabaUrl
     public static string BuildThreadUrl(string host, string directory, string threadKey)
         => $"https://{host}/{directory}/res/{threadKey}.htm";
 
-    public static string BuildCatalogUrl(string host, string directory)
-        => $"https://{host}/{directory}/futaba.php?mode=cat";
+    public static string BuildCatalogUrl(string host, string directory, int? sort = null)
+        => $"https://{host}/{directory}/futaba.php?mode=cat" + (sort is int s ? $"&sort={s}" : "");
 }

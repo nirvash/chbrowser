@@ -32,11 +32,14 @@ public sealed class SubjectTxtClient
         _paths  = paths;
     }
 
+    public Task<IReadOnlyList<ThreadInfo>> FetchAndSaveAsync(Board board, CancellationToken ct)
+        => FetchAndSaveAsync(board, null, ct);
+
     /// <summary>サーバから subject.txt を取得し、SJIS バイトのまま保存して返す。</summary>
-    public async Task<IReadOnlyList<ThreadInfo>> FetchAndSaveAsync(Board board, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ThreadInfo>> FetchAndSaveAsync(Board board, int? futabaSort = null, CancellationToken ct = default)
     {
         if (FutabaUrl.IsFutabaHost(board.Host))
-            return await new FutabaCatalogClient(_client).FetchAsync(board, ct).ConfigureAwait(false);
+            return await new FutabaCatalogClient(_client).FetchAsync(board, futabaSort, ct).ConfigureAwait(false);
 
         // board.Url は末尾 '/' 付き想定 (例: "https://hayabusa9.5ch.io/news/")
         var url = board.Url.TrimEnd('/') + "/subject.txt";

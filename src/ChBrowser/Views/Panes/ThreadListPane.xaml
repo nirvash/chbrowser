@@ -89,6 +89,19 @@
                         </Button.Style>
                         <TextBlock Text="▦" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Button>
+                    <Button Click="FutabaCatalogSortButton_Click" ToolTip="ふたばカタログのソート順を切り替え">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource ToolbarIconButton}">
+                                <Setter Property="IsEnabled" Value="False" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedTab.SupportsCatalogView}" Value="True">
+                                        <Setter Property="IsEnabled" Value="True" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <TextBlock Text="⇅" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Button>
                     <!-- 更新 (= 選択中のスレ一覧タブを再取得)。タブ種別 (板 / 全ログ / お気に入り) を問わず動作する。
                          SelectedTab が null なら無効化。 -->
                     <Button Click="RefreshThreadListButton_Click"

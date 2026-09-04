@@ -1128,7 +1128,9 @@
         const replies = currentReverseIndex.get(num) || [];
         const count   = replies.length;
         // body は文字本文、media は末尾に並べる画像/動画/YouTube スロット HTML。
-        const built = buildBodyAndMedia(p.body || '');
+        const rawBody = p.body || '';
+        const isFutabaOp = rawBody.startsWith('[[CHB_FUTABA_OP]]');
+        const built = buildBodyAndMedia(isFutabaOp ? rawBody.slice('[[CHB_FUTABA_OP]]'.length) : rawBody);
         return {
             number:         num,
             name:           buildBodyHtml(p.name || ''),
@@ -1144,6 +1146,7 @@
             isOwn:          ownPostNumbers.has(num), // 「自分の書き込み」バッジ表示用
             isReplyToOwn:   postRepliesToOwn(p),     // 「返信」バッジ表示用 (自分宛 anchor を持つ)
             isEmbedded:     !!isEmbedded,
+            isFutabaOp:     isFutabaOp,
             domId:          !omitId,
             children:       children || '',
         };

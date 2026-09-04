@@ -81,9 +81,10 @@ public static partial class WebView2Helper
     private static Task<CoreWebView2Environment>? _environmentTask;
 
     /// <summary>App 起動時に一度だけ呼ぶ。CoreWebView2Environment を裏で生成しておく。</summary>
-    public static void StartWarmup()
+    /// <param name="userDataFolder">WebView2 専用プロファイルの保存先。未指定時は WebView2 の既定値を使う。</param>
+    public static void StartWarmup(string? userDataFolder = null)
     {
-        _environmentTask ??= CoreWebView2Environment.CreateAsync();
+        _environmentTask ??= CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
     }
 
     /// <summary>warmup 済み environment を使って <see cref="WebView2.EnsureCoreWebView2Async"/> を呼ぶ。

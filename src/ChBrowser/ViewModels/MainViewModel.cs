@@ -769,6 +769,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     /// HttpClient.Timeout や HiDPI 等「次回起動時に反映」の項目はここでは触らない。</summary>
     public void ApplyConfig(AppConfig config)
     {
+        _futabaCatalogSortIndex = Math.Clamp(config.FutabaCatalogSortIndex, 0, 5);
         CurrentConfig = config;
         if (IsAutoRefreshEnabled)
             _autoRefreshTimer.Interval = TimeSpan.FromMinutes(Math.Max(1, config.ThreadAutoRefreshIntervalMinutes));

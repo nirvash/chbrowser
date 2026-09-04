@@ -83,6 +83,16 @@
     color: #666;
 }
 
+/* ふたばの1レス目は添付画像を上、本文を下へ置く。 */
+.post.futaba-op {
+    display: flex;
+    flex-direction: column;
+}
+
+.post.futaba-op .post-media { order: 1; margin-top: 3px; margin-left: 0; }
+.post.futaba-op .post-body  { order: 2; }
+.post.futaba-op .post-body  { margin-left: 0; }
+
 .post-body {
     margin-top: 3px;
     margin-left: 25px;
