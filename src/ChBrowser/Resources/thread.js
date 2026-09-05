@@ -51,12 +51,9 @@
     /** num → 当該レスを >>参照しているレス番号配列。renderCurrentViewMode で全再構築、
      *  appendPosts (flat) で増分更新。返信数バッジ生成のために常に最新を保つ。 */
     let currentReverseIndex = new Map();
-    let futabaQuoteRefs = new Map();
-    let futabaQuoteStates = new Map();
     // 引用解決の単一結果。ツリー構築と本文描画はこの同じ結果を参照し、
     // 描画側で独自の引用解決を行わない。
     let futabaQuoteResolutions = new Map();
-    let futabaQuoteRefsSignature = '';
     let viewMode = 'flat';
     let filterRestoreViewMode = null;
 
@@ -1185,11 +1182,11 @@
         while (prefix < quoteLines.length && Number(quoteLines[prefix].quoteDepth ?? quoteLines[prefix].QuoteDepth) > 0) prefix++;
         if (prefix === 0) return renderedBody;
 
-        ensureFutabaQuoteRefs();
-        const resolution = futabaQuoteResolutions.get(Number(post.number));
+        const resolution = getFutabaQuoteResolution(post);
         const parents = resolution ? (resolution.parentNumbers || []) : [];
         // 曖昧/未解決の引用は誤ったレスへリンクしない。
-        if (!resolution || parents.length === 0 || resolution.state !== 'resolved') return renderedBody;
+        if (!resolution || parents.length === 0 || resolution.state !== 'resolved'
+            || parents.some(number => !postsByNumber.has(number))) return renderedBody;
 
         const links = parents.map(function (number) {
             return renderPostAnchor(String(number), '>>No.' + number, {
@@ -1246,35 +1243,22 @@
         return refs;
     }
 
-    function ensureFutabaQuoteRefs() {
-        const futabaPosts = allPosts.filter(function (p) { return p && (p.futabaQuoteInfo || p.FutabaQuoteInfo); });
-        // 件数と末尾番号だけでは、同じ件数・番号の再同期で本文/引用情報が
-        // 置き換わった場合に古い親子関係を再利用してしまう。
-        const signature = futabaPosts.map(function (p) {
-            const info = p.futabaQuoteInfo || p.FutabaQuoteInfo;
-            const lines = info && (info.lines || info.Lines) || [];
-            return Number(p.number) + ':' + lines.map(function (line) {
-                return (line.quoteDepth ?? line.QuoteDepth ?? 0) + '='
-                    + (line.text ?? line.Text ?? '');
-            }).join('|');
-        }).join('||');
-        if (signature === futabaQuoteRefsSignature) return;
-        futabaQuoteRefsSignature = signature;
-        futabaQuoteRefs = new Map();
-        futabaQuoteStates = new Map();
-        futabaQuoteResolutions = new Map();
-        if (futabaPosts.length === 0 || !window.FutabaQuotes) return;
-        for (const result of window.FutabaQuotes.resolve(allPosts)) {
-            futabaQuoteResolutions.set(result.number, result);
-            futabaQuoteRefs.set(result.number, result.parentNumbers || []);
-            futabaQuoteStates.set(result.number, result.state);
-        }
+    function prepareFutabaQuoteRefs(batch) {
+        // Current C# sends persistent resolutions. Legacy/preview payloads resolve at most
+        // once per batch, before DOM insertion; reference reads must never trigger analysis.
+        futabaQuoteResolutions = window.FutabaQuotes
+            ? window.FutabaQuotes.prepareBatch(allPosts, batch, futabaQuoteResolutions)
+            : new Map();
+    }
+
+    function getFutabaQuoteResolution(post) {
+        return post.futabaQuoteResolution || post.FutabaQuoteResolution
+            || futabaQuoteResolutions.get(Number(post.number));
     }
 
     function getPostReferences(post) {
         if (post && (post.futabaQuoteInfo || post.FutabaQuoteInfo)) {
-            ensureFutabaQuoteRefs();
-            const resolution = futabaQuoteResolutions.get(Number(post.number));
+            const resolution = getFutabaQuoteResolution(post);
             if (!resolution || resolution.state !== 'resolved') return [];
             return (resolution.parentNumbers || []).map(function (n) { return { from: n, to: n }; });
         }
@@ -5046,6 +5030,9 @@ function findReadProgressMaxNumber() {
         const root = document.getElementById('posts');
         if (!root) return;
 
+        const appendStarted = performance.now();
+        prepareFutabaQuoteRefs(batch);
+
         debugLog('appendPosts: batch=' + batch.length
             + ' (numbers ' + batch[0].number + '..' + batch[batch.length-1].number + ')'
             + ', incremental=' + (incremental === true)
@@ -5201,6 +5188,8 @@ function findReadProgressMaxNumber() {
         else if (!userHasScrolled) {
             tryScrollToTarget();
         }
+        debugLog('appendPosts complete: first=' + batch[0].number + ', batch=' + batch.length
+            + ', total=' + allPosts.length + ', elapsedMs=' + Math.round(performance.now() - appendStarted));
     };
 
     window.setViewMode = function (mode) {
@@ -5236,7 +5225,6 @@ function findReadProgressMaxNumber() {
 
         // 内部状態を全クリア (allPosts / scrollTarget / mark / 逆引き indexes)
         allPosts                = [];
-        futabaQuoteRefsSignature = '';
         futabaQuoteResolutions   = new Map();
         postsByNumber           = new Map();
         currentReverseIndex     = new Map();
@@ -5287,7 +5275,6 @@ function findReadProgressMaxNumber() {
                         const root = document.getElementById('posts');
                         if (root) root.innerHTML = '';
                         allPosts            = [];
-                        futabaQuoteRefsSignature = '';
                         futabaQuoteResolutions = new Map();
                         postsByNumber       = new Map();
                         currentReverseIndex = new Map();

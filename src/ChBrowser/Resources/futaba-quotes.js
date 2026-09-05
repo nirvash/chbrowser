@@ -66,5 +66,14 @@
             return { number, parentNumbers: [...parentNumbers], state, evidence, ambiguousLines: ambiguous };
         });
     }
-    return { resolve, normalize, constants: { SHORT_TEXT_MIN, CANDIDATE_LIMIT } };
+    function prepareBatch(existing, batch, previous) {
+        const missing = batch.some(post => info(post) && !(post.futabaQuoteResolution || post.FutabaQuoteResolution));
+        if (!missing) return previous;
+        // Only legacy payloads reach this fallback. Include replacements and attachment changes,
+        // not a count/text signature; drawing the same posts again just reads the returned Map.
+        const merged = new Map(existing.map(post => [Number(post.number), post]));
+        for (const post of batch) merged.set(Number(post.number), post);
+        return new Map(resolve([...merged.values()]).map(result => [result.number, result]));
+    }
+    return { resolve, prepareBatch, normalize, constants: { SHORT_TEXT_MIN, CANDIDATE_LIMIT } };
 });

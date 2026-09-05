@@ -38,7 +38,8 @@ public sealed class FutabaThreadClient
     {
         var bytes = await FetchBytesAsync(board, threadKey, ct).ConfigureAwait(false);
         var url = FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey);
-        return new DatFetchResult(Parse(bytes, new Uri(url)), bytes.LongLength);
+        var posts = await Task.Run(() => FutabaQuoteAnalyzer.Analyze(Parse(bytes, new Uri(url)), ct), ct).ConfigureAwait(false);
+        return new DatFetchResult(posts, bytes.LongLength);
     }
 
     public async Task<byte[]> FetchBytesAsync(Board board, string threadKey, CancellationToken ct = default)

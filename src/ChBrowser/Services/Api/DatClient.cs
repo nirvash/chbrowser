@@ -53,8 +53,10 @@ public sealed class DatClient
         {
             var futaba = new FutabaThreadClient(_client);
             var bytes = await futaba.FetchBytesAsync(board, threadKey, ct).ConfigureAwait(false);
-            await File.WriteAllBytesAsync(_paths.FutabaThreadHtmlPath(board.Host, board.DirectoryName, threadKey), bytes, ct).ConfigureAwait(false);
-            var result = new DatFetchResult(FutabaThreadClient.Parse(bytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey))), bytes.LongLength);
+            var htmlPath = _paths.FutabaThreadHtmlPath(board.Host, board.DirectoryName, threadKey);
+            await File.WriteAllBytesAsync(htmlPath, bytes, ct).ConfigureAwait(false);
+            var posts = await FutabaAnalysisCache.LoadAsync(bytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey)), htmlPath, ct).ConfigureAwait(false);
+            var result = new DatFetchResult(posts, bytes.LongLength);
             if (result.Posts.Count > 0) progress.Report(result.Posts);
             return result;
         }
@@ -213,6 +215,8 @@ public sealed class DatClient
         var any = false;
         if (File.Exists(datPath)) { File.Delete(datPath); any = true; }
         if (File.Exists(futabaPath)) { File.Delete(futabaPath); any = true; }
+        var analysisPath = FutabaAnalysisCache.PathFor(futabaPath);
+        if (File.Exists(analysisPath)) File.Delete(analysisPath);
         if (File.Exists(idxPath)) { File.Delete(idxPath); }
         return any;
     }
@@ -226,7 +230,7 @@ public sealed class DatClient
             var futabaPath = _paths.FutabaThreadHtmlPath(board.Host, board.DirectoryName, threadKey);
             if (!File.Exists(futabaPath)) return null;
             var htmlBytes = await File.ReadAllBytesAsync(futabaPath, ct).ConfigureAwait(false);
-            var posts = FutabaThreadClient.Parse(htmlBytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey)));
+            var posts = await FutabaAnalysisCache.LoadAsync(htmlBytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey)), futabaPath, ct).ConfigureAwait(false);
             return new DatFetchResult(posts, htmlBytes.LongLength);
         }
 

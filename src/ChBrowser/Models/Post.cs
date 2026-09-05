@@ -10,7 +10,17 @@ public sealed record Post(
     string Body,
     string? ThreadTitle,
     int? SoudaneCount = null,
-    FutabaQuoteInfo? FutabaQuoteInfo = null);
+    FutabaQuoteInfo? FutabaQuoteInfo = null,
+    FutabaQuoteResolution? FutabaQuoteResolution = null);
+
+public sealed record FutabaQuoteEvidence(string Kind, int Number, string Text, string? Url = null);
+
+public sealed record FutabaQuoteResolution(
+    int Number,
+    IReadOnlyList<int> ParentNumbers,
+    string State,
+    IReadOnlyList<FutabaQuoteEvidence> Evidence,
+    IReadOnlyList<string> AmbiguousLines);
 
 public sealed record FutabaQuoteInfo(
     IReadOnlyList<FutabaQuoteLine> Lines,
