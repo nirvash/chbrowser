@@ -1201,8 +1201,8 @@ public sealed class AiImageMetadataService
         foreach (var prop in inputs.EnumerateObject())
         {
             var nm = prop.Name.ToLowerInvariant();
-            if (!(nm.Contains("text") || nm.Contains("prompt"))) continue;
-            if (nm.Contains("negative")) continue;
+            if (!(nm.Contains("text") || nm.Contains("prompt") || nm.Contains("string"))) continue;
+            if (nm.Contains("negative") || nm.Contains("system")) continue;
             var p = prop.Value;
             if (p.ValueKind == System.Text.Json.JsonValueKind.String)
             {
