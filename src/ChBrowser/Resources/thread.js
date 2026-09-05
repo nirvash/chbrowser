@@ -51,6 +51,12 @@
     /** num → 当該レスを >>参照しているレス番号配列。renderCurrentViewMode で全再構築、
      *  appendPosts (flat) で増分更新。返信数バッジ生成のために常に最新を保つ。 */
     let currentReverseIndex = new Map();
+    let futabaQuoteRefs = new Map();
+    let futabaQuoteStates = new Map();
+    // 引用解決の単一結果。ツリー構築と本文描画はこの同じ結果を参照し、
+    // 描画側で独自の引用解決を行わない。
+    let futabaQuoteResolutions = new Map();
+    let futabaQuoteRefsSignature = '';
     let viewMode = 'flat';
     let filterRestoreViewMode = null;
 
@@ -539,7 +545,10 @@
              + '|https?://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+'
              + '|(?<![A-Za-z])(?:ttps?|tps?|ps?|s)?://[A-Za-z0-9\\-._~:/?#@!$&*+,;=%]+)'
              + '|(>>\\s*(\\d+(?:\\s*-\\s*\\d+)?(?:\\s*[,，、]\\s*\\d+(?:\\s*-\\s*\\d+)?)*))'
-             + '|(?<![A-Za-z0-9._\\-/@:])' + BARE_DOMAIN_SRC, 'g');
+             + '|(?<![A-Za-z0-9._\\-/@:])' + BARE_DOMAIN_SRC
+             // ふたばの本文に残る「>No.246」も、5ch の >>246 と同じレスリンクにする。
+             // 既存の group 1..4 を維持し、group 5/6 を専用に割り当てる。
+             + '|(>No\\.\\s*(\\d+))', 'gi');
 
     /** ">>" 後の番号指定文字列 (例 "3-5,7、9") を {from,to} 範囲オブジェクト配列に分解する。
      *  カンマは半角"," / 全角"，" / 読点"、" を許容。各範囲は from<=to に正規化。数字が取れない部分は無視。 */
@@ -690,7 +699,10 @@
             } else if (tag === 'small') {
                 html += '<small>' + escapeHtml(stripTags(m[3] || '')) + '</small>';
             } else if (tag === 'span' && /\bclass\s*=\s*["']?futaba-quote\b/i.test(m[2] || '')) {
-                html += '<span class="futaba-quote">' + escapeHtml(stripTags(m[3] || '')) + '</span>';
+                // 引用行内の >>246 も通常本文と同じレスアンカーにする。
+                // ここで単純に escapeHtml すると引用の文字列だけが出力され、
+                // 既存のアンカー・ホバーポップアップ経路に入らない。
+                html += '<span class="futaba-quote">' + processPlain(stripTags(m[3] || '')) + '</span>';
             } else if (tag === 'span') {
                 html += escapeHtml(stripTags(m[3] || ''));
             } else if (/^<hr\b[^>]*\/?>$/i.test(m[0])) {
@@ -751,6 +763,8 @@
                 } else {
                     html += renderExternalLink(bareToHttps(m[0]), m[0]);
                 }
+            } else if (m[5]) {
+                html += renderPostAnchor(m[6], m[5]);
             } else {
                 // m[2] = ">>..." 表示テキスト, m[3] = 番号指定 (例 "3-5,7")
                 html += renderPostAnchor(m[3], m[2]);
@@ -788,16 +802,19 @@
      *  data-spec  : 指定全体 (= ポップアップ展開の正規ソース。範囲・カンマリスト対応)。
      *  data-from  : 先頭レス番号 (= missing 判定・クリックスクロールの後方互換用)。
      *  data-to    : 末尾レス番号 (= data-spec 不在環境向けの後方互換フォールバック)。 */
-    function renderPostAnchor(spec, visible) {
+    function renderPostAnchor(spec, visible, options) {
         const ranges = parseAnchorRanges(spec);
         if (ranges.length === 0) return escapeHtml(visible); // 数字が取れない異常系はただのテキスト
         const from = ranges[0].from;
         const to   = ranges[ranges.length - 1].to;
         const norm = spec.replace(/\s+/g, '');
+        const quotePreview = options && options.quotePreview
+            ? ' data-quote-preview="' + escapeHtml(options.quotePreview) + '"'
+            : '';
         // href は意図的に付けない。<a> が href を持つと focusable になり、
         // Chromium が DOM 再構築後にそれへ auto-focus → auto-scroll してしまうため。
         return '<a class="anchor" data-from="' + from + '" data-to="' + to
-             + '" data-spec="' + escapeHtml(norm) + '">'
+             + '" data-spec="' + escapeHtml(norm) + '"' + quotePreview + '>'
              + escapeHtml(visible) + '</a>';
     }
 
@@ -1123,7 +1140,7 @@
     }
 
     /** post 1 件の view-data を作る (テンプレに渡す変数たち)。 */
-    function postDataFor(p, isEmbedded, omitId, children) {
+    function postDataFor(p, isEmbedded, omitId, children, displayContext) {
         const num     = p.number;
         const replies = currentReverseIndex.get(num) || [];
         const count   = replies.length;
@@ -1131,13 +1148,14 @@
         const rawBody = p.body || '';
         const isFutabaOp = rawBody.startsWith('[[CHB_FUTABA_OP]]');
         const built = buildBodyAndMedia(isFutabaOp ? rawBody.slice('[[CHB_FUTABA_OP]]'.length) : rawBody);
+        const displayBody = buildFutabaDisplayBody(p, rawBody, built.body, displayContext || [], !!isEmbedded);
         return {
             number:         num,
             name:           buildBodyHtml(p.name || ''),
             mail:           p.mail || '',            // メール欄 (sage 等)。RAW_TEMPLATE_VARS に含めないので escape 適用。
             date:           p.dateText || '',
             id:             p.id || '',
-            body:           built.body,
+            body:           displayBody,
             media:          built.media,
             replyCount:     count,
             replyNumbers:   replies.join(','),       // バッジの data-replies 用 (ホバーポップアップで使う)
@@ -1151,6 +1169,47 @@
             domId:          !omitId,
             children:       children || '',
         };
+    }
+
+    function buildFutabaDisplayBody(post, rawBody, renderedBody, context, isEmbedded) {
+        // flat の表示は原文を維持し、ツリー表示中の子レスを
+        // 5ch 風の「>>No.親レス番号」リンクへ置き換える。
+        // tree は埋め込みコピーと末尾の正本コピーの両方があるため、
+        // isEmbedded だけでなく viewMode も判定する。
+        const isTreeDisplay = viewMode === 'tree' || viewMode === 'dedupTree2' || viewMode === 'dedupTree';
+        if ((!isEmbedded && !isTreeDisplay) || !post || !window.FutabaQuotes) return renderedBody;
+        const quoteInfo = post.futabaQuoteInfo || post.FutabaQuoteInfo;
+        if (!quoteInfo) return renderedBody;
+        const quoteLines = quoteInfo.lines || quoteInfo.Lines || [];
+        let prefix = 0;
+        while (prefix < quoteLines.length && Number(quoteLines[prefix].quoteDepth ?? quoteLines[prefix].QuoteDepth) > 0) prefix++;
+        if (prefix === 0) return renderedBody;
+
+        ensureFutabaQuoteRefs();
+        const resolution = futabaQuoteResolutions.get(Number(post.number));
+        const parents = resolution ? (resolution.parentNumbers || []) : [];
+        // 曖昧/未解決の引用は誤ったレスへリンクしない。
+        if (!resolution || parents.length === 0 || resolution.state !== 'resolved') return renderedBody;
+
+        const links = parents.map(function (number) {
+            return renderPostAnchor(String(number), '>>No.' + number, {
+                quotePreview: quoteLines.slice(0, prefix).map(function (line) {
+                    // Text はツリー解析用に先頭の引用記号を除去済みなので、表示用には
+                    // 解析前の原文を使う。深度から `>` を再構成してはいけない。
+                    return line.originalText ?? line.OriginalText
+                        ?? line.text ?? line.Text ?? '';
+                }).join('\n')
+            });
+        }).join('<br>');
+        const quoteHtml = '<span class="futaba-quote futaba-quote-links">' + links + '</span>';
+        if (prefix === quoteLines.length) return quoteHtml;
+
+        // 引用の後ろにある本文だけは解析前原文を再描画して保持する。
+        // rawHtml は通信/シリアライズ経路によって無い場合があるため、ここでは依存しない。
+        const replyRaw = quoteLines.slice(prefix).map(function (line) {
+            return line.originalText ?? line.OriginalText ?? line.text ?? line.Text ?? '';
+        }).join('<br>');
+        return quoteHtml + '<br>' + buildBodyHtml(replyRaw);
     }
 
     /** テンプレートに data を当てて 1 レス分の HTML を返す。
@@ -1187,6 +1246,41 @@
         return refs;
     }
 
+    function ensureFutabaQuoteRefs() {
+        const futabaPosts = allPosts.filter(function (p) { return p && (p.futabaQuoteInfo || p.FutabaQuoteInfo); });
+        // 件数と末尾番号だけでは、同じ件数・番号の再同期で本文/引用情報が
+        // 置き換わった場合に古い親子関係を再利用してしまう。
+        const signature = futabaPosts.map(function (p) {
+            const info = p.futabaQuoteInfo || p.FutabaQuoteInfo;
+            const lines = info && (info.lines || info.Lines) || [];
+            return Number(p.number) + ':' + lines.map(function (line) {
+                return (line.quoteDepth ?? line.QuoteDepth ?? 0) + '='
+                    + (line.text ?? line.Text ?? '');
+            }).join('|');
+        }).join('||');
+        if (signature === futabaQuoteRefsSignature) return;
+        futabaQuoteRefsSignature = signature;
+        futabaQuoteRefs = new Map();
+        futabaQuoteStates = new Map();
+        futabaQuoteResolutions = new Map();
+        if (futabaPosts.length === 0 || !window.FutabaQuotes) return;
+        for (const result of window.FutabaQuotes.resolve(allPosts)) {
+            futabaQuoteResolutions.set(result.number, result);
+            futabaQuoteRefs.set(result.number, result.parentNumbers || []);
+            futabaQuoteStates.set(result.number, result.state);
+        }
+    }
+
+    function getPostReferences(post) {
+        if (post && (post.futabaQuoteInfo || post.FutabaQuoteInfo)) {
+            ensureFutabaQuoteRefs();
+            const resolution = futabaQuoteResolutions.get(Number(post.number));
+            if (!resolution || resolution.state !== 'resolved') return [];
+            return (resolution.parentNumbers || []).map(function (n) { return { from: n, to: n }; });
+        }
+        return extractAnchorRefs(post && post.body || '');
+    }
+
     /** レス番号 N → N を >>参照しているレス番号配列、を返す逆引き。
      *  <code>posts</code> が省略されたら全レス (allPosts) を対象にする (= 既存挙動と同じ)。
      *  Section A (= dedup-tree の pre-pivot) 描画時は subset を渡してインクリメンタル分を除外する。 */
@@ -1194,7 +1288,7 @@
         const rev = new Map();
         for (const post of posts) {
             const seen = new Set();
-            for (const r of extractAnchorRefs(post.body || '')) {
+            for (const r of getPostReferences(post)) {
                 if (r.to - r.from + 1 > INLINE_EXPAND_RANGE_LIMIT) continue;
                 for (let n = r.from; n <= r.to; n++) {
                     if (n >= post.number) continue;       // 後方参照のみ親候補
@@ -1216,7 +1310,7 @@
         if (!p) return [];
         const seen = new Set();
         const result = [];
-        for (const r of extractAnchorRefs(p.body || '')) {
+        for (const r of getPostReferences(p)) {
             if (r.to - r.from + 1 > INLINE_EXPAND_RANGE_LIMIT) continue;
             for (let n = r.from; n <= r.to; n++) {
                 if (n >= p.number) continue;
@@ -1242,7 +1336,7 @@
             const post = postsByNumber.get(cur);
             if (!post) break;
             let next = null;
-            for (const r of extractAnchorRefs(post.body || '')) {
+            for (const r of getPostReferences(post)) {
                 if (r.to - r.from + 1 > INLINE_EXPAND_RANGE_LIMIT) continue;
                 for (let n = r.from; n <= r.to; n++) {
                     if (n >= cur) continue;
@@ -1293,17 +1387,18 @@
      *    これにより Section A の通常の dedup tree と同じ見た目 (root=枠線なし / 子=枠線+色) になる。
      *  omitId は「Section A 側に primary instance を持つレス (= 既存の祖先) か」で決める:
      *    incrementalSet に含まれる (= 新規分) なら id 付き、それ以外 (= Section A にも存在) なら id 無し。 */
-    function renderIncrementalForestNode(node, incrementalSet, isEmbedded) {
+    function renderIncrementalForestNode(node, incrementalSet, isEmbedded, displayContext) {
         const post = postsByNumber.get(node.number);
         if (!post) return '';
         const isInc = incrementalSet.has(node.number);
         let childrenHtml = '';
         for (const child of node.childMap.values()) {
             childrenHtml += '<div class="inline-expansion reverse">';
-            childrenHtml += renderIncrementalForestNode(child, incrementalSet, /*isEmbedded*/ true);
+            childrenHtml += renderIncrementalForestNode(child, incrementalSet, /*isEmbedded*/ true,
+                (displayContext || []).concat([node.number]));
             childrenHtml += '</div>';
         }
-        return renderPost(postDataFor(post, isEmbedded, /*omitId*/ !isInc, childrenHtml));
+        return renderPost(postDataFor(post, isEmbedded, /*omitId*/ !isInc, childrenHtml, displayContext));
     }
 
     // ---- dedupTree2 モード専用: 「開いたままの差分取得」の section B 構築 (ゼロ実装 / 旧 dedupTree 非参照) ----
@@ -1410,11 +1505,11 @@
      *    DOM 直接操作で `<div class="inline-expansion reverse">` を後付けする。
      *  - isEmbedded: 中身は付けず leaf として返す (= forward / reverse 展開は呼び出し側が個別にやる)。
      *  primary 出力は id を付ける、embedded 出力は id を付けない (= 重複ありモードは同じレスが 2 か所に出るため)。 */
-    function buildTreePostHtml(p, isEmbedded) {
+    function buildTreePostHtml(p, isEmbedded, displayContext) {
         let children = '';
         if (!isEmbedded) {
             const emitted = new Set();
-            for (const r of extractAnchorRefs(p.body || '')) {
+            for (const r of getPostReferences(p)) {
                 if (r.to - r.from + 1 > INLINE_EXPAND_RANGE_LIMIT) continue;
                 for (let n = r.from; n <= r.to; n++) {
                     if (n >= p.number) continue;
@@ -1423,12 +1518,12 @@
                     const parent = postsByNumber.get(n);
                     if (!parent) continue;
                     children += '<div class="inline-expansion forward">';
-                    children += buildTreePostHtml(parent, true);
+                    children += buildTreePostHtml(parent, true, (displayContext || []).concat([p.number]));
                     children += '</div>';
                 }
             }
         }
-        return renderPost(postDataFor(p, isEmbedded, /*omitId*/ isEmbedded, children));
+        return renderPost(postDataFor(p, isEmbedded, /*omitId*/ isEmbedded, children, displayContext));
     }
 
     // ---------- top-level renderer (viewMode に基づき分岐) ----------
@@ -1495,7 +1590,7 @@
      *  reverseIndex を p の挿入「前」に加算しておくのは embedUnderParentReverse の overflow 計算の母数として参照されるため。 */
     function replayPostIntoDom(p) {
         const seen = new Set();
-        for (const r of extractAnchorRefs(p.body || '')) {
+        for (const r of getPostReferences(p)) {
             if (r.to - r.from + 1 > INLINE_EXPAND_RANGE_LIMIT) continue;
             for (let n = r.from; n <= r.to; n++) {
                 if (n >= p.number) continue;
@@ -4338,6 +4433,42 @@ function findReadProgressMaxNumber() {
         popups.push({ el: el, anchor: anchor, level: level });
     }
 
+    /** ふたば引用リンク用ポップアップ。親レスの DOM は表示せず、
+     *  リンク元レスに保存した引用部分だけを表示する。 */
+    function openQuotePreviewPopup(anchor, quoteText, parentNumber, level) {
+        closeFrom(level);
+        if (!quoteText) return;
+        const el = document.createElement('div');
+        el.className = 'anchor-popup futaba-quote-preview-popup';
+        const sourcePost = postsByNumber.get(parseInt(parentNumber || '0', 10));
+        if (sourcePost) {
+            // 通常のレス表示テンプレートからヘッダを生成し、本文だけ引用部分へ差し替える。
+            // これにより番号・名前・日時・ID等の見た目を通常アンカーポップアップと揃える。
+            const data = postDataFor(sourcePost, /*isEmbedded*/ false, /*omitId*/ false, '');
+            data.body = buildBodyHtml(quoteText);
+            data.media = '';
+            data.children = '';
+            el.innerHTML = renderPost(data);
+        } else {
+            // 親レスがまだ DOM データにない場合も、引用本文だけは表示する。
+            const postEl = document.createElement('div');
+            postEl.className = 'post';
+            const bodyEl = document.createElement('div');
+            bodyEl.className = 'post-body';
+            bodyEl.innerHTML = buildBodyHtml(quoteText);
+            postEl.appendChild(bodyEl);
+            el.appendChild(postEl);
+        }
+        document.body.appendChild(el);
+        positionPopup(el, anchor);
+        el.addEventListener('mouseenter', function () { cancelCloseAtOrBelow(level); });
+        el.addEventListener('mouseleave', function () { scheduleCloseAt(level); });
+        // 引用部分内の別レスリンクも通常のポップアップ連鎖に対応させる。
+        attachAnchorHandlers(el, level + 1);
+        attachMetaHoverHandlers(el, level + 1);
+        popups.push({ el: el, anchor: anchor, level: level });
+    }
+
     /** post-no をホバーした時に開く「返信元レスをまとめて見せる」ポップアップ。
      *  - anchor: ポップアップの位置基準 (= post-no 要素)。
      *  - dataSource: data-replies (カンマ区切りレス番号) を持つ要素 (= 兄弟の .post-reply-count)。
@@ -4495,7 +4626,10 @@ function findReadProgressMaxNumber() {
             if (a.classList.contains('missing')) return;
             a.addEventListener('mouseenter', function () {
                 cancelCloseAt(level);
-                openPopup(a, level);
+                if (a.dataset.quotePreview) {
+                    openQuotePreviewPopup(a, a.dataset.quotePreview, a.dataset.from, level);
+                }
+                else openPopup(a, level);
             });
             a.addEventListener('mouseleave', function () { scheduleCloseAt(level); });
         });
@@ -4764,7 +4898,7 @@ function findReadProgressMaxNumber() {
                 const anchors = getValidForwardAnchors(p);
                 if (anchors.length === 1) {
                     embedUnderParentReverse(anchors[0], p,
-                        function (q) { return buildTreePostHtml(q, /*isEmbedded*/ true); });
+                        function (q) { return buildTreePostHtml(q, /*isEmbedded*/ true, [anchors[0]]); });
                 }
             },
             buildPrimaryHtml(p)       { return buildTreePostHtml(p, /*isEmbedded*/ false); },
@@ -4801,7 +4935,7 @@ function findReadProgressMaxNumber() {
                     // 子はそのまま id 付きで描画する (= dedupTree2 では 1 レス 1 箇所しか出ないため
                     //  primary leaf を出さず、ここを唯一の実体にしてアンカー/スクロール/バッジを成立させる)。
                     const ok = embedUnderParentReverse(anchors[0], p,
-                        function (q) { return renderPost(postDataFor(q, /*isEmbedded*/ true, /*omitId*/ false, '')); });
+                        function (q) { return renderPost(postDataFor(q, /*isEmbedded*/ true, /*omitId*/ false, '', [anchors[0]])); });
                     // 参照先 DOM が無い (= まれ) ときだけ末尾 primary に退避。
                     if (!ok) appendPrimaryAtEnd(p, root);
                 } else {
@@ -4836,7 +4970,7 @@ function findReadProgressMaxNumber() {
                 const anchors = getValidForwardAnchors(p);
                 if (anchors.length === 1) {
                     const ok = embedUnderParentReverse(anchors[0], p,
-                        function (q) { return renderPost(postDataFor(q, /*isEmbedded*/ true, /*omitId*/ false, '')); });
+                        function (q) { return renderPost(postDataFor(q, /*isEmbedded*/ true, /*omitId*/ false, '', [anchors[0]])); });
                     if (!ok) appendPrimaryAtEnd(p, root);
                 } else {
                     appendPrimaryAtEnd(p, root);
@@ -4992,7 +5126,7 @@ function findReadProgressMaxNumber() {
                 // dedupTree-delta: DOM は batch 末の rebuildSectionB が一括描画する。
                 // reverseIndex は section A 既存 primary の返信バッジを最新化するためここで更新する。
                 const seen = new Set();
-                for (const r of extractAnchorRefs(p.body || '')) {
+                for (const r of getPostReferences(p)) {
                     if (r.to - r.from + 1 > INLINE_EXPAND_RANGE_LIMIT) continue;
                     for (let n = r.from; n <= r.to; n++) {
                         if (n >= p.number) continue;
@@ -5102,6 +5236,8 @@ function findReadProgressMaxNumber() {
 
         // 内部状態を全クリア (allPosts / scrollTarget / mark / 逆引き indexes)
         allPosts                = [];
+        futabaQuoteRefsSignature = '';
+        futabaQuoteResolutions   = new Map();
         postsByNumber           = new Map();
         currentReverseIndex     = new Map();
         pendingScrollTarget     = null;
@@ -5151,6 +5287,8 @@ function findReadProgressMaxNumber() {
                         const root = document.getElementById('posts');
                         if (root) root.innerHTML = '';
                         allPosts            = [];
+                        futabaQuoteRefsSignature = '';
+                        futabaQuoteResolutions = new Map();
                         postsByNumber       = new Map();
                         currentReverseIndex = new Map();
                         currentIdMap        = new Map();

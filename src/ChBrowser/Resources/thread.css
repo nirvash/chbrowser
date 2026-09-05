@@ -778,6 +778,10 @@ body.slot-resizing * {
     display: none !important;
 }
 
+/* Futaba: only a safe, display-context-aware leading quote is collapsible. */
+.futaba-quote-collapsed { margin: 0 0 2px 0; }
+.futaba-quote-collapsed > summary { cursor: pointer; color: #567; user-select: none; }
+
 /* ---- AI-NG による非表示 ---- */
 /* NG 判定 AI が「攻撃的」と採点したレス (= スコア >= しきい値) に JS が付与する。
    しきい値を変えれば集合が変わって付け外しされる = 可逆。DOM からは消さない。 */

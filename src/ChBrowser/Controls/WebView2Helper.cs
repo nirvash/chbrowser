@@ -768,6 +768,7 @@ public static partial class WebView2Helper
             var html   = ChBrowser.Services.Render.EmbeddedAssets.Read("thread.html");
             // thread.css / post.css はディスク優先 (= ユーザがテーマ編集した内容を反映)。
             var css    = ChBrowser.Services.Render.EmbeddedAssets.ReadCss("thread.css");
+            var futabaQuotes = ChBrowser.Services.Render.EmbeddedAssets.Read("futaba-quotes.js");
             var js     = ChBrowser.Services.Render.EmbeddedAssets.Read("thread.js");
             var bridge = ChBrowser.Services.Render.EmbeddedAssets.Read("shortcut-bridge.js");
 
@@ -784,6 +785,7 @@ public static partial class WebView2Helper
             _shellHtmlCache = html
                 .Replace("/*{{CSS}}*/",                css + "\n" + postCss + emojiCss)
                 .Replace("/*{{SHORTCUT_BRIDGE}}*/",    bridge)
+                .Replace("/*{{FUTABA_QUOTES}}*/",       futabaQuotes)
                 .Replace("/*{{JS}}*/",                 js)
                 .Replace("<!--{{POST_TEMPLATE}}-->",   postTemplate);
             return _shellHtmlCache;

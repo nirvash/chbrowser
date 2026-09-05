@@ -22,6 +22,11 @@ public sealed class FutabaThreadClient
     private static readonly Regex AttachmentRe = new(@"<a\s+[^>]*href\s*=\s*(?:['""])?(?<url>[^'""\s>]+)(?:['""])?[^>]*>\s*<img\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex QuoteFontRe = new(@"<font\b[^>]*\bcolor\s*=\s*(?:['""])?#789922(?:['""])?[^>]*>(?<body>.*?)</font>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex FontTagRe = new(@"</?font\b[^>]*>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex QuoteTagRe = new(@"(?:</?span\b[^>]*\bfutaba-quote\b[^>]*>|</?font\b[^>]*\bcolor\s*=\s*(?:['""])?#789922(?:['""])?[^>]*>)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex BodyLineBreakRe = new(@"<br\s*/?>|\r?\n", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex HtmlTagRe = new(@"<[^>]+>", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex LeadingQuoteRe = new(@"^\s*(?:>\s*)+", RegexOptions.Compiled);
+    private static readonly Regex ExplicitNoRe = new(@"^\s*>?\s*No\.\s*\d+\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SoudaneRe = new(@"<a\b[^>]*\bclass\s*=\s*['""]?sod['""]?[^>]*>\s*そうだねx(?<count>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex FutabaDateRe = new(@"^(?<yy>\d{2})/(?<mm>\d{2})/(?<dd>\d{2})(?<dow>\([^)]*\))(?<time>\d{2}:\d{2}:\d{2})(?:\.(?<frac>\d{1,2}))?$", RegexOptions.Compiled);
 
@@ -63,25 +68,84 @@ public sealed class FutabaThreadClient
                 ? nameMatch.Groups["name"].Value.Trim() : "";
             var date = DateRe.Match(content) is { Success: true } dateMatch
                 ? NormalizeDate(WebUtility.HtmlDecode(dateMatch.Groups["date"].Value).Trim()) : "";
-            var body = QuoteFontRe.Replace(bodyMatch.Groups["body"].Value, "<span class=\"futaba-quote\">${body}</span>");
+            var rawBodyHtml = bodyMatch.Groups["body"].Value;
+            var attachments = ExtractAttachments(content, pageUri);
+            var quoteInfo = BuildQuoteInfo(rawBodyHtml, attachments);
+            var body = QuoteFontRe.Replace(rawBodyHtml, "<span class=\"futaba-quote\">${body}</span>");
             body = FontTagRe.Replace(body, "");
             // ふたば本文の &gt; は引用記号として表示する。未デコードのまま JS で escape すると &amp;gt; と文字列表示される。
             body = WebUtility.HtmlDecode(body).Trim();
 
             // Attached images are passed as absolute URLs so thread.js can create its usual media slots.
-            var attachments = new List<string>();
-            foreach (Match attachment in AttachmentRe.Matches(content))
-            {
-                var rawUrl = WebUtility.HtmlDecode(attachment.Groups["url"].Value);
-                if (Uri.TryCreate(pageUri, rawUrl, out var absolute)) attachments.Add(absolute.AbsoluteUri);
-            }
             if (attachments.Count > 0) body = string.Join("\n", attachments) + "\n" + body;
             if (posts.Count == 0) body = "[[CHB_FUTABA_OP]]" + body;
 
             int? soudane = SoudaneRe.Match(content) is { Success: true } soudaneMatch && int.TryParse(soudaneMatch.Groups["count"].Value, out var sc) ? sc : null;
-            posts.Add(new Post(number, name, "", date, "", body, posts.Count == 0 ? title : null, soudane));
+            posts.Add(new Post(number, name, "", date, "", body, posts.Count == 0 ? title : null, soudane, quoteInfo));
         }
         return posts;
+    }
+
+    private static List<string> ExtractAttachments(string content, Uri pageUri)
+    {
+        var attachments = new List<string>();
+        foreach (Match attachment in AttachmentRe.Matches(content))
+        {
+            var rawUrl = WebUtility.HtmlDecode(attachment.Groups["url"].Value);
+            if (Uri.TryCreate(pageUri, rawUrl, out var absolute)) attachments.Add(absolute.AbsoluteUri);
+        }
+        return attachments;
+    }
+
+    private static FutabaQuoteInfo BuildQuoteInfo(string rawHtml, IReadOnlyList<string> attachmentUrls)
+    {
+        var lines = new List<FutabaQuoteLine>();
+        var decodedBody = WebUtility.HtmlDecode(HtmlTagRe.Replace(rawHtml, ""));
+        var hasTextualQuoteMarkers = Regex.IsMatch(decodedBody, @"(?m)^\s*>");
+        var depth = 0;
+        var cursor = 0;
+        foreach (Match lineBreak in BodyLineBreakRe.Matches(rawHtml))
+        {
+            AddQuoteLine(rawHtml[cursor..lineBreak.Index], ref depth, lines, hasTextualQuoteMarkers);
+            cursor = lineBreak.Index + lineBreak.Length;
+        }
+        AddQuoteLine(rawHtml[cursor..], ref depth, lines, hasTextualQuoteMarkers);
+        return new FutabaQuoteInfo(lines, attachmentUrls, rawHtml);
+    }
+
+    private static void AddQuoteLine(string rawLine, ref int depth, ICollection<FutabaQuoteLine> lines, bool hasTextualQuoteMarkers)
+    {
+        var lineDepth = depth;
+        var maxDepth = depth;
+        foreach (Match tag in QuoteTagRe.Matches(rawLine))
+        {
+            if (tag.Value.StartsWith("</", StringComparison.Ordinal)) depth = Math.Max(0, depth - 1);
+            else depth++;
+            maxDepth = Math.Max(maxDepth, depth);
+        }
+        lineDepth = Math.Max(lineDepth, maxDepth);
+        var text = WebUtility.HtmlDecode(HtmlTagRe.Replace(rawLine, ""));
+        var originalText = text;
+        var isExplicitPostReference = ExplicitNoRe.IsMatch(text);
+        var leadingQuotes = LeadingQuoteRe.Match(text);
+        if (leadingQuotes.Success)
+        {
+            var leadingQuoteDepth = leadingQuotes.Value.Count(static c => c == '>');
+            // 行頭の > は表示上の引用深度そのもの。外側の <font> が複数行を
+            // 包んでいても、タグ深度を加算すると `>` 1個が深度2になるため、
+            // 明示的な行頭記号をHTMLタグの深度より優先する。
+            lineDepth = leadingQuoteDepth;
+            text = text[leadingQuotes.Length..];
+        }
+        else if (hasTextualQuoteMarkers)
+        {
+            // 本文中に視覚的な行頭引用が存在する形式では、マーカーのない行を
+            // 外側の引用font/spanの深さだけで引用扱いにしない。
+            lineDepth = 0;
+        }
+        // >No.123 は引用本文ではなく、明示的なレス番号参照。
+        if (isExplicitPostReference) lineDepth = 0;
+        lines.Add(new FutabaQuoteLine(text.TrimEnd(), lineDepth, rawLine, originalText));
     }
 
     private static string NormalizeDate(string value)
