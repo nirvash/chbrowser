@@ -310,7 +310,8 @@ public sealed class PostDialog : Window
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) }); // name box
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });             // "メール:"
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });   // mail box
-        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });             // sage check
+        if (_vm.SupportsDonguriAuth)
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });         // sage check (5ch only)
 
         var nameLabel = new TextBlock { Text = "名前:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
         Grid.SetColumn(nameLabel, 0); headerRow.Children.Add(nameLabel);
@@ -326,9 +327,12 @@ public sealed class PostDialog : Window
         mailBox.SetBinding(TextBox.TextProperty, new Binding(nameof(PostFormViewModel.Mail)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged });
         Grid.SetColumn(mailBox, 3); headerRow.Children.Add(mailBox);
 
-        var sageCheck = new CheckBox { Content = "sage", VerticalAlignment = VerticalAlignment.Center };
-        sageCheck.SetBinding(ToggleButton_IsCheckedProxy, new Binding(nameof(PostFormViewModel.IsSage)) { Mode = BindingMode.TwoWay });
-        Grid.SetColumn(sageCheck, 4); headerRow.Children.Add(sageCheck);
+        if (_vm.SupportsDonguriAuth)
+        {
+            var sageCheck = new CheckBox { Content = "sage", VerticalAlignment = VerticalAlignment.Center };
+            sageCheck.SetBinding(ToggleButton_IsCheckedProxy, new Binding(nameof(PostFormViewModel.IsSage)) { Mode = BindingMode.TwoWay });
+            Grid.SetColumn(sageCheck, 4); headerRow.Children.Add(sageCheck);
+        }
 
         // 認証モード行 + 「Cookie 削除」ボタンは、フッターの「Cookie 設定」トグルで開閉される
         // パネル (row 4) にまとめてある。ヘッダ行は氏名 / メール / sage だけに絞ってすっきりさせる。
@@ -350,21 +354,24 @@ public sealed class PostDialog : Window
         bodyHeader.Children.Add(bodyLabel);
 
         // どんぐり認証モードのテキスト表示 — AuthMode が変わるたびに動的に更新。
-        var authModeLabel = new TextBlock
+        if (_vm.SupportsDonguriAuth)
         {
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground        = Brushes.Gray,
-            FontSize          = 11,
-            Margin            = new Thickness(0, 0, 12, 0),
-            Text              = "どんぐり: " + AuthModeDisplayName(_vm.AuthMode),
-        };
-        _vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(PostFormViewModel.AuthMode))
-                authModeLabel.Text = "どんぐり: " + AuthModeDisplayName(_vm.AuthMode);
-        };
-        Grid.SetColumn(authModeLabel, 2);
-        bodyHeader.Children.Add(authModeLabel);
+            var authModeLabel = new TextBlock
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground        = Brushes.Gray,
+                FontSize          = 11,
+                Margin            = new Thickness(0, 0, 12, 0),
+                Text              = "どんぐり: " + AuthModeDisplayName(_vm.AuthMode),
+            };
+            _vm.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(PostFormViewModel.AuthMode))
+                    authModeLabel.Text = "どんぐり: " + AuthModeDisplayName(_vm.AuthMode);
+            };
+            Grid.SetColumn(authModeLabel, 2);
+            bodyHeader.Children.Add(authModeLabel);
+        }
 
         var lineCountLabel = new TextBlock
         {
@@ -403,9 +410,12 @@ public sealed class PostDialog : Window
         // (4) Cookie 設定パネル — フッターの「Cookie 設定」ボタンで開閉する折り畳み領域。
         // 中身は認証モード切替 (どんぐり: なし / 通常 / メール認証) と Cookie 削除ボタン。
         // 初期状態 Collapsed (= 高さ 0) なので、開かない限り本文 (row 3 / Star) の表示領域を奪わない。
-        _cookieSettingsPanel = BuildCookieSettingsPanel();
-        Grid.SetRow(_cookieSettingsPanel, 4);
-        root.Children.Add(_cookieSettingsPanel);
+        if (_vm.SupportsDonguriAuth)
+        {
+            _cookieSettingsPanel = BuildCookieSettingsPanel();
+            Grid.SetRow(_cookieSettingsPanel, 4);
+            root.Children.Add(_cookieSettingsPanel);
+        }
 
         // (5) エラーバナー (ErrorMessage が空でないとき表示)
         var errorBanner = new Border
@@ -444,9 +454,12 @@ public sealed class PostDialog : Window
 
         var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
 
-        _cookieSettingsToggleBtn = new Button { Content = "Cookie 設定", Width = 100, Margin = new Thickness(0, 0, 8, 0) };
-        _cookieSettingsToggleBtn.Click += (_, _) => ToggleCookieSettings();
-        btnPanel.Children.Add(_cookieSettingsToggleBtn);
+        if (_vm.SupportsDonguriAuth)
+        {
+            _cookieSettingsToggleBtn = new Button { Content = "Cookie 設定", Width = 100, Margin = new Thickness(0, 0, 8, 0) };
+            _cookieSettingsToggleBtn.Click += (_, _) => ToggleCookieSettings();
+            btnPanel.Children.Add(_cookieSettingsToggleBtn);
+        }
 
         _previewToggleBtn = new Button { Content = "レビュー表示", Width = 100, Margin = new Thickness(0, 0, 8, 0) };
         _previewToggleBtn.Click += (_, _) => TogglePreview();

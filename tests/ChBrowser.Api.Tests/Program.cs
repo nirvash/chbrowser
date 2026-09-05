@@ -31,6 +31,21 @@ if (!form.Contains("%26%23x1F600%3B", StringComparison.OrdinalIgnoreCase))
 
 Console.WriteLine("PASS emoji survives SJIS form encoding as an HTML numeric entity");
 
+var futabaMethod = typeof(PostClient).GetMethod(
+    "BuildFutabaFormBody",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new MissingMethodException(typeof(PostClient).FullName, "BuildFutabaFormBody");
+var futabaBoard = new Board("b", "二次元裏", "https://may.2chan.net/b/", "img", 0);
+var futabaRequest = new PostRequest(futabaBoard, "123456", null, "なまえ", "sage", "本文😀", PostAuthMode.None);
+var futabaForm = Encoding.UTF8.GetString((byte[])(futabaMethod.Invoke(null, [futabaRequest])
+    ?? throw new InvalidOperationException("BuildFutabaFormBody returned null")));
+if (!futabaForm.Contains("mode=regist") || !futabaForm.Contains("resto=123456") ||
+    !futabaForm.Contains("textonly=on") || !futabaForm.Contains("com=%E6%9C%AC%E6%96%87%F0%9F%98%80"))
+    throw new Exception($"Unexpected Futaba form: {futabaForm}");
+if (futabaForm.Contains("bbs=", StringComparison.Ordinal))
+    throw new Exception($"Futaba form contains 5ch-only field: {futabaForm}");
+Console.WriteLine("PASS Futaba reply form uses regist/resto and UTF-8 text");
+
 var promptMethod = typeof(AiImageMetadataService).GetMethod(
     "ExtractTextFromComfyNode",
     BindingFlags.NonPublic | BindingFlags.Static)

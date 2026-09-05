@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ChBrowser.Models;
 using ChBrowser.Services.Api;
+using ChBrowser.Services.Url;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -89,6 +90,9 @@ public sealed partial class PostFormViewModel : ObservableObject
 
     public bool IsNewThread => _threadKey is null;
 
+    /// <summary>ふたばでは5ch専用のどんぐり Cookie / 認証モードを使わない。</summary>
+    public bool SupportsDonguriAuth => !FutabaUrl.IsFutabaHost(_board.Host);
+
     /// <summary>書き込み対象スレの板。書き込み先確認ダイアログで「今表示中のスレと同じか」判定に使う。</summary>
     public Board Board => _board;
 
@@ -112,7 +116,7 @@ public sealed partial class PostFormViewModel : ObservableObject
         _threadKey   = threadKey;
         _threadTitle = threadTitle ?? "";
         DialogTitle  = $"レスを書き込む: {threadTitle}";
-        AuthMode     = defaultAuthMode;
+        AuthMode     = SupportsDonguriAuth ? defaultAuthMode : PostAuthMode.None;
         SubmitCommand = new AsyncRelayCommand(SubmitAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(Message));
     }
 
@@ -125,7 +129,7 @@ public sealed partial class PostFormViewModel : ObservableObject
         _threadKey   = null;
         _threadTitle = "";
         DialogTitle  = $"新規スレッド作成: {board.BoardName}";
-        AuthMode     = defaultAuthMode;
+        AuthMode     = SupportsDonguriAuth ? defaultAuthMode : PostAuthMode.None;
         SubmitCommand = new AsyncRelayCommand(SubmitAsync,
             () => !IsBusy && !string.IsNullOrWhiteSpace(Message) && !string.IsNullOrWhiteSpace(Subject));
     }

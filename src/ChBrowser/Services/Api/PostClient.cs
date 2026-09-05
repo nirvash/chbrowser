@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using ChBrowser.Models;
 using ChBrowser.Services.Donguri;
 using ChBrowser.Services.Storage;
+using ChBrowser.Services.Url;
 // ChBrowser.Models.PostAuthMode を SendAsync シグネチャで使うが、namespace 既に上で using 済
 
 namespace ChBrowser.Services.Api;
@@ -62,6 +63,9 @@ public sealed class PostClient
     /// <summary>1 件の投稿を実行して結果を返す。CookieJar/state.json は終了時に必ず保存。</summary>
     public async Task<PostResult> PostAsync(PostRequest request, CancellationToken ct = default)
     {
+        if (FutabaUrl.IsFutabaHost(request.Board.Host))
+            return await PostToFutabaAsync(request, ct).ConfigureAwait(false);
+
         // Board.Url は "https://hayabusa9.5ch.io/news/" なので bbs.cgi はホストルート直下の test/bbs.cgi
         var uri      = new Uri(new Uri(request.Board.Url), "/test/bbs.cgi");
         var origBody = BuildSjisFormBodyFromRequest(request);
@@ -112,6 +116,111 @@ public sealed class PostClient
             try { await _donguri.SaveAsync(ct).ConfigureAwait(false); }
             catch (Exception ex) { Debug.WriteLine($"[PostClient] donguri save failed: {ex.Message}"); }
         }
+    }
+
+    /// <summary>
+    /// ふたば☆ちゃんねるの標準フォーム (<c>futaba.php</c>) へテキスト投稿する。
+    /// 5ch の bbs.cgi / どんぐり認証とは別プロトコルであり、本文は UTF-8 の
+    /// application/x-www-form-urlencoded として送る。添付ファイルは投稿ダイアログが
+    /// 未対応のため、スレ立てでは textonly=on を明示する。
+    /// </summary>
+    private async Task<PostResult> PostToFutabaAsync(PostRequest request, CancellationToken ct)
+    {
+        var uri = new Uri(new Uri(request.Board.Url), "futaba.php?guid=on");
+        var body = BuildFutabaFormBody(request);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri)
+        {
+            Content = new ByteArrayContent(body),
+        };
+        httpRequest.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded")
+        {
+            CharSet = "UTF-8",
+        };
+        httpRequest.Headers.TryAddWithoutValidation("Referer", request.IsReply
+            ? FutabaUrl.BuildThreadUrl(request.Board.Host, request.Board.DirectoryName, request.ThreadKey!)
+            : request.Board.Url);
+        httpRequest.Headers.TryAddWithoutValidation("Origin", $"{uri.Scheme}://{uri.Host}");
+
+        try
+        {
+            using var response = await _http.Http.SendAsync(httpRequest, ct).ConfigureAwait(false);
+            var html = await DecodeHtmlAsync(response, ct).ConfigureAwait(false);
+            var result = ClassifyFutaba(response, html, request);
+            if (result.Outcome == PostOutcome.Success) AppendKakikomi(request);
+            return result;
+        }
+        catch (HttpRequestException ex)
+        {
+            return new PostResult(PostOutcome.UnknownError, ex.Message, "");
+        }
+    }
+
+    /// <summary>ふたば標準の regist フォーム値を UTF-8 で組み立てる。公開していないが API テストから検証する。</summary>
+    private static byte[] BuildFutabaFormBody(PostRequest req)
+    {
+        var fields = new List<KeyValuePair<string, string>>
+        {
+            new("mode", "regist"),
+            new("name", req.Name),
+            new("email", req.Mail),
+            new("sub", req.IsNewThread ? req.Subject ?? "" : ""),
+            new("com", req.Message),
+            new("pwd", ""),
+            new("textonly", "on"),
+            new("submit", "送信する"),
+        };
+        if (req.IsReply) fields.Add(new("resto", req.ThreadKey!));
+        return Encoding.UTF8.GetBytes(EncodeUtf8Form(fields));
+    }
+
+    private static string EncodeUtf8Form(IReadOnlyList<KeyValuePair<string, string>> fields)
+        => string.Join("&", fields.Select(pair =>
+            Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)));
+
+    private static async Task<string> DecodeHtmlAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        var bytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        var charset = response.Content.Headers.ContentType?.CharSet?.Trim('"');
+        if (string.Equals(charset, "shift_jis", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(charset, "shift-jis", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(charset, "sjis", StringComparison.OrdinalIgnoreCase))
+            return Encoding.GetEncoding(932).GetString(bytes);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    /// <summary>
+    /// 成功は投稿先スレへのリダイレクト、またはふたば標準の refresh 完了画面でのみ確定する。
+    /// 2xx だけ、または曖昧な HTML は成功とみなさず、拒否文を含めてフォームへ返す。
+    /// </summary>
+    private static PostResult ClassifyFutaba(HttpResponseMessage response, string html, PostRequest request)
+    {
+        var bodyText = ExtractBodyText(html);
+        var snippet = bodyText.Length > 400 ? bodyText[..400] : bodyText;
+        if (!response.IsSuccessStatusCode)
+            return new PostResult(PostOutcome.BlockedByRule, ShortenForUser(bodyText), snippet);
+
+        if (bodyText.Contains("拒絶", StringComparison.Ordinal) ||
+            bodyText.Contains("エラー", StringComparison.OrdinalIgnoreCase) ||
+            bodyText.Contains("投稿に失敗", StringComparison.Ordinal) ||
+            bodyText.Contains("認証", StringComparison.Ordinal))
+            return new PostResult(PostOutcome.BlockedByRule, ShortenForUser(bodyText), snippet);
+
+        var finalUri = response.RequestMessage?.RequestUri?.AbsoluteUri ?? "";
+        var expectedThread = request.IsReply
+            ? $"/{request.Board.DirectoryName}/res/{request.ThreadKey}.htm"
+            : "/res/";
+        if (finalUri.Contains(expectedThread, StringComparison.OrdinalIgnoreCase))
+            return new PostResult(PostOutcome.Success, "", snippet);
+
+        // 標準 futaba.php は HTTP redirect ではなく、正常登録後に
+        // <META HTTP-EQUIV="refresh" ...> + 「画面を切り替えます」を返す。
+        // 拒否・認証画面は上で先に除外しているため、この完了画面だけを成功とする。
+        if (bodyText.Contains("画面を切り替えます", StringComparison.Ordinal) &&
+            Regex.IsMatch(html, "<meta\\b[^>]*http-equiv\\s*=\\s*['\\\"]?refresh", RegexOptions.IgnoreCase))
+            return new PostResult(PostOutcome.Success, "", snippet);
+
+        return new PostResult(PostOutcome.UnknownError,
+            string.IsNullOrWhiteSpace(bodyText) ? "ふたばの投稿結果を確認できませんでした。" : ShortenForUser(bodyText), snippet);
     }
 
     /// <summary>HTTP レスポンスの Set-Cookie / 現在の CookieJar / HTML 抜粋を Debug 出力に流す。
