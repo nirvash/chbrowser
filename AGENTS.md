@@ -1,4 +1,7 @@
 # AGENTS.md
+## upstream 追従履歴
+
+upstream 由来の修正を現行コードへ手動移植した記録は [docs/upstream-followup.md](docs/upstream-followup.md) にまとめる。
 
 コード変更時のための実装メモ。利用者向け情報は README.md を参照。
 本書はコードリーディングで判明した基本設計・内部構造の知識ベースであり、後続の改修で再利用することを意図する。
