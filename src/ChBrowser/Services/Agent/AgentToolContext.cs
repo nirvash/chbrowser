@@ -15,12 +15,16 @@ public sealed class AgentToolContext
     /// <see cref="ToolRuntime"/> はこれを毎回参照するので、差し替えると以降の Worker が新スレを使う。</summary>
     public ThreadToolset? Thread { get; set; }
 
+    /// <summary>お気に入りを管理する共有ツールセット。</summary>
+    public FavoritesToolset? Favorites { get; }
+
     /// <summary>セッション共有の archive。並列 Worker から同時追記されるためスレッドセーフ化が要る (§5.3)。</summary>
     public ChatArchive Archive { get; }
 
-    public AgentToolContext(ThreadToolset? thread, ChatArchive archive)
+    public AgentToolContext(ThreadToolset? thread, FavoritesToolset? favorites, ChatArchive archive)
     {
         Thread  = thread;
+        Favorites = favorites;
         Archive = archive;
     }
 }

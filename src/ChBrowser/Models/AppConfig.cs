@@ -105,7 +105,7 @@ public sealed record AppConfig
     public bool NgAiDisableReasoning { get; init; } = true;
 
     // ---- MCP サーバ (外部公開) ----
-    // ChBrowser のスレ読み取り / 横断 / 開く 系ツール (14 個) を MCP (Model Context Protocol) で
+    // ChBrowser のスレ読み取り / 横断 / 開く / お気に入り管理ツールを MCP (Model Context Protocol) で
     // 外部の MCP クライアント (Claude Desktop / Cursor 等) に公開する。動作中の本体プロセス内で
     // localhost の HTTP サーバを立て、Streamable HTTP トランスポートで待ち受ける。
     // 既定 OFF — 有効化するまでポートは一切開かない (= 明示オプトイン)。

@@ -115,9 +115,10 @@ public class PaneLayoutPanel : Panel
         // 「まだ余裕ある」と誤認して折り返しが発生しなくなるため。
         var size = ToFinite(availableSize);
         RecomputeLayoutRects(size);
+        UpdateCollapsedTabs(new Rect(0, 0, size.Width, size.Height));
         foreach (UIElement child in InternalChildren)
         {
-            var rect = TryGetLeafRect(child);
+            var rect = TryGetLeafRect(child) ?? TryGetCollapsedBarRect(child);
             child.Measure(rect.HasValue ? new Size(rect.Value.Width, rect.Value.Height) : new Size(0, 0));
         }
         return size;
@@ -126,13 +127,13 @@ public class PaneLayoutPanel : Panel
     protected override Size ArrangeOverride(Size finalSize)
     {
         RecomputeLayoutRects(finalSize);
+        UpdateCollapsedTabs(new Rect(0, 0, finalSize.Width, finalSize.Height));
         foreach (UIElement child in InternalChildren)
         {
-            var rect = TryGetLeafRect(child);
+            var rect = TryGetLeafRect(child) ?? TryGetCollapsedBarRect(child);
             // PaneId 未割当 / レイアウト不在の子は (0,0,0,0) に潰して非表示扱い。
             child.Arrange(rect ?? new Rect(0, 0, 0, 0));
         }
-        UpdateCollapsedTabs();
         return finalSize;
     }
 
@@ -149,6 +150,9 @@ public class PaneLayoutPanel : Panel
     /// <summary>子の leaf キーに対応する矩形を返す (= 未割当なら null)。</summary>
     private Rect? TryGetLeafRect(UIElement child)
         => GetChildKey(child) is string key && _leafRects.TryGetValue(key, out var rect) ? rect : null;
+
+    private Rect? TryGetCollapsedBarRect(UIElement child)
+        => _collapsedButtonRects.TryGetValue(child, out var rect) ? rect : null;
 
     /// <summary>infinity 成分を 0 にした Size を返す (= MeasureOverride で渡される無限大対策)。</summary>
     private static Size ToFinite(Size s) => new(
@@ -501,19 +505,31 @@ public class PaneLayoutPanel : Panel
     {
         InvalidateMeasure();
         InvalidateArrange();
-        UpdateCollapsedTabs();
+        UpdateCollapsedTabs(new Rect(0, 0, ActualWidth, ActualHeight));
         RaiseLayoutChanged();
     }
 
-    private void UpdateCollapsedTabs()
+    private void UpdateCollapsedTabs(Rect panelRect)
     {
-        if (_layout is null || PresentationSource.FromVisual(this) is null) return;
-        foreach (var popup in _collapsedPopups) popup.IsOpen = false;
-        _collapsedPopups.Clear();
-
-        var panelRect = new Rect(0, 0, ActualWidth, ActualHeight);
-        foreach (var item in EnumerateCollapsed(_layout, panelRect, null, true))
+        var items = _layout is null
+            ? new List<(LayoutNode Node, Rect Rect, string Label, bool IsVerticalBar)>()
+            : EnumerateCollapsed(_layout, panelRect, null, true).ToList();
+        var currentNodes = items.Select(item => item.Node).ToHashSet();
+        foreach (var stale in _collapsedButtons.Keys.Where(node => !currentNodes.Contains(node)).ToList())
         {
+            Children.Remove(_collapsedButtons[stale]);
+            _collapsedButtonRects.Remove(_collapsedButtons[stale]);
+            _collapsedButtons.Remove(stale);
+        }
+
+        foreach (var item in items)
+        {
+            if (_collapsedButtons.TryGetValue(item.Node, out var existing))
+            {
+                _collapsedButtonRects[existing] = item.Rect;
+                continue;
+            }
+
             var button = new Button
             {
                 Content = new TextBlock
@@ -527,22 +543,11 @@ public class PaneLayoutPanel : Panel
                 ToolTip = $"{item.Label} を展開",
                 Padding = new Thickness(2),
                 Margin = new Thickness(1),
-                Width = Math.Max(0, item.Rect.Width),
-                Height = Math.Max(0, item.Rect.Height),
             };
             button.Click += (_, _) => ExpandCollapsed(item.Node);
-            var popup = new Popup
-            {
-                PlacementTarget = this,
-                Placement = PlacementMode.Custom,
-                AllowsTransparency = true,
-                StaysOpen = true,
-                CustomPopupPlacementCallback = (_, _, _) =>
-                    new[] { new CustomPopupPlacement(new Point(item.Rect.X, item.Rect.Y), PopupPrimaryAxis.None) },
-                Child = button,
-            };
-            _collapsedPopups.Add(popup);
-            popup.IsOpen = true;
+            _collapsedButtons.Add(item.Node, button);
+            _collapsedButtonRects.Add(button, item.Rect);
+            Children.Add(button);
         }
     }
 
@@ -653,7 +658,8 @@ public class PaneLayoutPanel : Panel
     private PaneDropZoneOverlay?  _overlay;
     private bool                  _isPaneDragging;
     private string?               _paneDragSourceKey;
-    private readonly List<Popup>  _collapsedPopups = new();
+    private readonly Dictionary<LayoutNode, Button> _collapsedButtons = new();
+    private readonly Dictionary<UIElement, Rect> _collapsedButtonRects = new();
 
     public PaneLayoutPanel()
     {

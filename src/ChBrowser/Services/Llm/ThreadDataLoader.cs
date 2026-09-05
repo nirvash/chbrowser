@@ -79,8 +79,14 @@ public sealed class ThreadDataLoader
     }
 
     /// <summary>板のスレ一覧を取得。ディスクキャッシュ優先、無ければサーバ取得。</summary>
-    public async Task<IReadOnlyList<ThreadInfo>> ListThreadsAsync(Board board, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ThreadInfo>> ListThreadsAsync(
+        Board board, CancellationToken ct = default, int? futabaSort = null)
     {
+        // ふたばの並び順指定はカタログ取得時のクエリでしか効かない。
+        // ディスクキャッシュは既定順のカタログなので、指定時は必ず取得し直す。
+        if (futabaSort is not null && FutabaUrl.IsFutabaHost(board.Host))
+            return await _subject.FetchAndSaveAsync(board, futabaSort, ct).ConfigureAwait(false);
+
         var disk = await _subject.LoadFromDiskAsync(board, ct).ConfigureAwait(false);
         if (disk.Count > 0) return disk;
         return await _subject.FetchAndSaveAsync(board, ct).ConfigureAwait(false);

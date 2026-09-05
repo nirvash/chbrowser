@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using ChBrowser.Models;
+using ChBrowser.Services.Url;
 
 namespace ChBrowser.Services.Llm;
 
@@ -533,7 +534,8 @@ public sealed class ThreadToolset : IAgentToolset
                 {
                     name        = "list_threads",
                     description = "指定した板のスレッド一覧を返す (subject.txt ベース)。" +
-                                  "各スレに post_count (レス数) と momentum (勢い = 1 日あたりレス数の概算) が付く。" +
+                                  "5ch 系は各スレに post_count (レス数) と momentum (勢い = 1 日あたりレス数の概算) が付く。" +
+                                  "ふたばではサーバーの勢順を使用し、数値の勢いは提供されないため momentum は null、momentum_rank が順位になる。" +
                                   "「勢いが高い / 伸びているスレを探して」のような依頼には sort=\"momentum\" を指定して上位を取る。" +
                                   "**2 つの使い方を意識して呼び分けること**:\n" +
                                   "(a) **単純な単語マッチで十分な場合** → keyword を指定。例: スレタイにそのまま「初音ミク」と入ってる確率が高いケース。\n" +
@@ -1699,8 +1701,11 @@ public sealed class ThreadToolset : IAgentToolset
         if (args.TryGetProperty("sort", out var sortEl) && sortEl.ValueKind == JsonValueKind.String)
             sortMode = (sortEl.GetString() ?? "default").Trim().ToLowerInvariant();
 
-        var board   = _dataLoader.ResolveBoard(host, dir);
-        var threads = await _dataLoader.ListThreadsAsync(board, ct).ConfigureAwait(false);
+        var board          = _dataLoader.ResolveBoard(host, dir);
+        var isFutaba       = FutabaUrl.IsFutabaHost(board.Host);
+        var futabaMomentum = isFutaba && sortMode == "momentum";
+        var threads = await _dataLoader.ListThreadsAsync(
+            board, ct, futabaSort: futabaMomentum ? 6 : null).ConfigureAwait(false);
 
         IEnumerable<ThreadInfo> filtered = threads;
         if (!isScanMode)
@@ -1714,6 +1719,7 @@ public sealed class ThreadToolset : IAgentToolset
 
         IEnumerable<ThreadInfo> ordered = sortMode switch
         {
+            "momentum" when futabaMomentum => matchedList,
             "momentum"   => matchedList.OrderByDescending(t => ComputeMomentum(t.Key, t.PostCount)),
             "post_count" => matchedList.OrderByDescending(t => t.PostCount),
             _            => matchedList,   // default = subject.txt 順 (= 板の既定の並び)
@@ -1723,12 +1729,14 @@ public sealed class ThreadToolset : IAgentToolset
         var totalAll  = threads.Count;
         var truncated = picked.Length < matched;
 
-        var list = picked.Select(t => new
+        var list = picked.Select((t, index) => new
         {
             key         = t.Key,
             title       = t.Title,
             post_count  = t.PostCount,
-            momentum    = ComputeMomentum(t.Key, t.PostCount),   // 勢い = 1 日あたりレス数の概算
+            momentum    = isFutaba ? (int?)null : ComputeMomentum(t.Key, t.PostCount),
+            momentum_rank = futabaMomentum ? index + 1 : (int?)null,
+            momentum_source = isFutaba ? "futaba_catalog_order" : "posts_per_day",
             order       = t.Order,
             thread_url  = $"https://{board.Host}/test/read.cgi/{board.DirectoryName}/{t.Key}/",
         }).ToArray();

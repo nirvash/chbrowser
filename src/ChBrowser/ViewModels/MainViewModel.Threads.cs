@@ -530,7 +530,7 @@ public sealed partial class MainViewModel
         var toolset = BuildToolsetForTab(tab);
         var title   = ResolveAiChatTitle(tab);
         var guide   = AiBoardGuide?.Load() ?? "";   // 開くたびに最新の説明テキストを読み込む
-        var vm      = new AiChatViewModel(_llmClient, title, toolset, CurrentConfig, guide);
+        var vm      = new AiChatViewModel(_llmClient, title, toolset, BuildFavoritesToolset(), CurrentConfig, guide);
         var window       = new ChBrowser.Views.AiChatWindow(vm, System.Windows.Application.Current?.MainWindow, Shortcuts);
         _aiChatWindow    = window;
         _aiChatViewModel = vm;
@@ -592,6 +592,9 @@ public sealed partial class MainViewModel
             showPostInAppAsync:       showPost);
     }
 
+    private FavoritesToolset BuildFavoritesToolset()
+        => new(Favorites, RefreshFavoritedStateOfAllTabs);
+
     /// <summary>ツール経由の差分取得 (<c>RefreshThreadAsync</c> のラッパ)。
     /// ネットワーク失敗は RefreshThreadAsync 内部で StatusMessage に吸収されるため、
     /// 呼び出し元には結果サマリを文字列で返す。</summary>
@@ -612,14 +615,14 @@ public sealed partial class MainViewModel
         => string.IsNullOrEmpty(tab?.Title) ? "(スレッド指定なし)" : tab.Title!;
 
     // ===== MCP サーバ向け公開 (ChBrowser.Services.Mcp.IMcpToolHost) =====
-    // 内蔵 AI チャットの Worker が使うものと同じ 14 ツール (ThreadToolset) を外部 MCP クライアントへ公開する。
+    // 内蔵 AI チャットの Worker が使う公開ツールセットを外部 MCP クライアントへ公開する。
     // ツール定義は attached の有無に依らず一定なので非アタッチ toolset から取得。実行は「現在の選択スレ」に
     // 束ねた toolset で行い、attached 系ツール (get_thread_state / get_my_posts) や thread_url 省略も
     // 「今 ChBrowser で表示中のスレ」を対象にする。tab.Posts / open_*_in_app は UI 専有のため UI スレッドで実行。
 
     /// <inheritdoc/>
     public IReadOnlyList<object> GetMcpToolDefinitions()
-        => ToolCatalog.Definitions(ToolCatalog.PublicToolsets(BuildToolsetForTab(null)));
+        => ToolCatalog.Definitions(ToolCatalog.PublicToolsets(BuildToolsetForTab(null), BuildFavoritesToolset()));
 
     /// <inheritdoc/>
     public System.Threading.Tasks.Task<string> CallMcpToolAsync(
@@ -637,7 +640,7 @@ public sealed partial class MainViewModel
     private async System.Threading.Tasks.Task<string> CallMcpToolCoreAsync(
         string name, string argumentsJson, System.Threading.CancellationToken ct)
     {
-        var toolsets = ToolCatalog.PublicToolsets(BuildToolsetForTab(SelectedThreadTab));
+        var toolsets = ToolCatalog.PublicToolsets(BuildToolsetForTab(SelectedThreadTab), BuildFavoritesToolset());
         var routed = await ToolCatalog.TryExecuteAsync(toolsets, name, argumentsJson, ct).ConfigureAwait(true);
         return routed ?? System.Text.Json.JsonSerializer.Serialize(new { error = $"未知のツール: {name}" });
     }

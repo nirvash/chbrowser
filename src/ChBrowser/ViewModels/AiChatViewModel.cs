@@ -31,6 +31,7 @@ public sealed partial class AiChatViewModel : ObservableObject
     private readonly IAgentEngine     _engine;
     /// <summary>スレッドにアタッチされたチャットなら ThreadToolset を保持。<see cref="SwitchContext"/> で差し替え可。</summary>
     private ThreadToolset?            _threadToolset;
+    private readonly FavoritesToolset? _favoritesToolset;
 
     /// <summary>ウィンドウタイトルに出すスレタイトル。<see cref="SwitchContext"/> で更新可能。</summary>
     [ObservableProperty] private string _threadTitle = "";
@@ -61,17 +62,19 @@ public sealed partial class AiChatViewModel : ObservableObject
         LlmClient      llmClient,
         string         threadTitle,
         ThreadToolset? threadToolset,
+        FavoritesToolset? favoritesToolset,
         AppConfig      config,
         string         aiBoardGuide = "")
     {
         _llmClient      = llmClient;
         _threadToolset  = threadToolset;
+        _favoritesToolset = favoritesToolset;
         _aiBoardGuide   = aiBoardGuide ?? "";
         ThreadTitle     = string.IsNullOrEmpty(threadTitle) ? "(スレッド指定なし)" : threadTitle;
         ContextSubtitle = ComputeContextSubtitle(threadToolset);
 
         // 共有ツール土台 + 新 3 レイヤーエンジン。会話/finding はエンジン内で永続 (D8)。
-        _agentCtx = new AgentToolContext(_threadToolset, _archive);
+        _agentCtx = new AgentToolContext(_threadToolset, _favoritesToolset, _archive);
         _engine   = new NewAgentEngine(
             host:               this,
             ctx:                _agentCtx,

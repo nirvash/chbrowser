@@ -29,12 +29,13 @@ public sealed class ToolRuntime
 
     /// <summary>現在のスレ toolset (= context 切替で差し替わるので毎回 ctx から読む)。</summary>
     private ThreadToolset? Thread => _ctx.Thread;
+    private FavoritesToolset? Favorites => _ctx.Favorites;
 
     /// <summary>Worker に提示するツール定義。公開ツール (= <see cref="ToolCatalog"/> 由来・MCP と同一表面)
     /// + Worker 内部専用の <c>recall_archive</c> (id 指定)。<c>list_archive</c> は含めない。</summary>
     public IReadOnlyList<object> GetWorkerToolDefinitions()
     {
-        var defs = new List<object>(ToolCatalog.Definitions(ToolCatalog.PublicToolsets(Thread)));
+        var defs = new List<object>(ToolCatalog.Definitions(ToolCatalog.PublicToolsets(Thread, Favorites)));
         defs.Add(RecallArchiveToolDef());
         return defs;
     }
@@ -64,7 +65,7 @@ public sealed class ToolRuntime
             {
                 // 公開ツール (= ToolCatalog 由来・MCP と同一表面) を定義名でルーティングして実行。
                 var routed = await ToolCatalog
-                    .TryExecuteAsync(ToolCatalog.PublicToolsets(Thread), name, args, ct)
+                    .TryExecuteAsync(ToolCatalog.PublicToolsets(Thread, Favorites), name, args, ct)
                     .ConfigureAwait(true);
                 if (routed is null)
                     return Fail($"ツール \"{name}\" はこのチャットでは利用できません");

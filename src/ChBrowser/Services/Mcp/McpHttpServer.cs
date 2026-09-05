@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 namespace ChBrowser.Services.Mcp;
 
 /// <summary>
-/// ChBrowser 内蔵ツール (スレ読み取り / 横断 / 開く 系 14 個) を MCP (Model Context Protocol) で
+/// ChBrowser 内蔵ツール (スレ読み取り / 横断 / 開く / お気に入り管理) を MCP (Model Context Protocol) で
 /// 外部の MCP クライアント (Claude Desktop / Cursor 等) に公開する localhost HTTP サーバ。
 ///
 /// <para><b>トランスポート</b>: MCP の Streamable HTTP を最小実装する。動作中の本体プロセス内で

@@ -135,7 +135,7 @@
         <Separator Margin="0,18,0,12" />
         <TextBlock Text="MCP サーバ (外部公開)" FontWeight="SemiBold" Margin="0,0,0,4" />
         <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,0,0,8">
-            ChBrowser のスレッド読み取り・板/スレ横断・アプリ操作ツール (14 個) を MCP (Model Context Protocol) で
+            ChBrowser のスレッド読み取り・板/スレ横断・アプリ操作・お気に入り管理ツールを MCP (Model Context Protocol) で
             外部の MCP クライアント (Claude Desktop / Cursor 等) に公開します。
             動作中の本体プロセス内で localhost の HTTP サーバを立てて待ち受けます (接続先 URL は
             <Run FontFamily="Consolas">http://127.0.0.1:&lt;ポート&gt;/mcp</Run>)。

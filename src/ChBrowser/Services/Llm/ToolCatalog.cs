@@ -24,10 +24,11 @@ public static class ToolCatalog
     /// <param name="thread">スレ読み取り・横断・開く 系 (= attached / 現在スレに束ねた toolset)。null 可。</param>
     /// 将来ツール群を増やす場合: 引数を足し、下のリストに <c>list.Add(...)</c> するだけ
     /// (= エージェントと MCP の両方へ自動反映)。</summary>
-    public static IReadOnlyList<IAgentToolset> PublicToolsets(ThreadToolset? thread)
+    public static IReadOnlyList<IAgentToolset> PublicToolsets(ThreadToolset? thread, FavoritesToolset? favorites = null)
     {
         var list = new List<IAgentToolset>();
         if (thread is not null) list.Add(thread);
+        if (favorites is not null) list.Add(favorites);
         list.Add(new WebSearchToolset());   // WEB 検索 / ページ取得 (DuckDuckGo)。スレ非アタッチでも使える。
         // 将来の公開ツール群はここに追加する (例: list.Add(favoritesToolset);)。
         return list;
