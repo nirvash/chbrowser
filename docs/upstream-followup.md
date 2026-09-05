@@ -27,8 +27,15 @@
 - `ThreadTabViewModel.HiddenPostNumbers` にhidden済み番号を累積し、`NgService` の判定へ渡す。
 - `string` / `system` の暫定対応と同様、回帰テストを追加して確認。
 
+### `e562e1a` scom-v製動画にラベルを付けるように変更
+
+- 対応コミット: `cfaab97` (`main`)
+- 動画メタデータの `software` タグから `scom-v` / `scom` を判定。
+- ComfyUIグラフ解析結果を維持しつつ、生成アプリ名をGeneratorラベルへ反映。
+- バージョン付き・JSON引用符付きのタグを正規化する回帰テストを追加。
+
 ## 未取り込み
 
-- `e562e1a`: scom-v製動画へのラベル追加
+現在なし。
 
 upstreamコミットをそのままrebase/cherry-pickするのではなく、フォーク側の独自変更を維持したまま、必要なロジックを手動移植している。
