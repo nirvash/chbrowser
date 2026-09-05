@@ -1469,7 +1469,7 @@
      *  @param incNumbers 対象レス番号 (= section B の forest を組む元。昇順前提)。
      *  @param idNumbers  id を振るレス番号の Set。renderIncrementalForestNode の omitId=!has(number) に渡す。
      *    - ケース1 (差分 / Aは新着を含まない): 新着レスに id を振る (= incNumbers と同じ Set)。新着の正本がBにしか無いため。
-     *    - ケース2 (フル描画 / Aが全レスの完全ツリー): 誰にも id を振らない (= 空 Set)。正本は全てA側にあり、Bは複製のため。 */
+     *    - ケース2 (フル描画): A は既読のみ。新着の正本は B に配置し、親の再掲だけ id を省く。 */
     function renderDedupTree2SectionB(incNumbers, idNumbers) {
         const root = document.getElementById('posts');
         if (!root) return;
@@ -1502,8 +1502,8 @@
     }
 
     /** ケース2 (フル描画 / 新規オープン / resync): 「ラベル位置 (markPostNumber) 以降の全レス」から section B を作る。
-     *  これらのレスは section A の完全ツリーにも id 付きで存在するため、B 側は全て id 無しの複製として描く
-     *  (= idNumbers を空 Set にして全ノード omitId=true)。markPostNumber が無ければ section B は作らない。 */
+     *  A への新着挿入は insertOnArrival が抑止し、B に新着の正本を置く。
+     *  markPostNumber が無ければ section B は作らない。 */
     function rebuildDedupTree2SectionBFull() {
         const root = document.getElementById('posts');
         if (!root) return;
@@ -1517,7 +1517,7 @@
         for (const p of allPosts) {
             if (p.number >= markPostNumber) incNumbers.push(p.number);
         }
-        renderDedupTree2SectionB(incNumbers, /*idNumbers*/ new Set());
+        renderDedupTree2SectionB(incNumbers, new Set(incNumbers));
     }
 
     /** ツリー (重複あり) の 1 レス分 HTML。
@@ -1596,8 +1596,8 @@
             for (const p of allPosts) replayPostIntoDom(p);
         }
 
-        // ケース2 (dedupTree2 モードのフル描画): A の完全ツリーの後ろに、ラベル以降のレスを
-        // id 無しの複製 forest として section B に描く (= 同じレスが A と B の両方に出る)。
+        // ケース2 (dedupTree2 モードのフル描画): A の既読ツリーの後ろに、新着の正本と
+        // 文脈用の親を section B に描く。
         // 他モードは本フックを持たないので無害。updateNewPostsMarkBand より前に呼んでラベルを B 直前へ置けるようにする。
         if (vm().buildSectionBOnFullRender) vm().buildSectionBOnFullRender();
 
@@ -4982,6 +4982,9 @@ function findReadProgressMaxNumber() {
         //      ただし構造に影響しない表示 (返信数バッジ / post-no 色 / ID 件数・色) は section A にも差分適用する。
         dedupTree2: {
             insertOnArrival(p, root) {
+                // 全件描画でも新着の正本は末尾の B に配置する。A にも描くと
+                // resync 後に新着バッチ全体が複製され、次の更新でも残ってしまう。
+                if (markPostNumber != null && p.number >= markPostNumber) return;
                 // usesBulkDeltaRebuild()=true なので delta はここに来ない (= 本メソッドは非 delta 専用)。
                 // 後方参照アンカーが 1 個だけなら親の配下に embed、それ以外は末尾 primary。
                 // 親 (= 参照先) は番号が小さく既に DOM に居るので getElementById で見つかる。
@@ -5013,7 +5016,7 @@ function findReadProgressMaxNumber() {
             // ケース1 (差分): ライブ section B を sessionNewPostNumbers (id 付き) から作り直す
             //   (= 凍結済み / section A には触れない)。
             rebuildSectionBDelta()    { rebuildDedupTree2SectionBDelta(); },
-            // ケース2 (フル描画 / resync): A の完全ツリーの後ろに、ラベル以降のレスを id 無しの複製 forest として
+            // ケース2 (フル描画 / resync): A の既読ツリーの後ろに、ラベル以降のレスを正本として
             //   section B に描く。renderCurrentViewMode と appendPosts(非 delta) の末尾から呼ばれる。
             buildSectionBOnFullRender() { rebuildDedupTree2SectionBFull(); },
         },
@@ -5209,8 +5212,8 @@ function findReadProgressMaxNumber() {
             if (vm().rebuildSectionBDelta) vm().rebuildSectionBDelta();
             else rebuildSectionB();
         } else if (vm().buildSectionBOnFullRender) {
-            // 非 delta (= resync 等のフル描画) の dedupTree2: A の完全ツリーの後ろに
-            // ケース2 の section B (ラベル以降のレスの id 無し複製 forest) を描く。
+            // 非 delta (= resync 等のフル描画) の dedupTree2: A の既読ツリーの後ろに
+            // ケース2 の section B (新着の正本と文脈用の親) を描く。
             vm().buildSectionBOnFullRender();
         }
 
