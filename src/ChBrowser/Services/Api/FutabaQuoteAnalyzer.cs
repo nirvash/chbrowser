@@ -81,9 +81,11 @@ internal static class FutabaQuoteAnalyzer
                 }
                 else
                 {
-                    var blockParents = evidence.Where(e => block.Lines.Contains(e.Text, StringComparer.Ordinal))
-                        .Select(e => e.Number).Distinct().Take(2).ToArray();
-                    parent = blockParents.Length == 1 ? blockParents[0] : null;
+                var blockParents = evidence.Where(e => block.Lines.Contains(e.Text, StringComparer.Ordinal))
+                    .Select(e => e.Number).Distinct().Take(2).ToArray();
+                // A single quote block can span adjacent source posts. Keep the first
+                // matched source as the parent, matching Futaba's multi-quote rule.
+                parent = blockParents.Length > 0 ? blockParents[0] : null;
                 }
                 var mediaUrls = attachments
                     .Where(pair => block.Lines.Any(line => line.Contains(pair.Key, StringComparison.Ordinal)))
@@ -91,13 +93,24 @@ internal static class FutabaQuoteAnalyzer
                     .Distinct(StringComparer.Ordinal).Take(2).ToArray();
                 blocks.Add(block with { ParentNumber = parent, MediaUrls = mediaUrls });
             }
-            if (blocks.Count > 1 && blocks[0].ParentNumber is int firstParent)
+            if (blocks.Count > 0 && blocks[0].ParentNumber is int firstParent)
             {
                 parents.RemoveAll(number => number != firstParent);
                 evidence.RemoveAll(item => item.Number != firstParent);
-                ambiguous.Clear();
-                for (var i = 0; i < blocks.Count; i++)
-                    if (blocks[i].ParentNumber is null) blocks[i] = blocks[i] with { ParentNumber = firstParent };
+                if (blocks.Count > 1)
+                {
+                    ambiguous.Clear();
+                    for (var i = 0; i < blocks.Count; i++)
+                        if (blocks[i].ParentNumber is null) blocks[i] = blocks[i] with { ParentNumber = firstParent };
+                }
+                else if (ambiguous.Count > 0 && ambiguous.All(text =>
+                    posts.FirstOrDefault(candidate => candidate.Number == firstParent)?.FutabaQuoteInfo?.Lines
+                        .Any(line => Text(line).Contains(text, StringComparison.Ordinal)) == true))
+                {
+                    // A line can match another post as well (e.g. "Astra" vs
+                    // "Astra版"). An anchored block still belongs to its first parent.
+                    ambiguous.Clear();
+                }
             }
             var state = ambiguous.Count > 0 ? (parents.Count > 0 ? "ambiguous" : "unresolved")
                 : (parents.Count > 0 ? "resolved" : "unresolved");

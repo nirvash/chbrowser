@@ -48,12 +48,13 @@ test('短文・引用元なしは接続しない', () => {
   const result = FutabaQuotes.resolve([post(1, [['外部記事の引用']]), post(2, [['はい', 1]]), post(3, [['存在しない文章', 1]])]);
   assert.deepEqual(result.slice(1).map(x => x.parentNumbers), [[], []]);
 });
-test('一部だけ一致する引用ブロックは曖昧として親を返さない', () => {
+test('親に含まれる曖昧な短い引用はブロックの最初の親へ吸収する', () => {
   const result = FutabaQuotes.resolve([
-    post(1, [['一致する本文']]), post(2, [['一致する本文', 1], ['外部記事の引用', 1], ['返答']])
+    post(1, [['一意な本文'], ['短い引用']]), post(2, [['短い引用']]),
+    post(3, [['一意な本文', 1], ['短い引用', 1], ['返答']])
   ]);
-  assert.equal(result[1].state, 'ambiguous');
-  assert.deepEqual(result[1].parentNumbers, [1]);
+  assert.equal(result[2].state, 'resolved');
+  assert.deepEqual(result[2].parentNumbers, [1]);
 });
 test('引用2行と本文1行は引用ブロック全体を解決できる', () => {
   const result = FutabaQuotes.resolve([

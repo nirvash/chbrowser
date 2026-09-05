@@ -72,6 +72,9 @@
                 }
                 const blockParents = evidence.filter(e => values.includes(e.text)).map(e => Number(e.number));
                 let blockParent = [...new Set(blockParents)];
+                // A single quote block can span adjacent source posts. Keep the first
+                // matched source as the parent, matching Futaba's multi-quote rule.
+                if (blockParent.length > 1) blockParent = [blockParent[0]];
                 if (Math.max(...depths) >= 2) {
                     const query = values.map((text, j) => ({ depth: Math.max(0, depths[j] - 1), text }));
                     const candidates = contextCandidates(posts, i, query);
@@ -87,12 +90,18 @@
                     parentNumber: blockParent.length === 1 ? blockParent[0] : null, mediaUrls: mediaUrls.slice(0, 2) });
                 start = end;
             }
-            if (blocks.length > 1 && blocks[0].parentNumber != null) {
+            if (blocks.length > 0 && blocks[0].parentNumber != null) {
                 const firstParent = Number(blocks[0].parentNumber);
                 for (const n of [...parentNumbers]) if (n !== firstParent) parentNumbers.delete(n);
                 for (let j = evidence.length - 1; j >= 0; j--) if (Number(evidence[j].number) !== firstParent) evidence.splice(j, 1);
-                ambiguous.length = 0;
-                for (const block of blocks) if (block.parentNumber == null) block.parentNumber = firstParent;
+                if (blocks.length > 1) {
+                    ambiguous.length = 0;
+                    for (const block of blocks) if (block.parentNumber == null) block.parentNumber = firstParent;
+                } else if (ambiguous.length > 0) {
+                    const firstPost = posts.find(candidate => Number(candidate.number) === firstParent);
+                    const firstLines = candidateLines(firstPost || {});
+                    if (ambiguous.every(text => firstLines.some(source => source.includes(text)))) ambiguous.length = 0;
+                }
             }
             const state = ambiguous.length > 0 ? (parentNumbers.size ? 'ambiguous' : 'unresolved') : (parentNumbers.size ? 'resolved' : 'unresolved');
             return { number, parentNumbers: [...parentNumbers], state, evidence, ambiguousLines: ambiguous, blocks };

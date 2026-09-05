@@ -52,6 +52,16 @@ try
         P(100, "first quoted source"), P(200, "second quoted source"),
         new Post(300, "", "", "", "", "", null, null, new([new("first quoted source", 1, "", ""), new("reply", 0, "", ""), new("unknown quoted source", 1, "", "")], [], ""))]);
     Check(multiple[2].FutabaQuoteResolution is { State: "resolved" } resolved && resolved.ParentNumbers.SequenceEqual([100]), "multiple quote blocks use first parent");
+    var spanning = FutabaQuoteAnalyzer.Analyze([
+        new Post(2613, "", "", "", "", "", null, null,
+            new([new("昨日脳内物質おじさんをsolで出力してたから", 0, "", ""), new("Astra版と比べてみよう", 0, "", ""), new("solと", 0, "", "")], [], "")),
+        P(2641, "Astra"),
+        new Post(8487, "", "", "", "", "", null, null,
+            new([new("昨日脳内物質おじさんをsolで出力してたから", 1, "", ""), new("Astra版と比べてみよう", 1, "", ""), new("solと", 1, "", ""), new("Astra", 1, "", ""), new("一気に哀愁漂う感じになったな", 0, "", ""), new("すき", 0, "", "")], [], ""))]);
+    var spanningResult = spanning[2].FutabaQuoteResolution;
+    Check(spanningResult is not null && spanningResult.State == "resolved"
+        && spanningResult!.ParentNumbers.SequenceEqual([2613])
+        && spanningResult.Blocks?.FirstOrDefault()?.ParentNumber == 2613, "spanning quote block uses first source parent");
     var parsed = FutabaThreadClient.Parse(Encoding.GetEncoding(932).GetBytes(
         "<div class=thre><span class=cno>No.1</span><blockquote>base</blockquote></div>" +
         "<td class=rtd><span class=cno>No.2</span><blockquote><font color=\"#789922\">&gt;one<br><font color=\"#789922\">&gt;&gt;two</font><br></font>reply</blockquote></td>"), uri);
