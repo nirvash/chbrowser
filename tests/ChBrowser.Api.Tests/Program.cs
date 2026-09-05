@@ -68,3 +68,10 @@ if (!firstBatch.HiddenNumbers.SetEquals([1]) || !secondBatch.HiddenNumbers.SetEq
     throw new Exception("Cross-batch NG chain was not propagated");
 
 Console.WriteLine("PASS NG chain propagates from previously hidden posts");
+
+var appMethod = typeof(AiImageMetadataService).GetMethod(
+    "DetectVideoAppFromSoftware", BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new MissingMethodException(typeof(AiImageMetadataService).FullName, "DetectVideoAppFromSoftware");
+var appLabel = (string?)appMethod.Invoke(null, [new Dictionary<string, string> { ["software"] = "\"scom-v 0.1.0\"" }]);
+if (appLabel != "scom-v") throw new Exception($"Unexpected video app label: {appLabel}");
+Console.WriteLine("PASS scom-v video software tag gets a stable generator label");
