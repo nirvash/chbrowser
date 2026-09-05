@@ -14,9 +14,11 @@ namespace ChBrowser.Services.Api;
 /// <summary>Converts Futaba Channel catalog HTML into the existing thread-list model.</summary>
 public sealed class FutabaCatalogClient
 {
-    // ふたばのカタログ設定 Cookie: 横14・縦6・文字数100・文字位置下・画像サイズ小。
-    // cl=100 は公式設定画面で許可される最大値で、一覧用に短縮前に近い題名を取得する。
-    private const string CatalogSettingsCookie = "cxyl=14x6x100x0x0";
+    // ふたばのカタログ設定 Cookie: 横スレ数 x 縦スレ数 x 文字数 x 文字位置 x 画像サイズ。
+    // 表示用の列数とは独立し、取得漏れを避けるため 14 x 50 (= 最大700スレ) を要求する。
+    internal const int CatalogGridColumns = 14;
+    internal const int CatalogGridRows = 50;
+    internal const string CatalogSettingsCookie = "cxyl=14x50x100x0x0";
 
     private static readonly Regex CatalogCellRe = new(
         @"<td\b[^>]*>\s*<a\s+[^>]*href\s*=\s*(?:['""])?res/(?<key>\d+)\.htm(?:['""])?[^>]*>\s*<img\b[^>]*\bsrc\s*=\s*(?:['""])?(?<thumb>[^'""\s>]+)(?:['""])?[^>]*>.*?</a>\s*<br\s*/?>\s*<small>(?<title>.*?)</small>\s*<br\s*/?>\s*<font\s+[^>]*\bsize\s*=\s*(?:['""])?2(?:['""])?[^>]*>(?<count>\d+)</font>\s*</td>",

@@ -22,6 +22,9 @@ byte[] Html(string first = "original text", string quoted = "original text") => 
     + $"<td class=rtd><span class=cno>No.200</span><blockquote><font color=\"#789922\">&gt;{quoted}</font><br>reply</blockquote></td>");
 try
 {
+    Check(FutabaCatalogClient.CatalogGridColumns == 14
+        && FutabaCatalogClient.CatalogGridRows == 50
+        && FutabaCatalogClient.CatalogSettingsCookie == "cxyl=14x50x100x0x0", "catalog fetch grid covers 700 threads");
     var textResult = FutabaQuoteAnalyzer.Analyze([P(100, "some original text"), P(200, "original", 1)]);
     Check(textResult[1].FutabaQuoteResolution is { State: "resolved" } tr && tr.ParentNumbers.SequenceEqual([100]), "indexed substring matches");
     var ambiguous = FutabaQuoteAnalyzer.Analyze([P(100, "same original"), P(150, "same original"), P(200, "original", 1)]);
