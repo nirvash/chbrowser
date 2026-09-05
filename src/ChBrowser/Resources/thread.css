@@ -807,11 +807,12 @@ body.slot-resizing * {
 }
 .end-refresh-wheel-spinner {
     position: absolute;
-    left: 11px;
-    top: 11px;
+    left: 50%;
+    top: 50%;
     box-sizing: border-box;
     width: 22px;
     height: 22px;
+    margin: -11px 0 0 -11px;
     border: 3px solid rgba(255, 255, 255, 0.35);
     border-top-color: rgba(255, 255, 255, 0.96);
     border-radius: 50%;
