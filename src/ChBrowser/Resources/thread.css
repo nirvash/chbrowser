@@ -813,22 +813,15 @@ body.slot-resizing * {
     width: 22px;
     height: 22px;
     margin: -11px 0 0 -11px;
-    border: 3px solid rgba(255, 255, 255, 0.35);
-    border-top-color: rgba(255, 255, 255, 0.96);
-    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.96);
+    font-size: 27px;
+    font-family: "Segoe UI Symbol", "Arial Unicode MS", sans-serif;
+    line-height: 20px;
+    text-align: center;
     animation: end-refresh-wheel-spin 680ms linear infinite;
 }
 .end-refresh-wheel-spinner::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: -2px;
-    width: 7px;
-    height: 7px;
-    margin-left: -4px;
-    border-top: 2px solid rgba(255, 255, 255, 0.96);
-    border-right: 2px solid rgba(255, 255, 255, 0.96);
-    transform: rotate(-45deg);
+    content: '↻';
 }
 @keyframes end-refresh-wheel-spin { to { transform: rotate(360deg); } }
 @keyframes end-refresh-wheel-bounce {
