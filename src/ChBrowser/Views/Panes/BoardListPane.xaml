@@ -26,6 +26,7 @@
                 <TextBlock DockPanel.Dock="Left" Text="板一覧" Padding="6,4" FontWeight="SemiBold" />
                 <!-- 絞り込み検索: タイトルの右に残りスペースを fill (= last child)。
                      ペイン幅が狭くても × ボタンが画面内に残る。 -->
+                <ctrl:PaneCollapseButtons DockPanel.Dock="Right" PaneKind="BoardList" />
                 <ctrl:SearchBoxToggle Margin="2,2,4,2"
                                       HintText="板名を絞り込み (空欄で解除)"
                                       Text="{Binding BoardListSearchQuery, UpdateSourceTrigger=PropertyChanged}" />

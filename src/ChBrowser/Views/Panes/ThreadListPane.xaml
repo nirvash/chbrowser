@@ -72,6 +72,7 @@
                 <!-- ボタン群は右端固定。SearchBoxToggle はその間 (= last child fill) に配置して
                      ペイン幅が狭くても × ボタンが画面内に残るようにする。 -->
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ctrl:PaneCollapseButtons PaneKind="ThreadList" />
                     <Button Click="ToggleCatalogViewButton_Click" ToolTip="ふたばカタログ表示を切り替え">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource ToolbarIconButton}">

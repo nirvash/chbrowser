@@ -67,6 +67,8 @@ public enum LayoutOrientation
 [JsonDerivedType(typeof(SplitLayoutNode), typeDiscriminator: "split")]
 public abstract class LayoutNode
 {
+    /// <summary>画面から折りたたみ、左端の復元タブだけを表示する。</summary>
+    public bool IsCollapsed { get; set; }
     /// <summary>このノード以下の全 leaf を visit する (DFS)。</summary>
     public IEnumerable<LeafLayoutNode> EnumerateLeaves()
     {
@@ -126,7 +128,7 @@ public sealed class LeafLayoutNode : LayoutNode
     public LeafLayoutNode() { }
     public LeafLayoutNode(PaneId pane, string? instanceId = null) { Pane = pane; InstanceId = instanceId; }
 
-    public override LayoutNode Clone() => new LeafLayoutNode(Pane, InstanceId);
+    public override LayoutNode Clone() => new LeafLayoutNode(Pane, InstanceId) { IsCollapsed = IsCollapsed };
 }
 
 /// <summary>ツリーの内部ノード — 2 つの子を <see cref="Orientation"/> 方向に <see cref="Ratio"/> の比率で並べる。
@@ -147,7 +149,7 @@ public sealed class SplitLayoutNode : LayoutNode
         Second      = second;
     }
 
-    public override LayoutNode Clone() => new SplitLayoutNode(Orientation, Ratio, First.Clone(), Second.Clone());
+    public override LayoutNode Clone() => new SplitLayoutNode(Orientation, Ratio, First.Clone(), Second.Clone()) { IsCollapsed = IsCollapsed };
 }
 
 /// <summary>レイアウト操作の static ヘルパ集。

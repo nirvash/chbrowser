@@ -26,6 +26,8 @@ namespace ChBrowser.Controls;
 /// 該当 SplitNode の Ratio をリアルタイム更新する。</para></summary>
 public class PaneLayoutPanel : Panel
 {
+    private const double CollapsedPaneBarSize = 28.0;
+
     /// <summary>各 child が「自分は <see cref="Models.PaneId"/> = X だ」と表明するための添付プロパティ。
     /// PaneLayoutPanel が leaf 配置時に使う。</summary>
     public static readonly DependencyProperty PaneIdProperty =
@@ -65,6 +67,7 @@ public class PaneLayoutPanel : Panel
             _layout = value;
             InvalidateMeasure();
             InvalidateArrange();
+            RaiseLayoutChanged();
         }
     }
     private LayoutNode? _layout;
@@ -129,6 +132,7 @@ public class PaneLayoutPanel : Panel
             // PaneId 未割当 / レイアウト不在の子は (0,0,0,0) に潰して非表示扱い。
             child.Arrange(rect ?? new Rect(0, 0, 0, 0));
         }
+        UpdateCollapsedTabs();
         return finalSize;
     }
 
@@ -155,12 +159,21 @@ public class PaneLayoutPanel : Panel
     /// split 境界に対応する hit-test 用 Rect を <see cref="_splitterRects"/> に登録する。</summary>
     private void ComputeLayout(LayoutNode node, Rect rect)
     {
+        if (node.IsCollapsed) return;
         if (node is LeafLayoutNode leaf)
         {
             _leafRects[leaf.Key] = rect;
             return;
         }
         if (node is not SplitLayoutNode split) return;
+
+        if (split.First.IsCollapsed || split.Second.IsCollapsed)
+        {
+            GetCollapsedChildRects(split, rect, out var firstRect, out var secondRect);
+            if (!split.First.IsCollapsed) ComputeLayout(split.First, firstRect);
+            if (!split.Second.IsCollapsed) ComputeLayout(split.Second, secondRect);
+            return;
+        }
 
         // ratio はそのままだと clamp 不足の場合があるので確実に clamp
         var ratio = Math.Clamp(split.Ratio, 0.05, 0.95);
@@ -407,6 +420,225 @@ public class PaneLayoutPanel : Panel
     public Rect? GetLeafRect(string key)
         => _leafRects.TryGetValue(key, out var rect) ? rect : null;
 
+    public bool HasParentSplit(string key) => FindParent(_layout, key) is not null;
+
+    public string GetCollapseGlyph(string key, bool parent)
+    {
+        var leaf = _layout?.EnumerateLeaves().FirstOrDefault(x => x.Key == key);
+        var split = leaf is null ? null : FindParent(_layout, key);
+        if (split is null) return parent ? "◁" : "◀";
+
+        if (!parent)
+            return GetSideGlyph(split.Orientation, ReferenceEquals(split.First, leaf), filled: true);
+
+        var grandParent = FindParentOfNode(_layout, split);
+        return grandParent is null
+            ? GetSideGlyph(split.Orientation, true, filled: false)
+            : GetSideGlyph(grandParent.Orientation, ReferenceEquals(grandParent.First, split), filled: false);
+    }
+
+    public bool CollapseSelf(string key)
+    {
+        var leaf = _layout?.EnumerateLeaves().FirstOrDefault(x => x.Key == key);
+        if (leaf is null || leaf.IsCollapsed) return false;
+        leaf.IsCollapsed = true;
+        RefreshCollapsedLayout();
+        return true;
+    }
+
+    public bool CollapseParent(string key)
+    {
+        var parent = FindParent(_layout, key);
+        if (parent is null || parent.IsCollapsed) return false;
+        parent.IsCollapsed = true;
+        RefreshCollapsedLayout();
+        return true;
+    }
+
+    public bool ExpandCollapsed(LayoutNode node)
+    {
+        if (!node.IsCollapsed) return false;
+        node.IsCollapsed = false;
+        RefreshCollapsedLayout();
+        return true;
+    }
+
+    public static string? GetPaneKey(DependencyObject from, PaneId fallback)
+    {
+        DependencyObject? current = from;
+        while (current is not null)
+        {
+            if (GetPaneId(current) is PaneId pid)
+                return PaneKinds.MakeKey(pid, GetInstanceId(current));
+            current = VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
+        }
+        return PaneKinds.MakeKey(fallback, null);
+    }
+
+    private static SplitLayoutNode? FindParent(LayoutNode? node, string key)
+    {
+        if (node is not SplitLayoutNode split) return null;
+        if ((split.First is LeafLayoutNode first && first.Key == key)
+            || (split.Second is LeafLayoutNode second && second.Key == key))
+            return split;
+
+        return FindParent(split.First, key) ?? FindParent(split.Second, key);
+    }
+
+    private static SplitLayoutNode? FindParentOfNode(LayoutNode? node, LayoutNode target)
+    {
+        if (node is not SplitLayoutNode split) return null;
+        if (ReferenceEquals(split.First, target) || ReferenceEquals(split.Second, target)) return split;
+        return FindParentOfNode(split.First, target) ?? FindParentOfNode(split.Second, target);
+    }
+
+    private static string GetSideGlyph(LayoutOrientation orientation, bool isFirst, bool filled)
+        => orientation == LayoutOrientation.Horizontal
+            ? (isFirst ? (filled ? "◀" : "◁") : (filled ? "▶" : "▷"))
+            : (isFirst ? (filled ? "▲" : "△") : (filled ? "▼" : "▽"));
+
+    private void RefreshCollapsedLayout()
+    {
+        InvalidateMeasure();
+        InvalidateArrange();
+        UpdateCollapsedTabs();
+        RaiseLayoutChanged();
+    }
+
+    private void UpdateCollapsedTabs()
+    {
+        if (_layout is null || PresentationSource.FromVisual(this) is null) return;
+        foreach (var popup in _collapsedPopups) popup.IsOpen = false;
+        _collapsedPopups.Clear();
+
+        var panelRect = new Rect(0, 0, ActualWidth, ActualHeight);
+        foreach (var item in EnumerateCollapsed(_layout, panelRect, null, true))
+        {
+            var button = new Button
+            {
+                Content = new TextBlock
+                {
+                    Text = item.Label,
+                    TextWrapping = TextWrapping.NoWrap,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    LayoutTransform = item.IsVerticalBar ? new RotateTransform(90) : Transform.Identity,
+                },
+                ToolTip = $"{item.Label} を展開",
+                Padding = new Thickness(2),
+                Margin = new Thickness(1),
+                Width = Math.Max(0, item.Rect.Width),
+                Height = Math.Max(0, item.Rect.Height),
+            };
+            button.Click += (_, _) => ExpandCollapsed(item.Node);
+            var popup = new Popup
+            {
+                PlacementTarget = this,
+                Placement = PlacementMode.Custom,
+                AllowsTransparency = true,
+                StaysOpen = true,
+                CustomPopupPlacementCallback = (_, _, _) =>
+                    new[] { new CustomPopupPlacement(new Point(item.Rect.X, item.Rect.Y), PopupPrimaryAxis.None) },
+                Child = button,
+            };
+            _collapsedPopups.Add(popup);
+            popup.IsOpen = true;
+        }
+    }
+
+    private IEnumerable<(LayoutNode Node, Rect Rect, string Label, bool IsVerticalBar)> EnumerateCollapsed(
+        LayoutNode node, Rect rect, LayoutOrientation? parentOrientation, bool isFirst)
+    {
+        if (node.IsCollapsed)
+        {
+            var labels = node.EnumerateLeaves().Select(x => x.Pane switch
+            {
+                PaneId.Favorites => "お気に入り",
+                PaneId.BoardList => "板一覧",
+                PaneId.ThreadList => "スレッド一覧",
+                PaneId.ThreadDisplay => "スレッド表示",
+                _ => x.Pane.ToString(),
+            }).Distinct();
+            var barRect = parentOrientation switch
+            {
+                LayoutOrientation.Horizontal when isFirst => new Rect(rect.X, rect.Y, Math.Min(CollapsedPaneBarSize, rect.Width), rect.Height),
+                LayoutOrientation.Horizontal => new Rect(rect.Right - Math.Min(CollapsedPaneBarSize, rect.Width), rect.Y, Math.Min(CollapsedPaneBarSize, rect.Width), rect.Height),
+                LayoutOrientation.Vertical when isFirst => new Rect(rect.X, rect.Y, rect.Width, Math.Min(CollapsedPaneBarSize, rect.Height)),
+                LayoutOrientation.Vertical => new Rect(rect.X, rect.Bottom - Math.Min(CollapsedPaneBarSize, rect.Height), rect.Width, Math.Min(CollapsedPaneBarSize, rect.Height)),
+                _ => new Rect(rect.X, rect.Y, Math.Min(CollapsedPaneBarSize, rect.Width), rect.Height),
+            };
+            var expandGlyph = parentOrientation switch
+            {
+                // 縦バーのラベルは下記 TextBlock で時計回りに 90 度回転するため、
+                // 見た目の展開方向になるよう回転前の記号を指定する。
+                LayoutOrientation.Horizontal when isFirst => "▲", // 回転後: ▶
+                LayoutOrientation.Horizontal => "▼",             // 回転後: ◀
+                LayoutOrientation.Vertical when isFirst => "▼",
+                LayoutOrientation.Vertical => "▲",
+                _ => "▶",
+            };
+            yield return (node, barRect, $"{expandGlyph} {string.Join(" / ", labels)}",
+                parentOrientation == LayoutOrientation.Horizontal);
+            yield break;
+        }
+        if (node is SplitLayoutNode split)
+        {
+            Rect firstRect;
+            Rect secondRect;
+            if (split.First.IsCollapsed || split.Second.IsCollapsed)
+                GetCollapsedChildRects(split, rect, out firstRect, out secondRect);
+            else
+            {
+                var ratio = Math.Clamp(split.Ratio, 0.05, 0.95);
+                if (split.Orientation == LayoutOrientation.Horizontal)
+                {
+                    var totalW = Math.Max(0, rect.Width - SplitterThickness);
+                    var firstW = totalW * ratio;
+                    firstRect = new Rect(rect.X, rect.Y, firstW, rect.Height);
+                    secondRect = new Rect(rect.X + firstW + SplitterThickness, rect.Y, totalW - firstW, rect.Height);
+                }
+                else
+                {
+                    var totalH = Math.Max(0, rect.Height - SplitterThickness);
+                    var firstH = totalH * ratio;
+                    firstRect = new Rect(rect.X, rect.Y, rect.Width, firstH);
+                    secondRect = new Rect(rect.X, rect.Y + firstH + SplitterThickness, rect.Width, totalH - firstH);
+                }
+            }
+            foreach (var item in EnumerateCollapsed(split.First, firstRect, split.Orientation, true)) yield return item;
+            foreach (var item in EnumerateCollapsed(split.Second, secondRect, split.Orientation, false)) yield return item;
+        }
+    }
+
+    private static void GetCollapsedChildRects(
+        SplitLayoutNode split, Rect rect, out Rect firstRect, out Rect secondRect)
+    {
+        var firstCollapsed = split.First.IsCollapsed;
+        var secondCollapsed = split.Second.IsCollapsed;
+        var bar = CollapsedPaneBarSize;
+
+        if (split.Orientation == LayoutOrientation.Horizontal)
+        {
+            var firstBar = firstCollapsed ? bar : 0;
+            var secondBar = secondCollapsed ? bar : 0;
+            firstRect = new Rect(rect.X, rect.Y, Math.Max(0, rect.Width - secondBar), rect.Height);
+            secondRect = new Rect(rect.X + firstBar, rect.Y, Math.Max(0, rect.Width - firstBar), rect.Height);
+            if (firstCollapsed) firstRect = new Rect(rect.X, rect.Y, Math.Min(bar, rect.Width), rect.Height);
+            if (secondCollapsed) secondRect = new Rect(
+                rect.Right - Math.Min(bar, rect.Width), rect.Y, Math.Min(bar, rect.Width), rect.Height);
+        }
+        else
+        {
+            var firstBar = firstCollapsed ? bar : 0;
+            var secondBar = secondCollapsed ? bar : 0;
+            firstRect = new Rect(rect.X, rect.Y, rect.Width, Math.Max(0, rect.Height - secondBar));
+            secondRect = new Rect(rect.X, rect.Y + firstBar, rect.Width, Math.Max(0, rect.Height - firstBar));
+            if (firstCollapsed) firstRect = new Rect(rect.X, rect.Y, rect.Width, Math.Min(bar, rect.Height));
+            if (secondCollapsed) secondRect = new Rect(
+                rect.X, rect.Bottom - Math.Min(bar, rect.Height), rect.Width, Math.Min(bar, rect.Height));
+        }
+    }
+
     // ---- ペインドラッグ受信 (Mouse.Capture ベースの自前実装) ----
     //
     // OLE DragDrop (DragDrop.DoDragDrop + AllowDrop) は WebView2 (HwndHost / Win32 island) 上で
@@ -421,6 +653,7 @@ public class PaneLayoutPanel : Panel
     private PaneDropZoneOverlay?  _overlay;
     private bool                  _isPaneDragging;
     private string?               _paneDragSourceKey;
+    private readonly List<Popup>  _collapsedPopups = new();
 
     public PaneLayoutPanel()
     {

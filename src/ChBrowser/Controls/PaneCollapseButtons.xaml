@@ -1,0 +1,10 @@
+<UserControl x:Class="ChBrowser.Controls.PaneCollapseButtons"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel Orientation="Horizontal">
+    <Button x:Name="SelfButton" ToolTip="このペインを折りたたむ"
+            Click="SelfButton_Click" Style="{StaticResource ToolbarIconButton}" />
+    <Button x:Name="ParentButton" ToolTip="親ペインを折りたたむ"
+            Click="ParentButton_Click" Style="{StaticResource ToolbarIconButton}" />
+  </StackPanel>
+</UserControl>

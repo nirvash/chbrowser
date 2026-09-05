@@ -273,6 +273,7 @@
                             </Style.Triggers>
                         </Style>
                     </StackPanel.Style>
+                    <ctrl:PaneCollapseButtons PaneKind="ThreadDisplay" />
 
                     <!-- NG 判定 AI のしきい値設定 (= 検索ボックスの右隣)。クリックでしきい値メニューを開く
                          (どこからを NG とみなすか)。実処理は MainViewModel.SetAiNgThresholdCommand。✓ は現在値に付く。 -->
