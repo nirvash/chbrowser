@@ -780,6 +780,45 @@ body.slot-resizing * {
 .thread-end-mark-band:hover {
     background: #8b93cf;            /* hover でわずかに明るくして押せることを示す */
 }
+
+/* 末尾での下向きホイール待機UI。スレ本文を覆うが操作は奪わない。 */
+#end-refresh-wheel-overlay {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    z-index: 11000;
+    width: 44px;
+    height: 44px;
+    margin-left: -22px;
+    border-radius: 50%;
+    background: rgba(25, 30, 40, 0.62);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+    opacity: 0;
+    transform: translateY(8px) scale(0.82);
+    pointer-events: none;
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+#end-refresh-wheel-overlay.active {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+#end-refresh-wheel-overlay.burst {
+    opacity: 0;
+    transform: translateY(-22px) scale(1.65);
+    transition: opacity 360ms ease, transform 360ms cubic-bezier(.2,.8,.3,1.25);
+}
+.end-refresh-wheel-spinner {
+    position: absolute;
+    left: 11px;
+    top: 11px;
+    width: 22px;
+    height: 22px;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    border-top-color: rgba(255, 255, 255, 0.96);
+    border-radius: 50%;
+    animation: end-refresh-wheel-spin 680ms linear infinite;
+}
+@keyframes end-refresh-wheel-spin { to { transform: rotate(360deg); } }
 .thread-end-mark-band::before { content: '🔄 差分を再読み込み'; }
 
 /* ---- フィルタによる非表示 ---- */

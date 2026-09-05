@@ -116,6 +116,35 @@
     let lastDeltaMark = null;
     // 末尾での下向きホイールによる差分取得の連打防止。
     let endRefreshWheelPending = false;
+    let endRefreshWheelStopTimer = 0;
+    let endRefreshWheelOverlay = null;
+
+    function showEndRefreshWheelOverlay() {
+        if (!endRefreshWheelOverlay) {
+            endRefreshWheelOverlay = document.createElement('div');
+            endRefreshWheelOverlay.id = 'end-refresh-wheel-overlay';
+            endRefreshWheelOverlay.innerHTML = '<div class="end-refresh-wheel-spinner" aria-hidden="true"></div>';
+            document.body.appendChild(endRefreshWheelOverlay);
+        }
+        endRefreshWheelOverlay.classList.remove('burst');
+        endRefreshWheelOverlay.classList.add('active');
+    }
+
+    function finishEndRefreshWheel() {
+        if (endRefreshWheelPending) return;
+        endRefreshWheelPending = true;
+        if (endRefreshWheelOverlay) {
+            endRefreshWheelOverlay.classList.remove('active');
+            endRefreshWheelOverlay.classList.add('burst');
+            window.setTimeout(function() {
+                if (endRefreshWheelOverlay) endRefreshWheelOverlay.classList.remove('burst');
+            }, 480);
+        }
+        if (window.chrome && window.chrome.webview) {
+            window.chrome.webview.postMessage({ type: 'refreshThread' });
+        }
+        window.setTimeout(function() { endRefreshWheelPending = false; }, 1200);
+    }
 
     // 現在のフィルタ条件 (= C# 側 ThreadFilter record の JSON 反映)。setFilter メッセージで上書きされる。
     // 評価ルール:
@@ -3827,11 +3856,9 @@ function findReadProgressMaxNumber() {
             const viewportBottom = scrollY + document.documentElement.clientHeight;
             const atEnd = viewportBottom >= document.documentElement.scrollHeight - 2;
             if (atEnd && !endRefreshWheelPending) {
-                endRefreshWheelPending = true;
-                if (window.chrome && window.chrome.webview) {
-                    window.chrome.webview.postMessage({ type: 'refreshThread' });
-                }
-                window.setTimeout(function() { endRefreshWheelPending = false; }, 1200);
+                showEndRefreshWheelOverlay();
+                window.clearTimeout(endRefreshWheelStopTimer);
+                endRefreshWheelStopTimer = window.setTimeout(finishEndRefreshWheel, 320);
             }
             return;
         }
