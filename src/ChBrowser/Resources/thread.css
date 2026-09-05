@@ -823,6 +823,10 @@ body.slot-resizing * {
 .end-refresh-wheel-spinner::after {
     content: '↻';
 }
+#end-refresh-wheel-overlay.burst .end-refresh-wheel-spinner::after {
+    content: '✦';
+    font-size: 30px;
+}
 @keyframes end-refresh-wheel-spin { to { transform: rotate(360deg); } }
 @keyframes end-refresh-wheel-bounce {
     0%   { opacity: 1; transform: translateY(0) scale(1); }
