@@ -196,12 +196,11 @@ public sealed class PostClient
 
     private static byte[] EncodeAsSjisForm(IReadOnlyList<KeyValuePair<string, string>> fields)
     {
-        var sjis = Encoding.GetEncoding(932);
         var sb   = new StringBuilder();
         for (var i = 0; i < fields.Count; i++)
         {
             if (i > 0) sb.Append('&');
-            sb.Append(SjisEncode(fields[i].Key, sjis)).Append('=').Append(SjisEncode(fields[i].Value, sjis));
+            sb.Append(SjisEncode(fields[i].Key)).Append('=').Append(SjisEncode(fields[i].Value));
         }
         return Encoding.ASCII.GetBytes(sb.ToString());
     }
@@ -216,9 +215,9 @@ public sealed class PostClient
     }
 
     /// <summary>SJIS バイトに変換した上で URL エンコードする (5ch は SJIS の % エスケープを期待する)。</summary>
-    private static string SjisEncode(string s, Encoding sjis)
+    private static string SjisEncode(string s)
     {
-        var bytes = sjis.GetBytes(s);
+        var bytes = HtmlEntityFallbackEncoder.GetBytes(s);
         var sb    = new StringBuilder(bytes.Length * 3);
         foreach (var b in bytes)
         {
