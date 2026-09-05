@@ -818,6 +818,18 @@ body.slot-resizing * {
     border-radius: 50%;
     animation: end-refresh-wheel-spin 680ms linear infinite;
 }
+.end-refresh-wheel-spinner::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: -4px;
+    width: 0;
+    height: 0;
+    margin-left: -4px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 6px solid rgba(255, 255, 255, 0.96);
+}
 @keyframes end-refresh-wheel-spin { to { transform: rotate(360deg); } }
 @keyframes end-refresh-wheel-bounce {
     0%   { opacity: 1; transform: translateY(0) scale(1); }
