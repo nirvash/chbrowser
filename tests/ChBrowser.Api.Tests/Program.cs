@@ -1,8 +1,12 @@
 using System.Reflection;
+using System.IO;
 using System.Text;
 using System.Text.Json;
+using ChBrowser.Models;
 using ChBrowser.Services.Api;
 using ChBrowser.Services.Image;
+using ChBrowser.Services.Ng;
+using ChBrowser.Services.Storage;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
@@ -48,3 +52,19 @@ if (prompt != "positive one\npositive two")
     throw new Exception($"Unexpected video prompt fallback result: {prompt}");
 
 Console.WriteLine("PASS video prompt fallback reads string fields and excludes system/negative fields");
+
+var ngRoot = Path.Combine(Path.GetTempPath(), "ChBrowser-Ng-Test-" + Guid.NewGuid().ToString("N"));
+var ng = new NgService(new NgStorage(new DataPaths(ngRoot)));
+ng.Save(new NgRuleSet
+{
+    Rules = [new NgRule { Target = "word", Pattern = "blocked" }],
+});
+var firstBatch = ng.ComputeHiddenWithBreakdown(
+    [new Post(1, "", "", "", "", "blocked", null)], "example.test", "board");
+var secondBatch = ng.ComputeHiddenWithBreakdown(
+    [new Post(2, "", "", "", "", ">>1 reply", null)], "example.test", "board",
+    previouslyHidden: firstBatch.HiddenNumbers);
+if (!firstBatch.HiddenNumbers.SetEquals([1]) || !secondBatch.HiddenNumbers.SetEquals([2]))
+    throw new Exception("Cross-batch NG chain was not propagated");
+
+Console.WriteLine("PASS NG chain propagates from previously hidden posts");

@@ -38,7 +38,8 @@ public sealed partial class MainViewModel
         {
             if (p.ThreadTitle is { Length: > 0 } t) { tab.EnsureTitleFromDat(t); break; }
         }
-        var breakdown = _ng.ComputeHiddenWithBreakdown(batch.ToList(), tab.Board.Host, tab.Board.DirectoryName);
+        var breakdown = _ng.ComputeHiddenWithBreakdown(batch.ToList(), tab.Board.Host, tab.Board.DirectoryName,
+                                                       previouslyHidden: tab.HiddenPostNumbers);
         var hidden    = breakdown.HiddenNumbers;
         int? firstAppendedNumber;
         if (hidden.Count == 0)
@@ -1079,7 +1080,8 @@ public sealed partial class MainViewModel
         {
             if (tab.Posts.Count == 0) continue;
             var breakdown = _ng.ComputeHiddenWithBreakdown(
-                tab.Posts.ToList(), tab.Board.Host, tab.Board.DirectoryName);
+                tab.Posts.ToList(), tab.Board.Host, tab.Board.DirectoryName,
+                previouslyHidden: tab.HiddenPostNumbers);
             var newlyHidden = breakdown.HiddenNumbers;
             if (newlyHidden.Count == 0) continue;
 
