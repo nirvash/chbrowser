@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using ChBrowser.Models;
 using ChBrowser.Services.Render;
+using ChBrowser.Services.Url;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -56,6 +57,8 @@ public sealed partial class ThreadListTabViewModel : ObservableObject, IPaneTab
     /// Board=null のお気に入り展開タブでは false。</summary>
     public bool IsBoardTab => Board is not null;
 
+    public bool SupportsCatalogView => Board is not null && FutabaUrl.IsFutabaHost(Board.Host);
+
     /// <summary>現在表示中のスレ一覧 (行ごとの板情報込み)。openThread の payload 検証や差分更新で使う。</summary>
     public IReadOnlyList<ThreadListItem> Items { get; private set; } = Array.Empty<ThreadListItem>();
 
@@ -103,6 +106,15 @@ public sealed partial class ThreadListTabViewModel : ObservableObject, IPaneTab
     /// JS 側に push され、行の表示/非表示と title セルのハイライトが更新される。</summary>
     [ObservableProperty]
     private string _searchQuery = "";
+
+    [ObservableProperty]
+    private bool _isCatalogView;
+
+    private int _catalogThumbnailSize = 120;
+    private int _catalogTitleMaxChars = 100;
+    private int _catalogColumns = 5;
+    private string _catalogTitlePosition = "right";
+    private int _catalogTitleLineLimit = 2;
 
     /// <summary>このタブ専用のステータス文字列 (= subject.txt 取得進捗 / 結果 / エラー等)。
     /// MainViewModel が現在アクティブなペイン (= 直近で操作されたペイン) の選択タブを
@@ -156,14 +168,14 @@ public sealed partial class ThreadListTabViewModel : ObservableObject, IPaneTab
         if (string.IsNullOrEmpty(Html))
         {
             // 初回: シェル + thead + tbody を NavigateToString
-            Html = ThreadListHtmlBuilder.Build(items, now);
+            Html = ThreadListHtmlBuilder.Build(items, now, IsCatalogView, _catalogThumbnailSize, _catalogTitleMaxChars, _catalogColumns, _catalogTitlePosition, _catalogTitleLineLimit);
         }
         else
         {
             // 2 回目以降: tbody innerHTML だけ差分 push (= 画面が真っ白にならない)
             // ObservableProperty の content equality check により、生成 HTML が前回と完全一致すれば
             // 変化検知が走らず JS には何も送られない (= 「リフレッシュ後も内容が同じ」場合の最適化)。
-            ItemsHtmlPatch = ThreadListHtmlBuilder.BuildRowsHtml(items, now);
+            ItemsHtmlPatch = ThreadListHtmlBuilder.BuildRowsHtml(items, now, IsCatalogView, _catalogThumbnailSize, _catalogTitleMaxChars, _catalogColumns, _catalogTitlePosition, _catalogTitleLineLimit);
         }
         LogMarkUpdate    = null; // 新しい一覧を出したので保留中の差分はリセット
         FavoritedUpdate  = null;
@@ -175,7 +187,24 @@ public sealed partial class ThreadListTabViewModel : ObservableObject, IPaneTab
     /// 移動先の新規 WebView が「初回ロード時の古い一覧」を表示してしまう。</summary>
     public void RebuildHtmlForReattach()
     {
-        Html = ThreadListHtmlBuilder.Build(Items, DateTimeOffset.UtcNow);
+        Html = ThreadListHtmlBuilder.Build(Items, DateTimeOffset.UtcNow, IsCatalogView, _catalogThumbnailSize, _catalogTitleMaxChars, _catalogColumns, _catalogTitlePosition, _catalogTitleLineLimit);
+    }
+
+    partial void OnIsCatalogViewChanged(bool value)
+    {
+        if (!SupportsCatalogView || Items.Count == 0) return;
+        Html = ThreadListHtmlBuilder.Build(Items, DateTimeOffset.UtcNow, value, _catalogThumbnailSize, _catalogTitleMaxChars, _catalogColumns, _catalogTitlePosition, _catalogTitleLineLimit);
+    }
+
+    public void ApplyCatalogAppearance(int thumbnailSize, int titleMaxChars, int columns, string titlePosition, int titleLineLimit)
+    {
+        _catalogThumbnailSize = Math.Clamp(thumbnailSize, 64, 320);
+        _catalogTitleMaxChars = Math.Clamp(titleMaxChars, 20, 500);
+        _catalogColumns = Math.Clamp(columns, 1, 12);
+        _catalogTitlePosition = titlePosition == "bottom" ? "bottom" : "right";
+        _catalogTitleLineLimit = titleLineLimit is 1 or 2 ? titleLineLimit : 0;
+        if (SupportsCatalogView && IsCatalogView && Items.Count > 0)
+            Html = ThreadListHtmlBuilder.Build(Items, DateTimeOffset.UtcNow, true, _catalogThumbnailSize, _catalogTitleMaxChars, _catalogColumns, _catalogTitlePosition, _catalogTitleLineLimit);
     }
 
     /// <summary>1 件のスレッドのマーク状態を変更する増分通知を送る (集約タブ対応のため host/dir も指定)。</summary>

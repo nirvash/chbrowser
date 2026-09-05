@@ -83,6 +83,22 @@
     color: #666;
 }
 
+.post-soudane { float: right; color: #777; font-size: 11px; margin-left: 8px; }
+.post-soudane span { margin-left: 2px; }
+
+/* ふたばの1レス目は添付画像を上、本文を下へ置く。 */
+.post.futaba-op {
+    display: flex;
+    flex-direction: column;
+}
+
+.post.futaba-op .post-media { order: 1; margin-top: 3px; margin-left: 0; }
+.post.futaba-op .post-body  { order: 2; }
+.post.futaba-op .post-body  { margin-left: 0; }
+/* OPだけ flex レイアウトを使うため、引用ツリーも明示的に最後へ置く。
+   order 未指定 (= 0) のままだと、本文・メディアより前に移動してしまう。 */
+.post.futaba-op > .inline-expansion { order: 3; }
+
 .post-body {
     margin-top: 3px;
     margin-left: 25px;

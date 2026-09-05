@@ -59,6 +59,7 @@
         <DataTemplate x:Key="FavoritesTemplate">  <settings:FavoritesPanel /> </DataTemplate>
         <DataTemplate x:Key="BoardListTemplate">  <settings:BoardListPanel /> </DataTemplate>
         <DataTemplate x:Key="ThreadListTemplate">    <settings:ThreadListPanel /> </DataTemplate>
+        <DataTemplate x:Key="FutabaTemplate">        <settings:FutabaPanel /> </DataTemplate>
         <DataTemplate x:Key="ThreadTemplate">        <settings:ThreadPanel /> </DataTemplate>
         <DataTemplate x:Key="TabTemplate">           <settings:TabPanel /> </DataTemplate>
         <DataTemplate x:Key="ImageTemplate">      <settings:ImagePanel /> </DataTemplate>
@@ -193,6 +194,9 @@
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding SelectedCategory.Name}" Value="スレッド一覧">
                                         <Setter Property="ContentTemplate" Value="{StaticResource ThreadListTemplate}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding SelectedCategory.Name}" Value="ふたば">
+                                        <Setter Property="ContentTemplate" Value="{StaticResource FutabaTemplate}" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding SelectedCategory.Name}" Value="スレッド">
                                         <Setter Property="ContentTemplate" Value="{StaticResource ThreadTemplate}" />

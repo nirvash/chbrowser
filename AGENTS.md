@@ -44,6 +44,8 @@ dotnet publish src/ChBrowser/ChBrowser.csproj -c Release -r win-x64 --self-conta
     -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true
 ```
 
+Debug確認時は分離出力 (`BaseOutputPath` など) を使わず、必ず通常の `src/ChBrowser/bin/Debug/` を更新して起動する。実行中のDebug版を止める必要がある場合は、パスを確認したうえでそのPIDだけを停止する。
+
 出力: `src/ChBrowser/bin/Release/net8.0-windows/win-x64/publish/ChBrowser.exe`
 
 ## 配布テーマフォルダ (`themes/`)

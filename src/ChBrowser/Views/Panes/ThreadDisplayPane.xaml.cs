@@ -151,6 +151,7 @@ public partial class ThreadDisplayPane : UserControl
         // ケースがあるので、ctx が null になっていても「本当に外れた」と解釈して Dispose する。
         var ctx = wv.DataContext as ThreadTabViewModel;
         if (ctx is not null && Group is { } g && g.Tabs.Contains(ctx)) return;
+        UnregisterWebView(wv);
         try { wv.Dispose(); }
         catch (Exception ex) { Debug.WriteLine($"[ThreadDisplayPane] WebView2 Dispose failed: {ex.Message}"); }
     }
@@ -352,8 +353,9 @@ public partial class ThreadDisplayPane : UserControl
             // suppress される) ので、ここで全 Posts を一括 resync して描画する (複数ペイン化 Phase 3/4)。
             // これは「ペイン移動先の初回描画」であって自動復旧ではないため、デバッグ (復旧無効) モードでも実施する。
             // 通常の新規オープン (NeedsResyncOnAttach=false) では何もしない。
+            // Restore can load the disk cache before this WebView has received its first ready.
+            // Resync every tab that already has posts; it is idempotent and closes that timing gap.
             if (wv.DataContext is ThreadTabViewModel moved
-                && moved.NeedsResyncOnAttach
                 && moved.Posts.Count > 0)
             {
                 moved.NeedsResyncOnAttach = false;
@@ -808,18 +810,59 @@ public partial class ThreadDisplayPane : UserControl
         EventHandler<ChBrowser.Services.Media.VideoDownloadEventArgs> handler = (s, e) =>
         {
             // UI thread にディスパッチして PostWebMessageAsJson を安全に呼ぶ。
-            Dispatcher.BeginInvoke(new Action(() =>
+            try
             {
-                foreach (var kv in _tabToWebView)
+                Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    if (kv.Value.CoreWebView2 is null) continue;
-                    PushVideoCacheStateTo(kv.Value, cache, e.Url);
-                }
-            }));
+                    var staleTabs = new List<ThreadTabViewModel>();
+                    foreach (var kv in _tabToWebView)
+                    {
+                        if (!TryPushVideoCacheStateTo(kv.Value, cache, e.Url))
+                            staleTabs.Add(kv.Key);
+                    }
+                    foreach (var tab in staleTabs) _tabToWebView.Remove(tab);
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+                // ペインの Dispatcher が終了中なら通知先は既に存在しない。
+            }
         };
         mgr.DownloadCompleted += handler;
         mgr.DownloadFailed    += handler;
         // 一度配線したらアンサブスクライブはしない (= ペインはアプリ寿命と同等で問題ない想定)。
+    }
+
+    /// <summary>タブ削除時に、破棄する WebView2 を動画完了通知の配信対象から外す。
+    /// DataContext が null に戻された後の Unloaded でも参照同一性で除去できる。</summary>
+    private static void UnregisterWebView(WebView2 wv)
+    {
+        var staleTabs = new List<ThreadTabViewModel>();
+        foreach (var kv in _tabToWebView)
+        {
+            if (ReferenceEquals(kv.Value, wv)) staleTabs.Add(kv.Key);
+        }
+        foreach (var tab in staleTabs) _tabToWebView.Remove(tab);
+    }
+
+    /// <summary>破棄と動画完了通知の競合を吸収する。WebView2 の disposed 状態は
+    /// CoreWebView2 getter の null 判定より先に例外になるため、参照から通知までを一括で保護する。</summary>
+    private static bool TryPushVideoCacheStateTo(WebView2 wv, ImageCacheService cache, string url)
+    {
+        try
+        {
+            if (wv.CoreWebView2 is null) return false;
+            PushVideoCacheStateTo(wv, cache, url);
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>指定 WebView2 に「この URL の現在のキャッシュ状態」を JSON で push するヘルパ。

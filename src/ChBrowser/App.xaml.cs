@@ -167,7 +167,13 @@ public partial class App : Application
 
         // WebView2 の CoreWebView2Environment を裏で先行作成しておく。
         // 初回スレッドオープン時のコールドスタート (~200-500ms) を消す。await はしない。
-        WebView2Helper.StartWarmup();
+        // WebView2 のプロファイルはアプリの保存データ配下へ固定する。
+        // 旧版の "<exe>.WebView2" は exe の上書き配布で破損・世代不整合になり得るが、
+        // data/ 配下のスレログや設定とは独立させれば、安全に新品プロファイルへ移行できる。
+        // 開発時は環境変数で明示したプロファイルを優先する。
+        var webViewUserDataFolder = Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER")
+                                    ?? System.IO.Path.Combine(paths.Root, "webview2");
+        WebView2Helper.StartWarmup(webViewUserDataFolder);
 
         _monazilla       = new MonazillaClient();
         // Phase 11: 起動時に Timeout / User-Agent override を反映 (両方とも次回起動時反映扱い)

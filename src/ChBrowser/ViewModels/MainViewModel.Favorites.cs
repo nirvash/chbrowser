@@ -71,6 +71,12 @@ public sealed partial class MainViewModel
     /// タブ未オープン等で次スレの有無を判定できない場合は従来どおりルート直下に入る。</summary>
     public void ToggleThreadFavorite(Board board, string threadKey, string title)
     {
+        // 一覧の再描画途中などで JS から空タイトルが届くことがある。
+        // その値を永続化すると、次回以降にお気に入り名を復元できなくなるため、
+        // 既に開いているタブの確定タイトルを優先して補う。
+        if (string.IsNullOrWhiteSpace(title))
+            title = FindThreadTab(board, threadKey)?.Title ?? "";
+
         var existing = Favorites.FindThread(board.Host, board.DirectoryName, threadKey);
         if (existing is not null)
         {
@@ -684,7 +690,7 @@ public sealed partial class MainViewModel
             var delta = new List<Post>(result.Posts.Count - prevFetchedCount);
             for (var i = prevFetchedCount; i < result.Posts.Count; i++) delta.Add(result.Posts[i]);
             // mark は AppendPostsWithNg より前に書く必要がある (= 同期 DP 発火時に JSON に乗せるため)。
-            tab.MarkPostNumber = prevFetchedCount + 1;
+            tab.MarkPostNumber = delta[0].Number;
             AppendPostsWithNg(tab, delta, isIncremental: true);
             tab.HasReplyToOwn = DeltaHasReplyToOwn(tab, delta);
             ChBrowser.Services.Logging.LogService.Instance.Write(

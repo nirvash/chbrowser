@@ -10,6 +10,11 @@ html, body {
     padding: 0;
 }
 
+/* ふたばの <font color="#789922">…</font> 由来の引用。 */
+.futaba-quote {
+    color: #789922;
+}
+
 body {
     font-family: 'MS Pゴシック', 'MS PGothic', monospace;
     font-size: 16px;
@@ -612,6 +617,22 @@ body.slot-resizing * {
     display: none;
 }
 
+/* ふたば引用ポップアップのメディアは通常レスの半分に抑える。
+   min-* を併記して、グローバルスロット倍率が小さい場合も判読できる最小寸法を保つ。 */
+.futaba-quote-preview-popup .image-slot {
+    width: 120px;
+    min-width: 120px;
+    height: 120px;
+    min-height: 120px;
+}
+.futaba-quote-preview-popup .image-slot.video,
+.futaba-quote-preview-popup .image-slot.youtube {
+    width: 160px;
+    min-width: 160px;
+    height: 90px;
+    min-height: 90px;
+}
+
 .anchor-popup .anchor-missing {
     padding: 4px 8px;
     color: #999;
@@ -772,6 +793,10 @@ body.slot-resizing * {
 .filter-hidden {
     display: none !important;
 }
+
+/* Futaba: only a safe, display-context-aware leading quote is collapsible. */
+.futaba-quote-collapsed { margin: 0 0 2px 0; }
+.futaba-quote-collapsed > summary { cursor: pointer; color: #567; user-select: none; }
 
 /* ---- AI-NG による非表示 ---- */
 /* NG 判定 AI が「攻撃的」と採点したレス (= スコア >= しきい値) に JS が付与する。

@@ -769,6 +769,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     /// HttpClient.Timeout や HiDPI 等「次回起動時に反映」の項目はここでは触らない。</summary>
     public void ApplyConfig(AppConfig config)
     {
+        _futabaCatalogSortIndex = Math.Clamp(config.FutabaCatalogSortIndex, 0, 5);
         CurrentConfig = config;
         if (IsAutoRefreshEnabled)
             _autoRefreshTimer.Interval = TimeSpan.FromMinutes(Math.Max(1, config.ThreadAutoRefreshIntervalMinutes));
@@ -801,6 +802,8 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         {
             type = "setConfig", openOnSingleClick = config.ThreadListOpenOnSingleClick,
         });
+        foreach (var tab in AllThreadListTabs)
+            tab.ApplyCatalogAppearance(config.FutabaCatalogThumbnailSize, config.FutabaCatalogTitleMaxChars, config.FutabaCatalogColumns, config.FutabaCatalogTitlePosition, config.FutabaCatalogTitleLineLimit);
 
         // NG 判定 AI: しきい値を UI ミラーに反映し、選択中タブがあれば即時に再フィルタ / 判定再開する
         // (= 設定画面でしきい値や接続先を変えた直後にも効く)。

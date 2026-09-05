@@ -22,6 +22,7 @@ public partial class ThreadListPane : UserControl
     {
         InitializeComponent();
         ChBrowser.Controls.PaneDragInitiator.Attach(HeaderBar, ChBrowser.Models.PaneId.ThreadList);
+        AddHandler(Button.PreviewMouseRightButtonUpEvent, new MouseButtonEventHandler(FutabaCatalogSortButton_RightClick));
     }
 
     /// <summary>このペインの DataContext (= 担当するスレ一覧グループ, 複数ペイン化)。</summary>
@@ -47,6 +48,59 @@ public partial class ThreadListPane : UserControl
     private void NewThreadButton_Click(object sender, RoutedEventArgs e)
     {
         Vm?.OpenNewThreadDialog();
+    }
+
+    private void ToggleCatalogViewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (Group?.SelectedTab is { SupportsCatalogView: true } tab)
+            Vm?.SetFutabaCatalogView(!tab.IsCatalogView);
+    }
+
+    private void FutabaCatalogSortButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button)
+            ShowFutabaCatalogSortMenu(button);
+    }
+
+    private void FutabaCatalogSortButton_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source) return;
+        var button = FindParent<Button>(source);
+        if (button is null || button.ToolTip?.ToString()?.Contains("ソート", StringComparison.Ordinal) != true) return;
+        ShowFutabaCatalogSortMenu(button);
+        e.Handled = true;
+    }
+
+    private void ShowFutabaCatalogSortMenu(Button button)
+    {
+        if (Vm is null) return;
+        var menu = new ContextMenu();
+        var labels = new[] { "カタログ順", "新しい順", "古い順", "レス数が多い順", "勢い順", "レス数が少ない順" };
+        for (var i = 0; i < labels.Length; i++)
+        {
+            var item = new MenuItem { Header = labels[i], Tag = i, IsCheckable = true, IsChecked = i == Vm.FutabaCatalogSortIndex };
+            item.Click += FutabaCatalogSortMenu_Click;
+            menu.Items.Add(item);
+        }
+        button.ContextMenu = menu;
+        menu.PlacementTarget = button;
+        menu.IsOpen = true;
+    }
+
+    private static T? FindParent<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current is not null)
+        {
+            if (current is T match) return match;
+            current = current is Visual visual ? VisualTreeHelper.GetParent(visual) : LogicalTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    private void FutabaCatalogSortMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: int index } && Vm is not null)
+            _ = Vm.SetFutabaCatalogSortAsync(index);
     }
 
     /// <summary>選択中のスレ一覧タブを再取得する。タブ種別 (板 / 全ログ / お気に入り) を問わず
@@ -200,7 +254,9 @@ public partial class ThreadListPane : UserControl
     /// <summary>{board, key} → 5ch.io 系の read.cgi 形式 URL を組み立てる
     /// (= <see cref="ThreadTabViewModel.Url"/> と同じ形式で揃える)。</summary>
     private static string ThreadUrl(ThreadListRowContext ctx)
-        => $"https://{ctx.Board.Host}/test/read.cgi/{ctx.Board.DirectoryName}/{ctx.ThreadKey}/";
+        => ChBrowser.Services.Url.FutabaUrl.IsFutabaHost(ctx.Board.Host)
+            ? ChBrowser.Services.Url.FutabaUrl.BuildThreadUrl(ctx.Board.Host, ctx.Board.DirectoryName, ctx.ThreadKey)
+            : $"https://{ctx.Board.Host}/test/read.cgi/{ctx.Board.DirectoryName}/{ctx.ThreadKey}/";
 
     /// <summary>スレ一覧行の右クリックメニュー操作で必要な値を 1 つに束ねた immutable record。
     /// Board は <see cref="MainViewModel.ResolveBoard"/> で解決済み (= bbsmenu 未登録の板でも fallback Board が入る)。</summary>

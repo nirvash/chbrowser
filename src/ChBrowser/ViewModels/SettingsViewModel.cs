@@ -99,6 +99,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool   _favoritesOpenOnSingleClick  = true;
     [ObservableProperty] private bool   _boardListOpenOnSingleClick  = true;
     [ObservableProperty] private bool   _threadListOpenOnSingleClick = true;
+    [ObservableProperty] private int    _futabaCatalogThumbnailSize = 120;
+    [ObservableProperty] private int    _futabaCatalogTitleMaxChars = 100;
+    [ObservableProperty] private int    _futabaCatalogColumns = 5;
+    [ObservableProperty] private string _futabaCatalogTitlePosition = "right";
+    [ObservableProperty] private int    _futabaCatalogTitleLineLimit = 2;
 
     // ---- バッチ処理の同時通信数 (お気に入りチェック等) ----
     [ObservableProperty] private int    _batchConcurrency            = 6;
@@ -297,6 +302,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         Categories.Add(new("お気に入り",   "クリックで開く動作"));
         Categories.Add(new("板一覧",       "クリックで開く動作"));
         Categories.Add(new("スレッド一覧", "クリックで開く動作"));
+        Categories.Add(new("ふたば", "カタログ表示の画像・題名・グリッド設定"));
         Categories.Add(new("スレッド",     "人気レス閾値、標準表示モード、画像 HEAD しきい値"));
         Categories.Add(new("タブ",         "タブ幅 (スレ一覧タブ / スレッドタブ)"));
         Categories.Add(new("画像",         "キャッシュ上限、キャッシュフォルダを開く、キャッシュクリア"));
@@ -360,6 +366,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         BatchConcurrency             = initial.BatchConcurrency;
         BoardListOpenOnSingleClick   = initial.BoardListOpenOnSingleClick;
         ThreadListOpenOnSingleClick  = initial.ThreadListOpenOnSingleClick;
+        FutabaCatalogThumbnailSize = initial.FutabaCatalogThumbnailSize;
+        FutabaCatalogTitleMaxChars = initial.FutabaCatalogTitleMaxChars;
+        FutabaCatalogColumns = initial.FutabaCatalogColumns;
+        FutabaCatalogTitlePosition = string.IsNullOrWhiteSpace(initial.FutabaCatalogTitlePosition) ? "right" : initial.FutabaCatalogTitlePosition;
+        FutabaCatalogTitleLineLimit = initial.FutabaCatalogTitleLineLimit is 1 or 2 ? initial.FutabaCatalogTitleLineLimit : 0;
         ThreadListTabWidthMode  = string.IsNullOrEmpty(initial.ThreadListTabWidthMode) ? "chars" : initial.ThreadListTabWidthMode;
         ThreadListTabWidthChars = initial.ThreadListTabWidthChars;
         ThreadListTabWidthPx    = initial.ThreadListTabWidthPx;
@@ -577,6 +588,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         BatchConcurrency            = BatchConcurrency,
         BoardListOpenOnSingleClick  = BoardListOpenOnSingleClick,
         ThreadListOpenOnSingleClick = ThreadListOpenOnSingleClick,
+        FutabaCatalogThumbnailSize = Math.Clamp(FutabaCatalogThumbnailSize, 64, 320),
+        FutabaCatalogTitleMaxChars = Math.Clamp(FutabaCatalogTitleMaxChars, 20, 500),
+        FutabaCatalogColumns = Math.Clamp(FutabaCatalogColumns, 1, 12),
+        FutabaCatalogTitlePosition = FutabaCatalogTitlePosition == "bottom" ? "bottom" : "right",
+        FutabaCatalogTitleLineLimit = FutabaCatalogTitleLineLimit is 1 or 2 ? FutabaCatalogTitleLineLimit : 0,
         ThreadListTabWidthMode  = ThreadListTabWidthMode,
         ThreadListTabWidthChars = ThreadListTabWidthChars,
         ThreadListTabWidthPx    = ThreadListTabWidthPx,

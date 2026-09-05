@@ -243,6 +243,16 @@ public sealed record AppConfig
     /// <summary>スレッド一覧ペインで 1 クリックで開く。OFF でダブルクリック動作。即時反映。</summary>
     public bool ThreadListOpenOnSingleClick { get; init; } = true;
 
+    /// <summary>ふたば板のスレ一覧をカタログ表示で開く。板をまたいで共有し、即時保存する。</summary>
+    public bool FutabaCatalogView { get; init; }
+    public int FutabaCatalogSortIndex { get; init; }
+    public int FutabaCatalogThumbnailSize { get; init; } = 120;
+    public int FutabaCatalogTitleMaxChars { get; init; } = 100;
+    public int FutabaCatalogColumns { get; init; } = 5;
+    public string FutabaCatalogTitlePosition { get; init; } = "right";
+    /// <summary>カタログ題名の行数。0 は無制限。</summary>
+    public int FutabaCatalogTitleLineLimit { get; init; } = 2;
+
     // ---- タブ表示 (= 設定画面「タブ」カテゴリ) ----
     // 旧 click action 設定 (Middle/Ctrl/Shift/Alt/DoubleClick) はショートカット & ジェスチャー
     // 設定ウィンドウ側に移設済み (= スレ一覧のタブ領域 / スレッドタブ表示領域 カテゴリ)。

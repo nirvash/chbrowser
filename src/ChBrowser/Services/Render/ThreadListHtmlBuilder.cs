@@ -25,9 +25,22 @@ public static class ThreadListHtmlBuilder
     /// 2 回目以降のリフレッシュは <see cref="BuildRowsHtml"/> 経由で tbody だけ差し替えるため flash しない。</summary>
     public static string Build(
         IReadOnlyList<ThreadListItem> items,
-        DateTimeOffset                now)
+        DateTimeOffset                now,
+        bool                          catalogView = false,
+        int                           catalogThumbnailSize = 120,
+        int                           catalogTitleMaxChars = 100,
+        int                           catalogColumns = 5,
+        string                        catalogTitlePosition = "right",
+        int                           catalogTitleLineLimit = 2)
     {
         var sb = new StringBuilder(8192);
+        if (catalogView)
+        {
+            sb.Append(@"<table class=""catalog-table ").Append(catalogTitlePosition == "bottom" ? "catalog-title-bottom" : "catalog-title-right").Append(catalogTitleLineLimit is 1 or 2 ? " catalog-title-lines-" + catalogTitleLineLimit : " catalog-title-lines-unlimited").Append(@""" style=""--catalog-columns:").Append(catalogColumns).Append(";--catalog-thumb-size:").Append(catalogThumbnailSize).Append(@"px""><tbody>");
+            AppendCatalogCards(sb, items, catalogTitleMaxChars);
+            sb.Append("</tbody></table>");
+            return LoadShellHtml().Replace("<!--{{ITEMS}}-->", sb.ToString());
+        }
         sb.Append(@"<table><thead><tr>");
         sb.Append(@"<th class=""col-log sortable"" data-sort=""log"" data-sort-type=""num""></th>");
         sb.Append(@"<th class=""col-no sortable sort-asc"" data-sort=""no"" data-sort-type=""num"">No</th>");
@@ -48,11 +61,42 @@ public static class ThreadListHtmlBuilder
     /// イベントリスナー (= tbody 自身に attach) も保持される。</summary>
     public static string BuildRowsHtml(
         IReadOnlyList<ThreadListItem> items,
-        DateTimeOffset                now)
+        DateTimeOffset                now,
+        bool                          catalogView = false,
+        int                           catalogThumbnailSize = 120,
+        int                           catalogTitleMaxChars = 100,
+        int                           catalogColumns = 5,
+        string                        catalogTitlePosition = "right",
+        int                           catalogTitleLineLimit = 2)
     {
         var sb = new StringBuilder(8192);
-        AppendRows(sb, items, now);
+        if (catalogView) AppendCatalogCards(sb, items, catalogTitleMaxChars);
+        else AppendRows(sb, items, now);
         return sb.ToString();
+    }
+
+    private static void AppendCatalogCards(StringBuilder sb, IReadOnlyList<ThreadListItem> items, int titleMaxChars)
+    {
+        foreach (var item in items)
+        {
+            var t = item.Info;
+            sb.Append(@"<tr class=""catalog-card");
+            if (item.IsFavorited) sb.Append(" is-favorited");
+            sb.Append(@""" data-key=""").Append(HtmlEscape.Attr(t.Key)).Append('"');
+            sb.Append(@" data-host=""").Append(HtmlEscape.Attr(item.Host)).Append('"');
+            sb.Append(@" data-dir=""").Append(HtmlEscape.Attr(item.DirectoryName)).Append('"');
+            sb.Append(@" data-title=""").Append(HtmlEscape.Attr(t.Title)).Append('"');
+            sb.Append(@" data-log=""").Append((int)item.State).Append('"');
+            sb.Append(@" data-no=""").Append(t.Order).Append(@"""><td>");
+            if (!string.IsNullOrWhiteSpace(t.ThumbnailUrl))
+                sb.Append(@"<img class=""catalog-thumb"" src=""").Append(HtmlEscape.Attr(t.ThumbnailUrl)).Append(@""" loading=""lazy"" />");
+            else
+                sb.Append(@"<span class=""catalog-thumb catalog-no-thumb""></span>");
+            var title = t.Title.Length <= titleMaxChars ? t.Title : t.Title[..titleMaxChars] + "…";
+            sb.Append(@"<span class=""catalog-title"">").Append(HtmlEscape.Text(title)).Append("</span>");
+            sb.Append(@"<span class=""catalog-count"">").Append(t.PostCount).Append("</span>");
+            sb.Append("</td></tr>");
+        }
     }
 
     private static void AppendRows(StringBuilder sb, IReadOnlyList<ThreadListItem> items, DateTimeOffset now)

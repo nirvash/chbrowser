@@ -72,7 +72,9 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
 
     /// <summary>このスレの正規 URL (5ch.io / bbspink.com の <c>test/read.cgi</c> 形式)。
     /// アドレスバー表示やコンテキストメニューの「URLコピー」で使う。</summary>
-    public string Url => $"https://{Board.Host}/test/read.cgi/{Board.DirectoryName}/{ThreadKey}/";
+    public string Url => ChBrowser.Services.Url.FutabaUrl.IsFutabaHost(Board.Host)
+        ? ChBrowser.Services.Url.FutabaUrl.BuildThreadUrl(Board.Host, Board.DirectoryName, ThreadKey)
+        : $"https://{Board.Host}/test/read.cgi/{Board.DirectoryName}/{ThreadKey}/";
 
     public IRelayCommand CloseCommand           { get; }
     public IRelayCommand CycleViewModeCommand  { get; }

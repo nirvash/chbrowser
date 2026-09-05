@@ -38,7 +38,10 @@ public sealed class BbsmenuClient
         // 取得そのままバイト列で保存 (UTF-8 想定だが変換しない)
         await File.WriteAllBytesAsync(_paths.BbsmenuJsonPath, bytes, ct).ConfigureAwait(false);
 
-        return ParseBytes(bytes);
+        var categories = ParseBytes(bytes).ToList();
+        try { categories.AddRange(await new FutabaBbsmenuClient(_client, _paths).FetchAndSaveAsync(ct).ConfigureAwait(false)); }
+        catch (Exception ex) { ChBrowser.Services.Logging.LogService.Instance.Write($"[bbsmenu] futaba fetch failed: {ex.Message}"); }
+        return categories;
     }
 
     /// <summary>ローカル保存済みの bbsmenu.json からパースする。未取得の場合は空配列。</summary>
@@ -48,7 +51,9 @@ public sealed class BbsmenuClient
             return Array.Empty<BoardCategory>();
 
         var bytes = await File.ReadAllBytesAsync(_paths.BbsmenuJsonPath, ct).ConfigureAwait(false);
-        return ParseBytes(bytes);
+        var categories = ParseBytes(bytes).ToList();
+        categories.AddRange(await new FutabaBbsmenuClient(_client, _paths).LoadFromDiskAsync(ct).ConfigureAwait(false));
+        return categories;
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new()

@@ -48,6 +48,7 @@
     <EmbeddedResource Include="Resources\thread.html" />
     <EmbeddedResource Include="Resources\thread.css" />
     <EmbeddedResource Include="Resources\thread.js" />
+    <EmbeddedResource Include="Resources\futaba-quotes.js" />
     <EmbeddedResource Include="Resources\post.html" />
     <EmbeddedResource Include="Resources\post.css" />
     <EmbeddedResource Include="Resources\board-list.html" />

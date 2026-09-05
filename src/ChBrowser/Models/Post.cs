@@ -1,14 +1,44 @@
 namespace ChBrowser.Models;
 
-/// <summary>
-/// 1 レス。dat の 1 行に対応する。
-/// dat 形式: <c>名前&lt;&gt;メール&lt;&gt;日付 ID&lt;&gt;本文&lt;&gt;タイトル(1レス目のみ)</c>
-/// </summary>
+/// <summary>One post in a thread. FutabaQuoteInfo is null for non-Futaba posts.</summary>
 public sealed record Post(
-    int     Number,         // 1 始まりのレス番号
-    string  Name,           // 名前 (HTML デコード済み)
-    string  Mail,           // メール (sage 等)
-    string  DateText,       // 例: "2026/04/25(土) 12:34:56.78"
-    string  Id,             // 例: "abc1234" (ID: の後ろ)、無ければ空文字
-    string  Body,           // 本文 (HTML デコード済み、改行は \n)
-    string? ThreadTitle);   // 1 レス目のみ。それ以外は null
+    int Number,
+    string Name,
+    string Mail,
+    string DateText,
+    string Id,
+    string Body,
+    string? ThreadTitle,
+    int? SoudaneCount = null,
+    FutabaQuoteInfo? FutabaQuoteInfo = null,
+    FutabaQuoteResolution? FutabaQuoteResolution = null);
+
+public sealed record FutabaQuoteEvidence(string Kind, int Number, string Text, string? Url = null);
+
+public sealed record FutabaQuoteResolution(
+    int Number,
+    IReadOnlyList<int> ParentNumbers,
+    string State,
+    IReadOnlyList<FutabaQuoteEvidence> Evidence,
+    IReadOnlyList<string> AmbiguousLines,
+    IReadOnlyList<FutabaQuoteBlock>? Blocks = null);
+
+public sealed record FutabaQuoteBlock(
+    int StartLine,
+    int Length,
+    int QuoteDepth,
+    IReadOnlyList<string> Lines,
+    IReadOnlyList<int>? Depths = null,
+    int? ParentNumber = null,
+    IReadOnlyList<string>? MediaUrls = null);
+
+public sealed record FutabaQuoteInfo(
+    IReadOnlyList<FutabaQuoteLine> Lines,
+    IReadOnlyList<string> AttachmentUrls,
+    string RawHtml);
+
+public sealed record FutabaQuoteLine(
+    string Text,
+    int QuoteDepth,
+    string RawHtml,
+    string OriginalText);
