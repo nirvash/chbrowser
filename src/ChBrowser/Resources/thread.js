@@ -114,6 +114,8 @@
     // setMarkPostNumber メッセージは appendPosts より先に届いて markPostNumber を上書きしてしまうため、
     // markPostNumber を比較に使うとタイミング問題で検出が漏れる。それを避けるための独立トラッカー。
     let lastDeltaMark = null;
+    // 末尾での下向きホイールによる差分取得の連打防止。
+    let endRefreshWheelPending = false;
 
     // 現在のフィルタ条件 (= C# 側 ThreadFilter record の JSON 反映)。setFilter メッセージで上書きされる。
     // 評価ルール:
@@ -3820,6 +3822,19 @@ function findReadProgressMaxNumber() {
     // 常に同じ結果になる)。
     // 右クリック+ホイール等はマウス操作ショートカット優先なので無視。)
     document.addEventListener('wheel', function(e) {
+        if (!e.ctrlKey && !e.buttons && e.deltaY > 0) {
+            const scrollY = window.scrollY || window.pageYOffset || 0;
+            const viewportBottom = scrollY + document.documentElement.clientHeight;
+            const atEnd = viewportBottom >= document.documentElement.scrollHeight - 2;
+            if (atEnd && !endRefreshWheelPending) {
+                endRefreshWheelPending = true;
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ type: 'refreshThread' });
+                }
+                window.setTimeout(function() { endRefreshWheelPending = false; }, 1200);
+            }
+            return;
+        }
         if (!e.ctrlKey) return;
         if (e.buttons) return;
         e.preventDefault();
