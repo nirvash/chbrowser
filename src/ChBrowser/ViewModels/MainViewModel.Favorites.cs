@@ -31,6 +31,7 @@ public sealed partial class MainViewModel
         });
         StatusMessage = $"{b.BoardName} をお気に入りに追加しました";
         RefreshFavoritedStateOfAllTabs();
+        EnforceNonFavoritedThreadTabLimit();
     }
 
     /// <summary>板お気に入りトグル: 既に登録済 (フォルダ含むツリー上のどこか) なら外す、

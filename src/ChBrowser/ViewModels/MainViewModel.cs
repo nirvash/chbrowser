@@ -64,6 +64,16 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     public System.Collections.Generic.IEnumerable<ThreadTabViewModel> AllThreadTabs
         => ThreadPaneGroups.SelectMany(g => g.Tabs);
 
+    private readonly Dictionary<ThreadTabViewModel, long> _threadTabOpenOrder = new();
+    private long _nextThreadTabOpenOrder;
+    private bool _nonFavoritedThreadTabLimitEnforcementPending;
+
+    private void TouchNonFavoritedThreadTab(ThreadTabViewModel? tab)
+    {
+        if (tab is null || tab.IsFavorited) return;
+        _threadTabOpenOrder[tab] = ++_nextThreadTabOpenOrder;
+    }
+
     /// <summary>指定タブが属するペインを返す (無ければ null)。</summary>
     public ThreadPaneGroupViewModel? GroupOf(ThreadTabViewModel tab)
         => ThreadPaneGroups.FirstOrDefault(g => g.Tabs.Contains(tab));
@@ -321,6 +331,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     /// 各タブの IsSelected (= WebView 可視制御) はペイン単位で <see cref="ThreadPaneGroupViewModel"/> 側が更新する。</summary>
     private void HandleActiveSelectedTabChanged(ThreadTabViewModel? value)
     {
+        TouchNonFavoritedThreadTab(value);
         OnSelectedThreadTabForAutoRefresh(value);
         // ステータスバーの「あぼーん N」「dat サイズ」を選択タブのものに更新
         AboneStatus    = value is null ? "あぼーん 0" : $"あぼーん {value.HiddenCount}";
@@ -771,6 +782,7 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
     {
         _futabaCatalogSortIndex = Math.Clamp(config.FutabaCatalogSortIndex, 0, 5);
         CurrentConfig = config;
+        EnforceNonFavoritedThreadTabLimit();
         if (IsAutoRefreshEnabled)
             _autoRefreshTimer.Interval = TimeSpan.FromMinutes(Math.Max(1, config.ThreadAutoRefreshIntervalMinutes));
 

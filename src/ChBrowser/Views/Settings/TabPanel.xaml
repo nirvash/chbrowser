@@ -13,6 +13,15 @@
     -->
     <StackPanel>
 
+        <TextBlock Text="お気に入り以外のスレッドタブ上限" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+            <TextBox Width="80"
+                     Text="{Binding NonFavoritedThreadTabLimit, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, Delay=400}"
+                     VerticalContentAlignment="Center" />
+            <TextBlock Text="件（1以上。超過時は古いタブから閉じます）"
+                       Margin="6,2" VerticalAlignment="Center" />
+        </StackPanel>
+
         <TextBlock TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,12">
             タブの横幅。タブを多数開いた際は自動で複数行に折り返します。
             「文字数指定」は OS の既定 UI フォントを基準に概算で px 換算します。

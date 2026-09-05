@@ -27,6 +27,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _hiDpiMode             = "Unaware";
     [ObservableProperty] private bool   _enableKakikomiLog     = true;
     [ObservableProperty] private bool   _restoreOpenTabsOnStartup = true;
+    [ObservableProperty] private int    _nonFavoritedThreadTabLimit = 5;
     /// <summary>(デバッグ用) 自動リカバリを止めて分析ログを出力するか。全般カテゴリ最下部のチェック。</summary>
     [ObservableProperty] private bool   _debugDisableRecovery  = false;
     /// <summary>絵文字表示に Noto Color Emoji を使うか (全般カテゴリ)。未ダウンロード時は ON にできない。</summary>
@@ -316,6 +317,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         HiDpiMode                    = initial.HiDpiMode;
         EnableKakikomiLog            = initial.EnableKakikomiLog;
         RestoreOpenTabsOnStartup  = initial.RestoreOpenTabsOnStartup;
+        NonFavoritedThreadTabLimit = initial.NonFavoritedThreadTabLimit;
         DebugDisableRecovery         = initial.DebugDisableRecovery;
         // 絵文字フォントの DL 状態 (表示専用・保存対象外) は UseNotoColorEmoji より先に確定させる。
         // OnUseNotoColorEmojiChanged のクランプが EmojiFontDownloaded を参照するため、順序が逆だと
@@ -543,6 +545,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         HiDpiMode                   = HiDpiMode,
         EnableKakikomiLog           = EnableKakikomiLog,
         RestoreOpenTabsOnStartup = RestoreOpenTabsOnStartup,
+        NonFavoritedThreadTabLimit = Math.Max(1, NonFavoritedThreadTabLimit),
         DebugDisableRecovery        = DebugDisableRecovery,
         UseNotoColorEmoji           = UseNotoColorEmoji,
         UserAgentOverride           = UserAgentOverride,

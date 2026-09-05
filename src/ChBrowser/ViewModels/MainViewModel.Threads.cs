@@ -220,6 +220,7 @@ public sealed partial class MainViewModel
                 existing.Board.DirectoryName == board.DirectoryName &&
                 existing.ThreadKey           == info.Key)
             {
+                if (activate) TouchNonFavoritedThreadTab(existing);
                 MaybeActivateThreadTab(existing, activate);
                 if (fetchRemote)
                     await RefreshThreadAsync(existing).ConfigureAwait(true);
@@ -1416,6 +1417,16 @@ public sealed partial class MainViewModel
         // これは「閉じた」訳ではないのでスクロール位置 flush も復元履歴 push もしてはいけない。
         if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Move) return;
 
+        if (e.NewItems is not null)
+        {
+            foreach (var item in e.NewItems)
+            {
+                if (item is ThreadTabViewModel tab && !_threadTabOpenOrder.ContainsKey(tab))
+                    _threadTabOpenOrder.Add(tab, ++_nextThreadTabOpenOrder);
+            }
+            QueueNonFavoritedThreadTabLimitEnforcement();
+        }
+
         // ペインのタブが空になったら自動クローズを要求する (× で閉じた / 別ペインへ移動した のどちらでも)。
         // 移動 (SuppressTabCloseSideEffects) でも空になれば閉じたいので、抑止チェックより前に判定する。
         if (ThreadPaneGroups.FirstOrDefault(g => ReferenceEquals(g.Tabs, sender)) is { Tabs.Count: 0 } emptied)
@@ -1428,6 +1439,7 @@ public sealed partial class MainViewModel
         {
             if (item is ThreadTabViewModel tab)
             {
+                _threadTabOpenOrder.Remove(tab);
                 FlushScrollPositionToDisk(tab);
                 // 「タブを閉じる」操作の復元用履歴に積む (= DeleteThreadLog 等 suppress 中なら no-op)。
                 PushRecentlyClosedThreadTab(tab);
@@ -1435,6 +1447,30 @@ public sealed partial class MainViewModel
                 // OnSelectedThreadTabChanged → SwitchAiChatContextTo が発火して中身が自動切替する。
             }
         }
+    }
+
+    private void EnforceNonFavoritedThreadTabLimit()
+    {
+        var limit = Math.Max(1, CurrentConfig.NonFavoritedThreadTabLimit);
+        var excess = AllThreadTabs
+            .Where(tab => !tab.IsFavorited)
+            .OrderBy(tab => _threadTabOpenOrder.TryGetValue(tab, out var order) ? order : long.MaxValue)
+            .Take(Math.Max(0, AllThreadTabs.Count(tab => !tab.IsFavorited) - limit))
+            .ToList();
+        foreach (var tab in excess) RemoveThreadTab(tab);
+        if (excess.Count > 0)
+            StatusMessage = $"お気に入り以外のスレッドタブ上限 ({limit} 件) に合わせ、古いタブを {excess.Count} 件閉じました";
+    }
+
+    private void QueueNonFavoritedThreadTabLimitEnforcement()
+    {
+        if (_nonFavoritedThreadTabLimitEnforcementPending) return;
+        _nonFavoritedThreadTabLimitEnforcementPending = true;
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            _nonFavoritedThreadTabLimitEnforcementPending = false;
+            EnforceNonFavoritedThreadTabLimit();
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
 /// <summary>JS の post-no メニュー → 「自分の書き込み」トグル経由で呼ばれる。

@@ -22,6 +22,9 @@ public sealed record AppConfig
     /// 即時反映 — 設定変更タイミングではなく次回起動・終了で効く。</summary>
     public bool RestoreOpenTabsOnStartup { get; init; } = true;
 
+    /// <summary>お気に入りに入っていないスレッドタブの上限。超過時は古いタブから閉じる。既定5。</summary>
+    public int NonFavoritedThreadTabLimit { get; init; } = 5;
+
     /// <summary>絵文字表示にダウンロードした Noto Color Emoji (COLRv1) フォントを使うか。既定 OFF。
     /// ON でもフォント未ダウンロードなら無効扱い (= Windows 標準フォントにフォールバック)。
     /// 反映は開き直しから (各 WebView シェルの再構築が必要)。Android と同系統の絵文字デザインになる。</summary>
