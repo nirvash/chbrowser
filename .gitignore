@@ -83,3 +83,5 @@ src/ChBrowser/Resources/icon/preview_*.png
 
 # --- Release staging output ---
 /.release-staging/
+
+/.run-data/

@@ -352,8 +352,9 @@ public partial class ThreadDisplayPane : UserControl
             // suppress される) ので、ここで全 Posts を一括 resync して描画する (複数ペイン化 Phase 3/4)。
             // これは「ペイン移動先の初回描画」であって自動復旧ではないため、デバッグ (復旧無効) モードでも実施する。
             // 通常の新規オープン (NeedsResyncOnAttach=false) では何もしない。
+            // Restore can load the disk cache before this WebView has received its first ready.
+            // Resync every tab that already has posts; it is idempotent and closes that timing gap.
             if (wv.DataContext is ThreadTabViewModel moved
-                && moved.NeedsResyncOnAttach
                 && moved.Posts.Count > 0)
             {
                 moved.NeedsResyncOnAttach = false;

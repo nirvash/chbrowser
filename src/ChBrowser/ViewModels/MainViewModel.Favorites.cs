@@ -690,7 +690,7 @@ public sealed partial class MainViewModel
             var delta = new List<Post>(result.Posts.Count - prevFetchedCount);
             for (var i = prevFetchedCount; i < result.Posts.Count; i++) delta.Add(result.Posts[i]);
             // mark は AppendPostsWithNg より前に書く必要がある (= 同期 DP 発火時に JSON に乗せるため)。
-            tab.MarkPostNumber = prevFetchedCount + 1;
+            tab.MarkPostNumber = delta[0].Number;
             AppendPostsWithNg(tab, delta, isIncremental: true);
             tab.HasReplyToOwn = DeltaHasReplyToOwn(tab, delta);
             ChBrowser.Services.Logging.LogService.Instance.Write(

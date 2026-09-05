@@ -3109,14 +3109,15 @@
     //   - pendingScrollTarget はクリアしない (= 後続の batch でも再追従するため)。
     //     visible 判定により、target が既に viewport 内に居れば scroll は発火しないので jolt は出ない。
     /** {r1..rN} の primary instance (id="rN") のうち、DOM 上で最も下にある要素を返す。
-     *  途中の番号が DOM に存在しない (= 通常はないが防御的) ものはスキップ。
+     *  実在する投稿だけを走査する。ふたばの投稿番号は大きな疎な ID なので 1..N を列挙しない。
      *  すべて存在しない場合は null。 */
     function findBottommostPrimaryInRange(N) {
         let best = null;
         let bestY = -Infinity;
         const sy = window.scrollY || window.pageYOffset || 0;
-        for (let n = 1; n <= N; n++) {
-            const el = document.getElementById('r' + n);
+        for (const post of allPosts) {
+            if (post.number > N) continue;
+            const el = document.getElementById('r' + post.number);
             if (!el) continue;
             const absY = el.getBoundingClientRect().top + sy;
             if (absY > bestY) {

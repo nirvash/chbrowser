@@ -153,10 +153,11 @@ public sealed partial class MainViewModel
             int? appendedFirst;
             if (prevCount > 0)
             {
-                if (!preserveNewPostsMarker) tab.MarkPostNumber = prevCount + 1;
+                // ふたばでは投稿番号とレス件数が一致しないため、実際の新着先頭番号を使う。
+                if (!preserveNewPostsMarker) tab.MarkPostNumber = added[0].Number;
                 appendedFirst = AppendPostsWithNg(tab, added, isIncremental: true);
                 ChBrowser.Services.Logging.LogService.Instance.Write(
-                    $"[fetchDelta]   → set tab.MarkPostNumber={prevCount + 1}, then AppendPostsWithNg(added={added.Count}, incremental=true) → firstAppended={appendedFirst?.ToString() ?? "null"}");
+                    $"[fetchDelta]   → tab.MarkPostNumber={tab.MarkPostNumber}, then AppendPostsWithNg(added={added.Count}, incremental=true) → firstAppended={appendedFirst?.ToString() ?? "null"}");
             }
             else
             {
