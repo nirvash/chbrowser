@@ -153,6 +153,16 @@ public partial class ThreadListPane : UserControl
         if (type == "paneActivated") { main.MarkThreadListPaneActive(g); return; }
         if (WebMessageBridge.TryDispatchCommonMessage(sender, type, payload, "スレ一覧表示領域")) return;
 
+        if (type == "threadListColumnWidths")
+        {
+            if (!payload.TryGetProperty("widths", out var widths) || widths.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+            var map = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var property in widths.EnumerateObject())
+                if (property.Value.TryGetInt32(out var width)) map[property.Name] = width;
+            main.PersistThreadListColumnWidths(map);
+            return;
+        }
+
         if (type == "threadListRowMenu") { ShowThreadListRowContextMenu(payload); return; }
         if (type != "openThread") return;
 

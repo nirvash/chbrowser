@@ -8,6 +8,9 @@ public sealed record AppConfig
 {
     public int Version { get; init; } = 1;
 
+    /// <summary>スレ一覧の列キーごとの幅 (px)。NavigateToString の WebView では localStorage を使えないためアプリ設定に保存する。</summary>
+    public Dictionary<string, int> ThreadListColumnWidths { get; init; } = new();
+
     // ---- 全般 ----
     /// <summary>"Unaware" or "PerMonitorV2"。次回起動時に反映 (= 起動直後の SetProcessDpiAwarenessContext)。</summary>
     public string HiDpiMode { get; init; } = "Unaware";

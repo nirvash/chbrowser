@@ -4,7 +4,9 @@
 //   { type: 'paneActivated' }                                            — Phase 14: pane 内任意の mousedown (アドレスバー切替用)
 // C# → JS:
 //   { type: 'updateLogMarks', value: { changes: [{key, state}, ...] } } — 増分マーク更新
-//   { type: 'setConfig', openOnSingleClick: bool }                       — Phase 11b: クリック動作の設定
+//   { type: 'setConfig', openOnSingleClick: bool, columnWidths: object } — クリック動作・列幅設定
+// JS → C#:
+//   { type: 'threadListColumnWidths', widths: { [columnKey]: px } }      — 列幅の永続化
 
 (function() {
     'use strict';
@@ -60,24 +62,20 @@
     // 列リサイザ — 各 <th> の右端に <span class="col-resizer"> を差し込み、
     // ドラッグで列幅を変更する。table-layout: fixed なので th.style.width が
     // そのままその列の確定幅になる。最右の列はリサイザ無し (右に列が無いので)。
-    // 幅は localStorage("chbrowser.threadlist.colwidths") に data-sort キーで保存。
-    var WIDTH_KEY = 'chbrowser.threadlist.colwidths';
+    // NavigateToString の opaque origin では localStorage を使えないため、幅は C# の
+    // AppConfig に data-sort キーで保存し、setConfig で復元する。
     var MIN_COL_WIDTH = 24;
-
-    function loadSavedWidths() {
-        try {
-            var raw = localStorage.getItem(WIDTH_KEY);
-            if (!raw) return {};
-            var obj = JSON.parse(raw);
-            return (obj && typeof obj === 'object') ? obj : {};
-        } catch (_) { return {}; }
-    }
-    function saveWidths(map) {
-        try { localStorage.setItem(WIDTH_KEY, JSON.stringify(map)); } catch (_) {}
-    }
-
-    var savedWidths = loadSavedWidths();
+    var savedWidths = {};
     var ths = Array.prototype.slice.call(document.querySelectorAll('thead th'));
+
+    function applySavedWidths(widths) {
+        savedWidths = (widths && typeof widths === 'object') ? widths : {};
+        ths.forEach(function(th) {
+            var key = th.dataset.sort;
+            var width = key ? Number(savedWidths[key]) : NaN;
+            if (isFinite(width) && width >= MIN_COL_WIDTH) th.style.width = Math.round(width) + 'px';
+        });
+    }
 
     function paddingX(el) {
         var cs = window.getComputedStyle(el);
@@ -86,9 +84,6 @@
 
     ths.forEach(function(th, idx) {
         var key = th.dataset.sort;
-        if (key && savedWidths[key]) {
-            th.style.width = savedWidths[key] + 'px';
-        }
         if (idx === ths.length - 1) return; // 最右列にはハンドル不要
 
         var grip = document.createElement('span');
@@ -148,7 +143,9 @@
                 var bW   = parseInt(bSnap.th.style.width, 10);
                 if (aKey && !isNaN(aW)) savedWidths[aKey] = aW;
                 if (bKey && !isNaN(bW)) savedWidths[bKey] = bW;
-                saveWidths(savedWidths);
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ type: 'threadListColumnWidths', widths: savedWidths });
+                }
             }
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup',   onUp);
@@ -261,6 +258,9 @@
             } else if (msg.type === 'setConfig') {
                 if (typeof msg.openOnSingleClick === 'boolean') {
                     openOnSingleClick = msg.openOnSingleClick;
+                }
+                if (msg.columnWidths && typeof msg.columnWidths === 'object') {
+                    applySavedWidths(msg.columnWidths);
                 }
             } else if (msg.type === 'setListSearch') {
                 // C# 側 ThreadListTabViewModel.SearchQuery の反映。空文字なら絞り込み解除。

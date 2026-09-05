@@ -7,6 +7,7 @@ using ChBrowser.Services.Api;
 using ChBrowser.Services.Image;
 using ChBrowser.Services.Ng;
 using ChBrowser.Services.Storage;
+using ChBrowser.ViewModels;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
@@ -45,6 +46,25 @@ if (!futabaForm.Contains("mode=regist") || !futabaForm.Contains("resto=123456") 
 if (futabaForm.Contains("bbs=", StringComparison.Ordinal))
     throw new Exception($"Futaba form contains 5ch-only field: {futabaForm}");
 Console.WriteLine("PASS Futaba reply form uses regist/resto and UTF-8 text");
+
+var fiveChBoard = new Board("news4vip", "ニュース速報(VIP)", "https://mi.5ch.net/news4vip/", "ニュース", 0);
+var fiveChTab = new ThreadListTabViewModel(fiveChBoard, _ => { }) { IsCatalogView = true };
+fiveChTab.SetThreads([new ThreadInfo("1234567890", "通常リストで表示するスレ", 10, 1)], DateTimeOffset.UtcNow);
+if (fiveChTab.Html?.Contains("<table class=\"catalog-table", StringComparison.Ordinal) == true ||
+    fiveChTab.Html?.Contains("<table><thead>", StringComparison.Ordinal) != true)
+    throw new Exception("5ch thread list must ignore a leaked Futaba catalog setting");
+if (fiveChTab.Html.Contains("<th class=\"col-board", StringComparison.Ordinal) ||
+    fiveChTab.Html.Contains("<td class=\"col-board", StringComparison.Ordinal))
+    throw new Exception("single-board thread list must hide the redundant board column");
+Console.WriteLine("PASS 5ch thread list ignores a leaked Futaba catalog setting");
+
+var columnConfigRoot = Path.Combine(Path.GetTempPath(), "ChBrowser-Column-Width-Test-" + Guid.NewGuid().ToString("N"));
+var columnConfigStore = new ConfigStorage(new DataPaths(columnConfigRoot));
+columnConfigStore.Save(new AppConfig { ThreadListColumnWidths = new Dictionary<string, int> { ["title"] = 321, ["count"] = 72 } });
+var savedColumnWidths = columnConfigStore.Load().ThreadListColumnWidths;
+if (savedColumnWidths is null || savedColumnWidths.GetValueOrDefault("title") != 321 || savedColumnWidths.GetValueOrDefault("count") != 72)
+    throw new Exception("Thread-list column widths were not persisted in AppConfig");
+Console.WriteLine("PASS thread-list column widths persist in AppConfig");
 
 var promptMethod = typeof(AiImageMetadataService).GetMethod(
     "ExtractTextFromComfyNode",

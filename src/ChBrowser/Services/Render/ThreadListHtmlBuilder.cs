@@ -31,7 +31,8 @@ public static class ThreadListHtmlBuilder
         int                           catalogTitleMaxChars = 100,
         int                           catalogColumns = 5,
         string                        catalogTitlePosition = "right",
-        int                           catalogTitleLineLimit = 2)
+        int                           catalogTitleLineLimit = 2,
+        bool                          showBoardColumn = true)
     {
         var sb = new StringBuilder(8192);
         if (catalogView)
@@ -45,11 +46,12 @@ public static class ThreadListHtmlBuilder
         sb.Append(@"<th class=""col-log sortable"" data-sort=""log"" data-sort-type=""num""></th>");
         sb.Append(@"<th class=""col-no sortable sort-asc"" data-sort=""no"" data-sort-type=""num"">No</th>");
         sb.Append(@"<th class=""sortable"" data-sort=""title"" data-sort-type=""str"">タイトル</th>");
-        sb.Append(@"<th class=""col-board sortable"" data-sort=""board"" data-sort-type=""str"">板</th>");
+        if (showBoardColumn)
+            sb.Append(@"<th class=""col-board sortable"" data-sort=""board"" data-sort-type=""str"">板</th>");
         sb.Append(@"<th class=""col-count sortable"" data-sort=""count"" data-sort-type=""num"">数</th>");
         sb.Append(@"<th class=""col-momentum sortable"" data-sort=""momentum"" data-sort-type=""num"">勢い</th>");
         sb.Append(@"</tr></thead><tbody>");
-        AppendRows(sb, items, now);
+        AppendRows(sb, items, now, showBoardColumn);
         sb.Append("</tbody></table>");
 
         return LoadShellHtml().Replace("<!--{{ITEMS}}-->", sb.ToString());
@@ -67,11 +69,12 @@ public static class ThreadListHtmlBuilder
         int                           catalogTitleMaxChars = 100,
         int                           catalogColumns = 5,
         string                        catalogTitlePosition = "right",
-        int                           catalogTitleLineLimit = 2)
+        int                           catalogTitleLineLimit = 2,
+        bool                          showBoardColumn = true)
     {
         var sb = new StringBuilder(8192);
         if (catalogView) AppendCatalogCards(sb, items, catalogTitleMaxChars);
-        else AppendRows(sb, items, now);
+        else AppendRows(sb, items, now, showBoardColumn);
         return sb.ToString();
     }
 
@@ -99,7 +102,7 @@ public static class ThreadListHtmlBuilder
         }
     }
 
-    private static void AppendRows(StringBuilder sb, IReadOnlyList<ThreadListItem> items, DateTimeOffset now)
+    private static void AppendRows(StringBuilder sb, IReadOnlyList<ThreadListItem> items, DateTimeOffset now, bool showBoardColumn)
     {
         foreach (var item in items)
         {
@@ -138,7 +141,8 @@ public static class ThreadListHtmlBuilder
             sb.Append(@"<td class=""col-log""><span class=""log-mark""></span></td>");
             sb.Append(@"<td class=""col-no"" title=""").Append(t.Order).Append(@""">").Append(t.Order).Append("</td>");
             sb.Append(@"<td class=""col-title"" title=""").Append(titleAttr).Append(@""">").Append(HtmlEscape.Text(t.Title)).Append("</td>");
-            sb.Append(@"<td class=""col-board"" title=""").Append(boardAttr).Append(@""">").Append(HtmlEscape.Text(item.BoardName)).Append("</td>");
+            if (showBoardColumn)
+                sb.Append(@"<td class=""col-board"" title=""").Append(boardAttr).Append(@""">").Append(HtmlEscape.Text(item.BoardName)).Append("</td>");
             sb.Append(@"<td class=""col-count"" title=""").Append(t.PostCount).Append(@""">").Append(t.PostCount).Append("</td>");
             sb.Append(@"<td class=""col-momentum"" title=""").Append(momentumStr).Append(@""">").Append(momentumStr).Append("</td>");
             sb.Append("</tr>");

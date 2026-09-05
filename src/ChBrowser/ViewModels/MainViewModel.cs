@@ -812,7 +812,9 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         });
         ThreadListConfigJson = System.Text.Json.JsonSerializer.Serialize(new
         {
-            type = "setConfig", openOnSingleClick = config.ThreadListOpenOnSingleClick,
+            type = "setConfig",
+            openOnSingleClick = config.ThreadListOpenOnSingleClick,
+            columnWidths = config.ThreadListColumnWidths ?? new Dictionary<string, int>(),
         });
         foreach (var tab in AllThreadListTabs)
             tab.ApplyCatalogAppearance(config.FutabaCatalogThumbnailSize, config.FutabaCatalogTitleMaxChars, config.FutabaCatalogColumns, config.FutabaCatalogTitlePosition, config.FutabaCatalogTitleLineLimit);
@@ -821,6 +823,26 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         // (= 設定画面でしきい値や接続先を変えた直後にも効く)。
         AiNgThreshold = config.NgAiThreshold;
         if (SelectedThreadTab is { } aiNgTab) StartAiNgFor(aiNgTab);
+    }
+
+    /// <summary>スレ一覧WebViewから受け取った列幅を検証して永続化する。</summary>
+    public void PersistThreadListColumnWidths(IReadOnlyDictionary<string, int> widths)
+    {
+        var allowed = new HashSet<string>(StringComparer.Ordinal) { "log", "no", "title", "board", "count", "momentum" };
+        var sanitized = widths
+            .Where(pair => allowed.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => Math.Clamp(pair.Value, 24, 2000), StringComparer.Ordinal);
+        var current = CurrentConfig.ThreadListColumnWidths ?? new Dictionary<string, int>();
+        if (current.Count == sanitized.Count && current.All(pair => sanitized.TryGetValue(pair.Key, out var width) && width == pair.Value))
+            return;
+
+        UpdateAndPersistConfig(config => config with { ThreadListColumnWidths = sanitized });
+        ThreadListConfigJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "setConfig",
+            openOnSingleClick = CurrentConfig.ThreadListOpenOnSingleClick,
+            columnWidths = sanitized,
+        });
     }
 
     /// <summary>スレ表示 (thread.js) 向け setConfig JSON を組み立てる。

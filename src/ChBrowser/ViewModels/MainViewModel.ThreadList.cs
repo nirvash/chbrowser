@@ -61,7 +61,8 @@ public sealed partial class MainViewModel
                 // 初期化: 板自身がお気に入り登録済みか (= ツールバーの ★ ボタンの押下状態)。
                 // 後続の登録/削除操作で RefreshFavoritedStateOfAllTabs が再同期する。
                 IsBoardFavorited = Favorites.FindBoard(board.Host, board.DirectoryName) is not null,
-                IsCatalogView = CurrentConfig.FutabaCatalogView,
+                // カタログ設定はふたば専用。5ch の新規タブへ設定値を持ち込まない。
+                IsCatalogView = ChBrowser.Services.Url.FutabaUrl.IsFutabaHost(board.Host) && CurrentConfig.FutabaCatalogView,
             };
             tab.ApplyCatalogAppearance(CurrentConfig.FutabaCatalogThumbnailSize, CurrentConfig.FutabaCatalogTitleMaxChars, CurrentConfig.FutabaCatalogColumns, CurrentConfig.FutabaCatalogTitlePosition, CurrentConfig.FutabaCatalogTitleLineLimit);
             ThreadListTabs.Add(tab);
