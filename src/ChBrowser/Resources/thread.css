@@ -803,9 +803,7 @@ body.slot-resizing * {
     transform: translateY(0) scale(1);
 }
 #end-refresh-wheel-overlay.burst {
-    opacity: 0;
-    transform: translateY(-22px) scale(1.65);
-    transition: opacity 360ms ease, transform 360ms cubic-bezier(.2,.8,.3,1.25);
+    animation: end-refresh-wheel-bounce 480ms cubic-bezier(.2,.8,.3,1.25) forwards;
 }
 .end-refresh-wheel-spinner {
     position: absolute;
@@ -819,6 +817,12 @@ body.slot-resizing * {
     animation: end-refresh-wheel-spin 680ms linear infinite;
 }
 @keyframes end-refresh-wheel-spin { to { transform: rotate(360deg); } }
+@keyframes end-refresh-wheel-bounce {
+    0%   { opacity: 1; transform: translateY(0) scale(1); }
+    42%  { opacity: 1; transform: translateY(-28px) scale(1.72); }
+    68%  { opacity: .72; transform: translateY(-17px) scale(1.42); }
+    100% { opacity: 0; transform: translateY(-30px) scale(1.9); }
+}
 .thread-end-mark-band::before { content: '🔄 差分を再読み込み'; }
 
 /* ---- フィルタによる非表示 ---- */
