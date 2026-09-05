@@ -808,10 +808,13 @@
         const quotePreview = options && options.quotePreview
             ? ' data-quote-preview="' + escapeHtml(options.quotePreview) + '"'
             : '';
+        const quoteMedia = options && options.quoteMedia
+            ? ' data-quote-media="' + escapeHtml(options.quoteMedia) + '"'
+            : '';
         // href は意図的に付けない。<a> が href を持つと focusable になり、
         // Chromium が DOM 再構築後にそれへ auto-focus → auto-scroll してしまうため。
         return '<a class="anchor" data-from="' + from + '" data-to="' + to
-             + '" data-spec="' + escapeHtml(norm) + '"' + quotePreview + '>'
+             + '" data-spec="' + escapeHtml(norm) + '"' + quotePreview + quoteMedia + '>'
              + escapeHtml(visible) + '</a>';
     }
 
@@ -1178,35 +1181,69 @@
         const quoteInfo = post.futabaQuoteInfo || post.FutabaQuoteInfo;
         if (!quoteInfo) return renderedBody;
         const quoteLines = quoteInfo.lines || quoteInfo.Lines || [];
-        let prefix = 0;
-        while (prefix < quoteLines.length && Number(quoteLines[prefix].quoteDepth ?? quoteLines[prefix].QuoteDepth) > 0) prefix++;
-        if (prefix === 0) return renderedBody;
-
         const resolution = getFutabaQuoteResolution(post);
         const parents = resolution ? (resolution.parentNumbers || []) : [];
         // 曖昧/未解決の引用は誤ったレスへリンクしない。
         if (!resolution || parents.length === 0 || resolution.state !== 'resolved'
             || parents.some(number => !postsByNumber.has(number))) return renderedBody;
 
-        const links = parents.map(function (number) {
-            return renderPostAnchor(String(number), '>>No.' + number, {
-                quotePreview: quoteLines.slice(0, prefix).map(function (line) {
-                    // Text はツリー解析用に先頭の引用記号を除去済みなので、表示用には
-                    // 解析前の原文を使う。深度から `>` を再構成してはいけない。
-                    return line.originalText ?? line.OriginalText
-                        ?? line.text ?? line.Text ?? '';
-                }).join('\n')
+        const blocks = resolution.blocks || resolution.Blocks || [];
+        const parts = [];
+        let i = 0;
+        while (i < quoteLines.length) {
+            const depth = Number(quoteLines[i].quoteDepth ?? quoteLines[i].QuoteDepth) || 0;
+            if (depth === 0) {
+                parts.push(buildBodyHtml(quoteLines[i].originalText ?? quoteLines[i].OriginalText
+                    ?? quoteLines[i].text ?? quoteLines[i].Text ?? ''));
+                i++;
+                continue;
+            }
+            const start = i;
+            while (i < quoteLines.length && Number(quoteLines[i].quoteDepth ?? quoteLines[i].QuoteDepth) > 0) i++;
+            const run = quoteLines.slice(start, i);
+            const block = blocks.find(function (b) {
+                return Number(b.startLine ?? b.StartLine) === start && Number(b.length ?? b.Length) === run.length;
             });
-        }).join('<br>');
-        const quoteHtml = '<span class="futaba-quote futaba-quote-links">' + links + '</span>';
-        if (prefix === quoteLines.length) return quoteHtml;
-
-        // 引用の後ろにある本文だけは解析前原文を再描画して保持する。
-        // rawHtml は通信/シリアライズ経路によって無い場合があるため、ここでは依存しない。
-        const replyRaw = quoteLines.slice(prefix).map(function (line) {
-            return line.originalText ?? line.OriginalText ?? line.text ?? line.Text ?? '';
-        }).join('<br>');
-        return quoteHtml + '<br>' + buildBodyHtml(replyRaw);
+            let parentList = block ? [block.parentNumber ?? block.ParentNumber].filter(Boolean) : [];
+            // Older persisted payloads may have parentNumbers but no per-block parent.
+            // A globally resolved, single-parent result is still safe to use here.
+            if (parentList.length === 0 && resolution.state === 'resolved' && parents.length === 1) parentList = parents;
+            if (parentList.length === 0 || parentList.some(number => !postsByNumber.has(Number(number)))) {
+                parts.push(buildBodyHtml(run.map(line => line.originalText ?? line.OriginalText
+                    ?? line.text ?? line.Text ?? '').join('<br>')));
+                continue;
+            }
+            const quoteText = run.map(line => line.originalText ?? line.OriginalText
+                ?? line.text ?? line.Text ?? '').join('\n');
+            const evidence = resolution.evidence || resolution.Evidence || [];
+            const mediaUrls = block ? (block.mediaUrls || block.MediaUrls || []) : [];
+            const links = parentList.map(function (number) {
+                const isNumberReference = run.some(function (line) {
+                    return /^\s*>+\s*No\.\s*\d+\b/i.test(line.originalText ?? line.OriginalText
+                        ?? line.text ?? line.Text ?? '');
+                });
+                const attachmentEvidence = evidence.find(function (item) {
+                    return String(item.kind ?? item.Kind).toLowerCase() === 'attachment'
+                        && Number(item.number ?? item.Number) === Number(number)
+                        && item.url;
+                });
+                return isNumberReference
+                    ? renderPostAnchor(String(number), '>>No.' + number)
+                    : mediaUrls.length > 0
+                        ? renderPostAnchor(String(number), '>>No.' + number, {
+                            quotePreview: quoteText,
+                            quoteMedia: mediaUrls[0]
+                        })
+                    : attachmentEvidence
+                        ? renderPostAnchor(String(number), '>>No.' + number, {
+                            quotePreview: quoteText,
+                            quoteMedia: attachmentEvidence.url ?? attachmentEvidence.Url
+                        })
+                    : renderPostAnchor(String(number), '>>No.' + number, { quotePreview: quoteText });
+            }).join('<br>');
+            parts.push('<span class="futaba-quote futaba-quote-links">' + links + '</span>');
+        }
+        return parts.join('<br>');
     }
 
     /** テンプレートに data を当てて 1 レス分の HTML を返す。
@@ -1505,6 +1542,20 @@
                     children += buildTreePostHtml(parent, true, (displayContext || []).concat([p.number]));
                     children += '</div>';
                 }
+            }
+        }
+        if (isEmbedded && viewMode === 'tree') {
+            const blocked = new Set(displayContext || []);
+            blocked.add(p.number);
+            const descendants = currentReverseIndex.get(p.number) || [];
+            let emitted = 0;
+            for (const childNumber of descendants) {
+                if (emitted++ >= 64 || blocked.has(childNumber)) continue;
+                const child = postsByNumber.get(childNumber);
+                if (!child) continue;
+                children += '<div class="inline-expansion reverse">';
+                children += buildTreePostHtml(child, true, (displayContext || []).concat([p.number]));
+                children += '</div>';
             }
         }
         return renderPost(postDataFor(p, isEmbedded, /*omitId*/ isEmbedded, children, displayContext));
@@ -4419,18 +4470,32 @@ function findReadProgressMaxNumber() {
 
     /** ふたば引用リンク用ポップアップ。親レスの DOM は表示せず、
      *  リンク元レスに保存した引用部分だけを表示する。 */
-    function openQuotePreviewPopup(anchor, quoteText, parentNumber, level) {
+    function openQuotePreviewPopup(anchor, quoteText, parentNumber, level, mediaUrl) {
         closeFrom(level);
-        if (!quoteText) return;
+        if (!quoteText && !mediaUrl) return;
         const el = document.createElement('div');
         el.className = 'anchor-popup futaba-quote-preview-popup';
         const sourcePost = postsByNumber.get(parseInt(parentNumber || '0', 10));
         if (sourcePost) {
             // 通常のレス表示テンプレートからヘッダを生成し、本文だけ引用部分へ差し替える。
             // これにより番号・名前・日時・ID等の見た目を通常アンカーポップアップと揃える。
-            const data = postDataFor(sourcePost, /*isEmbedded*/ false, /*omitId*/ false, '');
-            data.body = buildBodyHtml(quoteText);
-            data.media = '';
+            const data = postDataFor(sourcePost, /*isEmbedded*/ false, /*omitId*/ true, '');
+            if (mediaUrl) {
+                let mediaName = mediaUrl.split(/[?#]/, 1)[0].split('/').pop() || '';
+                try { mediaName = decodeURIComponent(mediaName); } catch (_) { /* keep URL basename */ }
+                const textLines = quoteText.split('\n').filter(function (line) {
+                    return !mediaName || line.indexOf(mediaName) < 0;
+                });
+                const text = textLines.join('\n');
+                // Keep the media at the original quote position, then retain the
+                // other quoted lines as readable text in the same popup body.
+                data.body = buildMediaSlotForUrl(mediaUrl)
+                    + (text ? '<br>' + buildBodyHtml(text) : '');
+                data.media = '';
+            } else {
+                data.body = buildBodyHtml(quoteText);
+                data.media = '';
+            }
             data.children = '';
             el.innerHTML = renderPost(data);
         } else {
@@ -4444,6 +4509,9 @@ function findReadProgressMaxNumber() {
             el.appendChild(postEl);
         }
         document.body.appendChild(el);
+        // Popup content is inserted outside the normal post rendering pipeline;
+        // initialize its deferred media slots explicitly so image HEAD/load starts.
+        observeImageSlots(el);
         positionPopup(el, anchor);
         el.addEventListener('mouseenter', function () { cancelCloseAtOrBelow(level); });
         el.addEventListener('mouseleave', function () { scheduleCloseAt(level); });
@@ -4610,7 +4678,10 @@ function findReadProgressMaxNumber() {
             if (a.classList.contains('missing')) return;
             a.addEventListener('mouseenter', function () {
                 cancelCloseAt(level);
-                if (a.dataset.quotePreview) {
+                if (a.dataset.quoteMedia) {
+                    openQuotePreviewPopup(a, a.dataset.quotePreview || '', a.dataset.from, level, a.dataset.quoteMedia);
+                }
+                else if (a.dataset.quotePreview) {
                     openQuotePreviewPopup(a, a.dataset.quotePreview, a.dataset.from, level);
                 }
                 else openPopup(a, level);

@@ -34,6 +34,28 @@ try
     Check(future[0].FutabaQuoteResolution!.ParentNumbers.Count == 0, "future text does not resolve");
     var no = FutabaQuoteAnalyzer.Analyze([P(1432656555, "parent"), P(1432690399, "No.1432656555", 1)]);
     Check(no[1].FutabaQuoteResolution!.ParentNumbers.SequenceEqual([1432656555]), "sparse numeric reference");
+    var chain = FutabaQuoteAnalyzer.Analyze([
+        P(1432664524, "旅行に行く"),
+        new Post(1432664980, "", "", "", "", "", null, null,
+            new([new("旅行に行く", 1, "", ""), new("どこいくので？", 0, "", "")], [], "")),
+        new Post(1432665033, "", "", "", "", "", null, null,
+            new([new("旅行に行く", 2, "", ""), new("どこいくので？", 1, "", ""), new("ディズニー", 0, "", "")], [], "")),
+        new Post(1432665126, "", "", "", "", "", null, null,
+            new([new("旅行に行く", 3, "", ""), new("どこいくので？", 2, "", ""), new("ディズニー", 1, "", "")], [], ""))]);
+    Check(chain.Select(p => p.FutabaQuoteResolution!.ParentNumbers).Skip(1).SelectMany(x => x).SequenceEqual([1432664524, 1432664980, 1432665033]), "context chain resolves direct parents");
+    var inheritedNo = FutabaQuoteAnalyzer.Analyze([
+        P(100, "ancestor"),
+        new Post(200, "", "", "", "", "", null, null, new([new("No.100", 1, "", ""), new("direct parent", 0, "", "")], [], "")),
+        new Post(300, "", "", "", "", "", null, null, new([new("No.100", 2, "", ""), new("direct parent", 1, "", ""), new("reply", 0, "", "")], [], ""))]);
+    Check(inheritedNo[2].FutabaQuoteResolution!.ParentNumbers.SequenceEqual([200]), "deep No reference uses inherited context parent");
+    var multiple = FutabaQuoteAnalyzer.Analyze([
+        P(100, "first quoted source"), P(200, "second quoted source"),
+        new Post(300, "", "", "", "", "", null, null, new([new("first quoted source", 1, "", ""), new("reply", 0, "", ""), new("unknown quoted source", 1, "", "")], [], ""))]);
+    Check(multiple[2].FutabaQuoteResolution is { State: "resolved" } resolved && resolved.ParentNumbers.SequenceEqual([100]), "multiple quote blocks use first parent");
+    var parsed = FutabaThreadClient.Parse(Encoding.GetEncoding(932).GetBytes(
+        "<div class=thre><span class=cno>No.1</span><blockquote>base</blockquote></div>" +
+        "<td class=rtd><span class=cno>No.2</span><blockquote><font color=\"#789922\">&gt;one<br><font color=\"#789922\">&gt;&gt;two</font><br></font>reply</blockquote></td>"), uri);
+    Check(parsed[1].FutabaQuoteInfo!.Lines.Select(x => x.QuoteDepth).SequenceEqual([1, 2, 0]), "nested quote tags and br preserve depth");
 
     var html = Html();
     var cold = await FutabaAnalysisCache.LoadAsync(html, uri, path);

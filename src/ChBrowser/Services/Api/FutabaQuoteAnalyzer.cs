@@ -22,6 +22,7 @@ internal static class FutabaQuoteAnalyzer
     {
         var numbers = posts.Select(p => p.Number).ToHashSet();
         var texts = new TextIndex();
+        var contexts = new ContextIndex();
         var attachments = new Dictionary<string, List<(int Number, string Url)>>(StringComparer.Ordinal);
         var output = new List<Post>(posts.Count);
         foreach (var post in posts)
@@ -31,13 +32,14 @@ internal static class FutabaQuoteAnalyzer
             var parents = new List<int>();
             var evidence = new List<FutabaQuoteEvidence>();
             var ambiguous = new List<string>();
+            var blocks = new List<FutabaQuoteBlock>();
             foreach (var line in info.Lines)
             {
                 var text = Text(line);
                 if (text.Length == 0) continue;
                 // Preserve existing resolution semantics; quotation-context improvements are separate.
                 var explicitMatch = ExplicitNumber.Match(text);
-                if (explicitMatch.Success)
+                if (explicitMatch.Success && line.QuoteDepth <= 1)
                 {
                     if (int.TryParse(explicitMatch.Groups[1].Value, out var n) && n < post.Number && numbers.Contains(n))
                         AddParent(n, "number", text);
@@ -65,13 +67,46 @@ internal static class FutabaQuoteAnalyzer
                 if (candidates.Count == 1) AddParent(candidates[0], "text", text);
                 else ambiguous.Add(text);
             }
+            foreach (var block in QuoteBlocks(info.Lines))
+            {
+                int? parent = null;
+                if (block.QuoteDepth >= 2)
+                {
+                    var depths = block.Depths ?? Enumerable.Repeat(block.QuoteDepth, block.Length).ToArray();
+                    var query = block.Lines.Select((value, i) => (Depth: Math.Max(0, depths[i] - 1), Text: value)).ToArray();
+                    var candidates = contexts.Find(query);
+                    parent = candidates.Count == 1 ? candidates[0] : null;
+                    if (parent is int parentNumber) AddParent(parentNumber, "context", string.Join("\n", block.Lines));
+                    else ambiguous.Add(string.Join("\n", block.Lines));
+                }
+                else
+                {
+                    var blockParents = evidence.Where(e => block.Lines.Contains(e.Text, StringComparer.Ordinal))
+                        .Select(e => e.Number).Distinct().Take(2).ToArray();
+                    parent = blockParents.Length == 1 ? blockParents[0] : null;
+                }
+                var mediaUrls = attachments
+                    .Where(pair => block.Lines.Any(line => line.Contains(pair.Key, StringComparison.Ordinal)))
+                    .SelectMany(pair => pair.Value.Select(owner => owner.Url))
+                    .Distinct(StringComparer.Ordinal).Take(2).ToArray();
+                blocks.Add(block with { ParentNumber = parent, MediaUrls = mediaUrls });
+            }
+            if (blocks.Count > 1 && blocks[0].ParentNumber is int firstParent)
+            {
+                parents.RemoveAll(number => number != firstParent);
+                evidence.RemoveAll(item => item.Number != firstParent);
+                ambiguous.Clear();
+                for (var i = 0; i < blocks.Count; i++)
+                    if (blocks[i].ParentNumber is null) blocks[i] = blocks[i] with { ParentNumber = firstParent };
+            }
             var state = ambiguous.Count > 0 ? (parents.Count > 0 ? "ambiguous" : "unresolved")
                 : (parents.Count > 0 ? "resolved" : "unresolved");
-            output.Add(post with { FutabaQuoteResolution = new(post.Number, parents, state, evidence, ambiguous) });
+            output.Add(post with { FutabaQuoteResolution = new(post.Number, parents, state, evidence, ambiguous, blocks) });
 
             // Index after resolution: a post cannot quote itself or a later arrival.
             foreach (var line in info.Lines)
                 if (line.QuoteDepth == 0) texts.Add(post.Number, Text(line));
+            contexts.Add(post.Number, info.Lines);
             foreach (var url in info.AttachmentUrls)
             {
                 var name = url.Split('?', '#')[0].Split('/')[^1];
@@ -88,6 +123,22 @@ internal static class FutabaQuoteAnalyzer
             }
         }
         return output;
+    }
+
+    private static IEnumerable<FutabaQuoteBlock> QuoteBlocks(IReadOnlyList<FutabaQuoteLine> lines)
+    {
+        for (var i = 0; i < lines.Count;)
+        {
+            if (lines[i].QuoteDepth == 0) { i++; continue; }
+            var start = i;
+            var values = new List<string>();
+            var depths = new List<int>();
+            while (i < lines.Count && lines[i].QuoteDepth > 0)
+            {
+                values.Add(Text(lines[i])); depths.Add(lines[i].QuoteDepth); i++;
+            }
+            yield return new FutabaQuoteBlock(start, i - start, depths.Max(), values, depths);
+        }
     }
 
     /// <summary>Four UTF-16 code units, as in the JS minimum quote length.
@@ -128,6 +179,30 @@ internal static class FutabaQuoteAnalyzer
                 if (result.Count == 2) break; // One vs many is sufficient; never pick an arbitrary winner.
             }
             return result;
+        }
+    }
+
+    private sealed class ContextIndex
+    {
+        private readonly Dictionary<string, HashSet<int>> _index = new(StringComparer.Ordinal);
+        internal void Add(int number, IReadOnlyList<FutabaQuoteLine> lines)
+        {
+            var values = lines.Select(line => (Depth: line.QuoteDepth, Text: Text(line))).Where(x => x.Text.Length > 0).ToArray();
+            for (var start = 0; start < values.Length; start++)
+            {
+                var key = "";
+                for (var length = 1; length <= Math.Min(32, values.Length - start); length++)
+                {
+                    key += (length == 1 ? "" : "\u001f") + values[start + length - 1].Depth + ":" + values[start + length - 1].Text;
+                    if (!_index.TryGetValue(key, out var owners)) _index[key] = owners = [];
+                    owners.Add(number);
+                }
+            }
+        }
+        internal List<int> Find(IReadOnlyList<(int Depth, string Text)> lines)
+        {
+            var key = string.Join("\u001f", lines.Select(x => x.Depth + ":" + x.Text));
+            return _index.TryGetValue(key, out var owners) ? owners.Take(2).ToList() : [];
         }
     }
 }

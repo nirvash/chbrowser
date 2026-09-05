@@ -617,6 +617,22 @@ body.slot-resizing * {
     display: none;
 }
 
+/* ふたば引用ポップアップのメディアは通常レスの半分に抑える。
+   min-* を併記して、グローバルスロット倍率が小さい場合も判読できる最小寸法を保つ。 */
+.futaba-quote-preview-popup .image-slot {
+    width: 120px;
+    min-width: 120px;
+    height: 120px;
+    min-height: 120px;
+}
+.futaba-quote-preview-popup .image-slot.video,
+.futaba-quote-preview-popup .image-slot.youtube {
+    width: 160px;
+    min-width: 160px;
+    height: 90px;
+    min-height: 90px;
+}
+
 .anchor-popup .anchor-missing {
     padding: 4px 8px;
     color: #999;

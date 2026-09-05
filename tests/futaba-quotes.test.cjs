@@ -18,6 +18,22 @@ test('旅行の三段引用は各直前の投稿へ接続する', () => {
   const result = FutabaQuotes.resolve([post(4524, [['再来週から連休なので旅行に行く']]), post(4980, [['再来週から連休なので旅行に行く', 1], ['どこいくので？']]), post(5033, [['再来週から連休なので旅行に行く', 2], ['どこいくので？', 1], ['上に書いたけどディズニーので']]), post(5126, [['再来週から連休なので旅行に行く', 3], ['どこいくので？', 2], ['上に書いたけどディズニーので', 1]])]);
   assert.deepEqual(result.map(x => x.parentNumbers), [[], [4524], [4980], [5033]]);
 });
+test('deep No reference resolves its direct context parent only', () => {
+  const result = FutabaQuotes.resolve([
+    post(100, [['ancestor']]),
+    post(200, [['No.100', 1], ['direct parent']]),
+    post(300, [['No.100', 2], ['direct parent', 1], ['reply']])
+  ]);
+  assert.deepEqual(result[2].parentNumbers, [200]);
+});
+test('multiple quote blocks use the first resolved parent', () => {
+  const result = FutabaQuotes.resolve([
+    post(100, [['first quoted source']]), post(200, [['second quoted source']]),
+    post(300, [['first quoted source', 1], ['reply'], ['unknown quoted source', 1]])
+  ]);
+  assert.equal(result[2].state, 'resolved');
+  assert.deepEqual(result[2].parentNumbers, [100]);
+});
 test('同じ本文の複数投稿は直近固定せず未解決にする', () => {
   const result = FutabaQuotes.resolve([post(10, [['同じ短い文章です']]), post(20, [['同じ短い文章です']]), post(30, [['同じ短い文章です', 1]])]);
   assert.equal(result[2].state, 'unresolved');

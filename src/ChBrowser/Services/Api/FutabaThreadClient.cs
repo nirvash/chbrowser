@@ -22,11 +22,10 @@ public sealed class FutabaThreadClient
     private static readonly Regex AttachmentRe = new(@"<a\s+[^>]*href\s*=\s*(?:['""])?(?<url>[^'""\s>]+)(?:['""])?[^>]*>\s*<img\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex QuoteFontRe = new(@"<font\b[^>]*\bcolor\s*=\s*(?:['""])?#789922(?:['""])?[^>]*>(?<body>.*?)</font>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex FontTagRe = new(@"</?font\b[^>]*>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex QuoteTagRe = new(@"(?:</?span\b[^>]*\bfutaba-quote\b[^>]*>|</?font\b[^>]*\bcolor\s*=\s*(?:['""])?#789922(?:['""])?[^>]*>)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex QuoteTagRe = new(@"</?(?:span|font)\b[^>]*>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex BodyLineBreakRe = new(@"<br\s*/?>|\r?\n", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex HtmlTagRe = new(@"<[^>]+>", RegexOptions.Compiled | RegexOptions.Singleline);
     private static readonly Regex LeadingQuoteRe = new(@"^\s*(?:>\s*)+", RegexOptions.Compiled);
-    private static readonly Regex ExplicitNoRe = new(@"^\s*>?\s*No\.\s*\d+\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SoudaneRe = new(@"<a\b[^>]*\bclass\s*=\s*['""]?sod['""]?[^>]*>\s*そうだねx(?<count>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex FutabaDateRe = new(@"^(?<yy>\d{2})/(?<mm>\d{2})/(?<dd>\d{2})(?<dow>\([^)]*\))(?<time>\d{2}:\d{2}:\d{2})(?:\.(?<frac>\d{1,2}))?$", RegexOptions.Compiled);
 
@@ -103,31 +102,40 @@ public sealed class FutabaThreadClient
         var lines = new List<FutabaQuoteLine>();
         var decodedBody = WebUtility.HtmlDecode(HtmlTagRe.Replace(rawHtml, ""));
         var hasTextualQuoteMarkers = Regex.IsMatch(decodedBody, @"(?m)^\s*>");
-        var depth = 0;
+        var quoteTags = new List<(string Name, bool IsQuote)>();
         var cursor = 0;
         foreach (Match lineBreak in BodyLineBreakRe.Matches(rawHtml))
         {
-            AddQuoteLine(rawHtml[cursor..lineBreak.Index], ref depth, lines, hasTextualQuoteMarkers);
+            AddQuoteLine(rawHtml[cursor..lineBreak.Index], quoteTags, lines, hasTextualQuoteMarkers);
             cursor = lineBreak.Index + lineBreak.Length;
         }
-        AddQuoteLine(rawHtml[cursor..], ref depth, lines, hasTextualQuoteMarkers);
+        AddQuoteLine(rawHtml[cursor..], quoteTags, lines, hasTextualQuoteMarkers);
         return new FutabaQuoteInfo(lines, attachmentUrls, rawHtml);
     }
 
-    private static void AddQuoteLine(string rawLine, ref int depth, ICollection<FutabaQuoteLine> lines, bool hasTextualQuoteMarkers)
+    private static void AddQuoteLine(string rawLine, List<(string Name, bool IsQuote)> quoteTags, ICollection<FutabaQuoteLine> lines, bool hasTextualQuoteMarkers)
     {
-        var lineDepth = depth;
-        var maxDepth = depth;
+        var lineDepth = quoteTags.Count(static tag => tag.IsQuote);
         foreach (Match tag in QuoteTagRe.Matches(rawLine))
         {
-            if (tag.Value.StartsWith("</", StringComparison.Ordinal)) depth = Math.Max(0, depth - 1);
-            else depth++;
-            maxDepth = Math.Max(maxDepth, depth);
+            var name = tag.Value.TrimStart('<', '/').Split([' ', '\t', '>'], 2)[0];
+            if (tag.Value.StartsWith("</", StringComparison.Ordinal))
+            {
+                for (var i = quoteTags.Count - 1; i >= 0; i--)
+                    if (string.Equals(quoteTags[i].Name, name, StringComparison.OrdinalIgnoreCase)) { quoteTags.RemoveAt(i); break; }
+            }
+            else
+            {
+                var isQuote = (name.Equals("span", StringComparison.OrdinalIgnoreCase)
+                    && Regex.IsMatch(tag.Value, @"\bclass\s*=\s*['""]?[^'""]*\bfutaba-quote\b", RegexOptions.IgnoreCase))
+                    || (name.Equals("font", StringComparison.OrdinalIgnoreCase)
+                    && Regex.IsMatch(tag.Value, @"\bcolor\s*=\s*['""]?#789922", RegexOptions.IgnoreCase));
+                quoteTags.Add((name, isQuote));
+                if (isQuote) lineDepth = Math.Max(lineDepth, quoteTags.Count(static item => item.IsQuote));
+            }
         }
-        lineDepth = Math.Max(lineDepth, maxDepth);
         var text = WebUtility.HtmlDecode(HtmlTagRe.Replace(rawLine, ""));
         var originalText = text;
-        var isExplicitPostReference = ExplicitNoRe.IsMatch(text);
         var leadingQuotes = LeadingQuoteRe.Match(text);
         if (leadingQuotes.Success)
         {
@@ -145,7 +153,6 @@ public sealed class FutabaThreadClient
             lineDepth = 0;
         }
         // >No.123 は引用本文ではなく、明示的なレス番号参照。
-        if (isExplicitPostReference) lineDepth = 0;
         lines.Add(new FutabaQuoteLine(text.TrimEnd(), lineDepth, rawLine, originalText));
     }
 

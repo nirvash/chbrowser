@@ -20,7 +20,17 @@ public sealed record FutabaQuoteResolution(
     IReadOnlyList<int> ParentNumbers,
     string State,
     IReadOnlyList<FutabaQuoteEvidence> Evidence,
-    IReadOnlyList<string> AmbiguousLines);
+    IReadOnlyList<string> AmbiguousLines,
+    IReadOnlyList<FutabaQuoteBlock>? Blocks = null);
+
+public sealed record FutabaQuoteBlock(
+    int StartLine,
+    int Length,
+    int QuoteDepth,
+    IReadOnlyList<string> Lines,
+    IReadOnlyList<int>? Depths = null,
+    int? ParentNumber = null,
+    IReadOnlyList<string>? MediaUrls = null);
 
 public sealed record FutabaQuoteInfo(
     IReadOnlyList<FutabaQuoteLine> Lines,

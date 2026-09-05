@@ -55,6 +55,78 @@ test('missing/NG parent keeps original quote text despite persisted full-thread 
     assert.equal(vm.runInContext("buildFutabaDisplayBody(p, '', 'original quote HTML', [], true)", context), 'original quote HTML');
 });
 
+test('explicit Futaba No reference uses the full parent popup', () => {
+    const p = post(200, '>No.100', 2);
+    p.futabaQuoteResolution = { state: 'resolved', parentNumbers: [100], blocks: [{ startLine: 0, length: 1, parentNumber: 100 }] };
+    let anchorOptions;
+    const context = vm.createContext({ p, viewMode: 'tree', postsByNumber: new Map([[100, { number: 100 }], [200, p]]),
+        window: { FutabaQuotes: quotes }, getFutabaQuoteResolution() { return p.futabaQuoteResolution; },
+        renderPostAnchor(spec, visible, options) { anchorOptions = options; return '<a></a>'; },
+        buildBodyHtml(value) { return value; } });
+    vm.runInContext(functionSource('buildFutabaDisplayBody'), context);
+    vm.runInContext("buildFutabaDisplayBody(p, '', '', [], true)", context);
+    assert.equal(anchorOptions, undefined);
+});
+
+test('attachment quote carries the parent image URL to the popup', () => {
+    const p = post(300, '>1788562301620.jpg', 1);
+    p.futabaQuoteResolution = { state: 'resolved', parentNumbers: [200],
+        evidence: [{ kind: 'attachment', number: 200, text: '1788562301620.jpg', url: 'https://example.test/1788562301620.jpg' }],
+        blocks: [{ startLine: 0, length: 1, parentNumber: 200 }] };
+    let options;
+    const context = vm.createContext({ p, viewMode: 'tree', postsByNumber: new Map([[200, { number: 200 }], [300, p]]),
+        window: { FutabaQuotes: quotes }, getFutabaQuoteResolution() { return p.futabaQuoteResolution; },
+        renderPostAnchor(spec, visible, value) { options = value; return '<a></a>'; },
+        buildBodyHtml(value) { return value; } });
+    vm.runInContext(functionSource('buildFutabaDisplayBody'), context);
+    vm.runInContext("buildFutabaDisplayBody(p, '', '', [], true)", context);
+    assert.equal(options.quoteMedia, 'https://example.test/1788562301620.jpg');
+});
+
+test('inherited attachment context carries its image URL without changing the direct parent', () => {
+    const p = post(300, '>>1788562301620.jpg', 2);
+    p.futabaQuoteResolution = { state: 'resolved', parentNumbers: [200],
+        blocks: [{ startLine: 0, length: 1, parentNumber: 200, mediaUrls: ['https://example.test/1788562301620.jpg'] }] };
+    let options;
+    const context = vm.createContext({ p, viewMode: 'tree', postsByNumber: new Map([[200, { number: 200 }], [300, p]]),
+        window: { FutabaQuotes: quotes }, getFutabaQuoteResolution() { return p.futabaQuoteResolution; },
+        renderPostAnchor(spec, visible, value) { options = value; return '<a></a>'; }, buildBodyHtml(value) { return value; } });
+    vm.runInContext(functionSource('buildFutabaDisplayBody'), context);
+    vm.runInContext("buildFutabaDisplayBody(p, '', '', [], true)", context);
+    assert.equal(options.quoteMedia, 'https://example.test/1788562301620.jpg');
+});
+
+test('attachment popup keeps non-image quote lines after the media slot', () => {
+    const p = post(300, '>>1788562301620.jpg\n>quoted text', 2);
+    p.futabaQuoteResolution = { state: 'resolved', parentNumbers: [200],
+        blocks: [{ startLine: 0, length: 1, parentNumber: 200, mediaUrls: ['https://example.test/1788562301620.jpg'] }] };
+    let popupData;
+    const context = vm.createContext({ p, viewMode: 'tree', postsByNumber: new Map([[200, { number: 200 }], [300, p]]),
+        window: { FutabaQuotes: quotes }, getFutabaQuoteResolution() { return p.futabaQuoteResolution; },
+        closeFrom() {}, observeImageSlots() {}, positionPopup() {}, attachAnchorHandlers() {}, attachMetaHoverHandlers() {}, popups: [],
+        postDataFor() { return { body: '', media: '', children: '' }; },
+        buildMediaSlotForUrl(url) { return '<slot data-url="' + url + '"></slot>'; },
+        buildBodyHtml(value) { return value; }, renderPost(data) { popupData = data; return ''; },
+        document: { createElement() { return { addEventListener() {} }; }, body: { appendChild() {} } } });
+    vm.runInContext(functionSource('openQuotePreviewPopup'), context);
+    vm.runInContext("openQuotePreviewPopup({}, '>>1788562301620.jpg\\n>quoted text', 200, 0, 'https://example.test/1788562301620.jpg')", context);
+    assert.match(popupData.body, /data-url/);
+    assert.match(popupData.body, /quoted text/);
+    assert.equal(popupData.media, '');
+});
+
+test('resolved single parent remains linkable when block evidence is absent', () => {
+    const p = post(300, 'No.100', 2);
+    p.futabaQuoteResolution = { state: 'resolved', parentNumbers: [100], blocks: [{ startLine: 0, length: 1, parentNumber: null }] };
+    let called;
+    const context = vm.createContext({ p, viewMode: 'tree', postsByNumber: new Map([[100, { number: 100 }], [300, p]]),
+        window: { FutabaQuotes: quotes }, getFutabaQuoteResolution() { return p.futabaQuoteResolution; },
+        renderPostAnchor(spec) { called = spec; return '<a></a>'; }, buildBodyHtml(value) { return value; } });
+    vm.runInContext(functionSource('buildFutabaDisplayBody'), context);
+    vm.runInContext("buildFutabaDisplayBody(p, '', '', [], true)", context);
+    assert.equal(called, '100');
+});
+
 test('5ch still uses the existing anchor extractor', () => {
     let read;
     const context = vm.createContext({ extractAnchorRefs(body) { read = body; return [{ from: 1, to: 3 }]; } });

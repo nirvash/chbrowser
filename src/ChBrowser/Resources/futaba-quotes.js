@@ -29,7 +29,7 @@
                 // 深い引用は直前の引用投稿の文脈。親候補として直接解決するのは1段目だけ。
                 if (!text) continue;
                 const direct = explicitNumber(text);
-                if (direct !== null) {
+                if (direct !== null && lineDepth(line) <= 1) {
                     if (direct < number && byNumber.has(direct)) { parentNumbers.add(direct); evidence.push({ kind: 'number', number: direct, text }); }
                     else ambiguous.push(text);
                     continue;
@@ -62,9 +62,51 @@
                 if (unique.length === 1) { parentNumbers.add(unique[0]); evidence.push({ kind: 'text', number: unique[0], text }); }
                 else ambiguous.push(text);
             }
+            const blocks = [];
+            for (let start = 0; start < lines(post).length;) {
+                if (lineDepth(lines(post)[start]) === 0) { start++; continue; }
+                const values = [], depths = [];
+                let end = start;
+                while (end < lines(post).length && lineDepth(lines(post)[end]) > 0) {
+                    values.push(lineText(lines(post)[end])); depths.push(lineDepth(lines(post)[end])); end++;
+                }
+                const blockParents = evidence.filter(e => values.includes(e.text)).map(e => Number(e.number));
+                let blockParent = [...new Set(blockParents)];
+                if (Math.max(...depths) >= 2) {
+                    const query = values.map((text, j) => ({ depth: Math.max(0, depths[j] - 1), text }));
+                    const candidates = contextCandidates(posts, i, query);
+                    blockParent = candidates.length === 1 ? candidates : [];
+                }
+                const mediaUrls = [];
+                for (let j = 0; j < i; j++) {
+                    for (const url of attachments(posts[j])) {
+                        if (values.some(value => value.includes(basename(url))) && !mediaUrls.includes(url)) mediaUrls.push(url);
+                    }
+                }
+                blocks.push({ startLine: start, length: end - start, quoteDepth: Math.max(...depths), lines: values, depths,
+                    parentNumber: blockParent.length === 1 ? blockParent[0] : null, mediaUrls: mediaUrls.slice(0, 2) });
+                start = end;
+            }
+            if (blocks.length > 1 && blocks[0].parentNumber != null) {
+                const firstParent = Number(blocks[0].parentNumber);
+                for (const n of [...parentNumbers]) if (n !== firstParent) parentNumbers.delete(n);
+                for (let j = evidence.length - 1; j >= 0; j--) if (Number(evidence[j].number) !== firstParent) evidence.splice(j, 1);
+                ambiguous.length = 0;
+                for (const block of blocks) if (block.parentNumber == null) block.parentNumber = firstParent;
+            }
             const state = ambiguous.length > 0 ? (parentNumbers.size ? 'ambiguous' : 'unresolved') : (parentNumbers.size ? 'resolved' : 'unresolved');
-            return { number, parentNumbers: [...parentNumbers], state, evidence, ambiguousLines: ambiguous };
+            return { number, parentNumbers: [...parentNumbers], state, evidence, ambiguousLines: ambiguous, blocks };
         });
+    }
+    function contextCandidates(posts, end, query) {
+        const result = [];
+        for (let i = 0; i < end; i++) {
+            const source = lines(posts[i]).map(line => ({ depth: lineDepth(line), text: lineText(line) })).filter(x => x.text);
+            for (let s = 0; s + query.length <= source.length; s++) {
+                if (query.every((q, j) => q.depth === source[s + j].depth && q.text === source[s + j].text)) { result.push(Number(posts[i].number)); break; }
+            }
+        }
+        return [...new Set(result)].slice(0, 2);
     }
     function prepareBatch(existing, batch, previous) {
         const missing = batch.some(post => info(post) && !(post.futabaQuoteResolution || post.FutabaQuoteResolution));

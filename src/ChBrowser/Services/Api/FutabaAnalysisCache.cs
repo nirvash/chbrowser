@@ -11,7 +11,7 @@ namespace ChBrowser.Services.Api;
 /// HTML remains the source of truth. Bump Version for parser/resolver semantic changes.</summary>
 internal static class FutabaAnalysisCache
 {
-    internal const int Version = 1;
+    internal const int Version = 5;
     internal static string PathFor(string htmlPath) => htmlPath + ".analysis.json";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private sealed record Snapshot(int Version, string SourceHash, string PageUrl, IReadOnlyList<Post> Posts);
