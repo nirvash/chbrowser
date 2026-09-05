@@ -20,9 +20,15 @@
 - 回帰テストで `string` の取得と `system` / `negative` の除外を確認。
 - これは暫定対応であり、将来的にはIllustra側の構造化されたメタデータパーサ移植を検討する。
 
+### `3afa66f` 連鎖あぼーんが効かない条件の修正
+
+- 対応コミット: `53c5b7d` (`main`)
+- 差分取得時に、過去バッチでhiddenになったレス番号を新着バッチの連鎖あぼーん判定へ引き継ぐよう修正。
+- `ThreadTabViewModel.HiddenPostNumbers` にhidden済み番号を累積し、`NgService` の判定へ渡す。
+- `string` / `system` の暫定対応と同様、回帰テストを追加して確認。
+
 ## 未取り込み
 
 - `e562e1a`: scom-v製動画へのラベル追加
-- `3afa66f`: 連鎖あぼーんが効かない条件の修正
 
 upstreamコミットをそのままrebase/cherry-pickするのではなく、フォーク側の独自変更を維持したまま、必要なロジックを手動移植している。
