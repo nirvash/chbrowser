@@ -827,6 +827,32 @@ body.slot-resizing * {
     content: '✦';
     font-size: 30px;
 }
+.end-refresh-wheel-particle {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 2;
+    opacity: 0;
+    color: rgba(255, 255, 255, 0.96);
+    font-family: "Segoe UI Symbol", "Arial Unicode MS", sans-serif;
+    font-size: 13px;
+    line-height: 1;
+    pointer-events: none;
+}
+#end-refresh-wheel-overlay.burst .end-refresh-wheel-particle {
+    animation: end-refresh-wheel-particle 420ms ease-out forwards;
+}
+#end-refresh-wheel-overlay.burst .particle-a { animation-delay: 20ms; }
+#end-refresh-wheel-overlay.burst .particle-b { animation-delay: 45ms; font-size: 12px; }
+#end-refresh-wheel-overlay.burst .particle-c { animation-delay: 70ms; }
+@keyframes end-refresh-wheel-particle {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(.4) rotate(0deg); }
+    18%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(calc(-50% + var(--particle-x, 0px)), calc(-50% + var(--particle-y, -25px))) scale(1.2) rotate(80deg); }
+}
+.particle-a { --particle-x: -20px; --particle-y: -24px; }
+.particle-b { --particle-x: 22px;  --particle-y: -18px; }
+.particle-c { --particle-x: 2px;   --particle-y: -34px; }
 @keyframes end-refresh-wheel-spin { to { transform: rotate(360deg); } }
 @keyframes end-refresh-wheel-bounce {
     0%   { opacity: 1; transform: translateY(0) scale(1); }

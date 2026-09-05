@@ -123,7 +123,10 @@
         if (!endRefreshWheelOverlay) {
             endRefreshWheelOverlay = document.createElement('div');
             endRefreshWheelOverlay.id = 'end-refresh-wheel-overlay';
-            endRefreshWheelOverlay.innerHTML = '<div class="end-refresh-wheel-spinner" aria-hidden="true"></div>';
+            endRefreshWheelOverlay.innerHTML = '<div class="end-refresh-wheel-spinner" aria-hidden="true"></div>'
+                + '<span class="end-refresh-wheel-particle particle-a" aria-hidden="true">✴</span>'
+                + '<span class="end-refresh-wheel-particle particle-b" aria-hidden="true">⁂</span>'
+                + '<span class="end-refresh-wheel-particle particle-c" aria-hidden="true">✶</span>';
             document.body.appendChild(endRefreshWheelOverlay);
         }
         endRefreshWheelOverlay.classList.remove('burst');
