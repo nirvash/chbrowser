@@ -352,14 +352,14 @@ public sealed class ThreadToolset : IAgentToolset
                 function = new
                 {
                     name        = "get_posts",
-                    description = $"指定範囲のレスを取得する (1 始まり、両端含む)。1 度に最大 {MaxPostsPerCall} 件まで。" +
+                    description = $"指定した実レス番号の範囲のレスを取得する (両端含む)。1 度に最大 {MaxPostsPerCall} 件まで。" +
                                   "thread_url 省略時は attached スレ。広い範囲を読みたい場合は何度かに分けて呼ぶこと。",
                     parameters  = new
                     {
                         type       = "object",
                         properties = new
                         {
-                            start      = new { type = "integer", description = "開始レス番号 (1 始まり、含む)" },
+                            start      = new { type = "integer", description = "開始レス番号 (含む。ふたばの大きなレス番号にも対応)" },
                             end        = new { type = "integer", description = "終了レス番号 (含む)" },
                             thread_url = ThreadUrlParam(),
                         },
@@ -1017,17 +1017,13 @@ public sealed class ThreadToolset : IAgentToolset
 
         if (ctx.Posts.Count == 0) return JsonSerializer.Serialize(new { posts = Array.Empty<object>() }, JsonOpts);
 
-        var lo = Math.Max(1, start);
-        var hi = Math.Min(ctx.Posts.Count, end);
-        if (hi < lo)
+        if (start < 1 || end < start)
             return ErrorJson($"範囲が空です (start={start}, end={end}, total={ctx.Posts.Count})");
-        if (hi - lo + 1 > MaxPostsPerCall)
-            return ErrorJson($"範囲が広すぎます ({hi - lo + 1} 件)。1 度に取れるのは {MaxPostsPerCall} 件まで。分割して呼んでください");
 
-        var slice = new List<object>(hi - lo + 1);
+        var slice = new List<object>();
         foreach (var p in ctx.Posts)
         {
-            if (p.Number < lo || p.Number > hi) continue;
+            if (p.Number < start || p.Number > end) continue;
             slice.Add(new
             {
                 n    = p.Number,
@@ -1037,6 +1033,8 @@ public sealed class ThreadToolset : IAgentToolset
                 body = CleanBody(p.Body),
             });
         }
+        if (slice.Count > MaxPostsPerCall)
+            return ErrorJson($"範囲内のレスが多すぎます ({slice.Count} 件)。1 度に取れるのは {MaxPostsPerCall} 件まで。分割して呼んでください");
         return JsonSerializer.Serialize(new { posts = slice }, JsonOpts);
     }
 
