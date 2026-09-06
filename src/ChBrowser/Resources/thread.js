@@ -9,6 +9,7 @@
 //   { type: 'setFilter', mediaReachableOnly? } — 生存確認済みメディアだけを残すフィルタの即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
 //   { type: 'setFutabaExpiry', value }                               — ふたばスレ末尾のサーバー明示消滅予定時刻
+//   { type: 'futabaSoudaneResult', number, success, count?, message? } — そうだね！送信結果
 //   { type: 'jumpToUnread' }                                        — 「未」ボタン: 既見範囲の下端から最初の未見レスへジャンプ
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
@@ -20,6 +21,7 @@
 //   { type: 'pageZoomCompensate', k, clientY, anchorPostNumber, anchorOffsetY }
 //                                            — ページズーム適用後の縦位置補正
 //                                              (clientY/anchorPostNumber 基準。無ければ中央)
+//   { type: 'futabaSoudane', number }      — ふたばレスへのそうだね！送信要求
 //   { type: 'paneActivated' }               — Phase 14: pane 内任意の mousedown (アドレスバー切替用)
 //   { type: 'shortcut', descriptor }        — Phase 16: ショートカット/マウス操作のディスパッチ要求
 //   { type: 'gesture',  descriptor }        — Phase 16: マウスジェスチャー認識結果のディスパッチ要求
@@ -1228,6 +1230,9 @@
             replyCount:     count,
             replyNumbers:   replies.join(','),       // バッジの data-replies 用 (ホバーポップアップで使う)
             soudaneCount:   Number.isInteger(p.soudaneCount) ? p.soudaneCount : 0,
+            hasSoudane:     Number.isInteger(p.soudaneCount) && p.soudaneCount > 0,
+            isFutabaWithoutSoudane: !!(p.futabaQuoteInfo || p.FutabaQuoteInfo)
+                && !(Number.isInteger(p.soudaneCount) && p.soudaneCount > 0),
             hasFewReplies:  count >= REPLY_TIER_PINK && count < REPLY_TIER_RED,
             hasManyReplies: count >= REPLY_TIER_RED,
             isOwn:          ownPostNumbers.has(num), // 「自分の書き込み」バッジ表示用
@@ -3840,6 +3845,19 @@ function findReadProgressMaxNumber() {
         }
     }
 
+    /** ホストから返った「そうだね！」件数をモデルと表示中の正本/複製すべてに反映する。 */
+    function applyFutabaSoudaneResult(number, success, count, message) {
+        const buttons = document.querySelectorAll('.post-soudane[data-number="' + number + '"]');
+        buttons.forEach(function(button) {
+            button.disabled = false;
+            button.title = success ? '' : (message || 'そうだね！の送信に失敗しました。');
+        });
+        if (!success || !Number.isInteger(count) || count < 0) return;
+        const post = postsByNumber.get(number);
+        if (post) post.soudaneCount = count;
+        buttons.forEach(function(button) { button.textContent = count > 0 ? 'そうだねx' + count : '+'; });
+    }
+
     /** URL (テキストリンク or 画像/動画サムネ) の右クリック時に C# にコンテキストメニュー表示を依頼。
      *  「リンクをコピー」等のメニューは C# (ThreadDisplayPane) 側 UrlContextMenu リソースで定義。
      *  url    = オリジナルのページ URL (data-url。「リンクをコピー」で共有したい元 URL)。
@@ -4188,6 +4206,19 @@ function findReadProgressMaxNumber() {
             e.preventDefault();
             e.stopPropagation();
             toggleAiPromptPopup(promptBtn);
+            return;
+        }
+
+        // ふたばレスの「そうだね！」は、送信中だけ同じレスのボタンを無効化して二重送信を防ぐ。
+        const soudaneButton = e.target.closest && e.target.closest('button.post-soudane');
+        if (soudaneButton && soudaneButton.dataset && soudaneButton.dataset.number) {
+            e.preventDefault();
+            e.stopPropagation();
+            const n = parseInt(soudaneButton.dataset.number, 10);
+            if (isNaN(n) || soudaneButton.disabled) return;
+            document.querySelectorAll('.post-soudane[data-number="' + n + '"]').forEach(function(button) { button.disabled = true; });
+            if (window.chrome && window.chrome.webview)
+                window.chrome.webview.postMessage({ type: 'futabaSoudane', number: n });
             return;
         }
 
@@ -5425,6 +5456,9 @@ function findReadProgressMaxNumber() {
                     break;
                 case 'setFutabaExpiry':
                     setFutabaExpiry(msg.value);
+                    break;
+                case 'futabaSoudaneResult':
+                    applyFutabaSoudaneResult(msg.number, msg.success === true, msg.count, msg.message);
                     break;
                 case 'setViewMode': window.setViewMode(msg.mode); break;
                 case 'setPreview':  window.setPreviewPost(msg.post); break;

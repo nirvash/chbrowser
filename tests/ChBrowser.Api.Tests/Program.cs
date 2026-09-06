@@ -47,6 +47,16 @@ if (futabaForm.Contains("bbs=", StringComparison.Ordinal))
     throw new Exception($"Futaba form contains 5ch-only field: {futabaForm}");
 Console.WriteLine("PASS Futaba reply form uses regist/resto and UTF-8 text");
 
+var soudaneMethod = typeof(PostClient).GetMethod(
+    "BuildFutabaSoudaneUri",
+    BindingFlags.NonPublic | BindingFlags.Static)
+    ?? throw new MissingMethodException(typeof(PostClient).FullName, "BuildFutabaSoudaneUri");
+var soudaneUri = (Uri)(soudaneMethod.Invoke(null, [futabaBoard, 123456])
+    ?? throw new InvalidOperationException("BuildFutabaSoudaneUri returned null"));
+if (soudaneUri.AbsoluteUri != "https://may.2chan.net/sd.php?b.123456")
+    throw new Exception($"Unexpected Futaba soudane URI: {soudaneUri}");
+Console.WriteLine("PASS Futaba soudane uses the official sd.php board.post endpoint");
+
 var fiveChBoard = new Board("news4vip", "ニュース速報(VIP)", "https://mi.5ch.net/news4vip/", "ニュース", 0);
 var fiveChTab = new ThreadListTabViewModel(fiveChBoard, _ => { }) { IsCatalogView = true };
 fiveChTab.SetThreads([new ThreadInfo("1234567890", "通常リストで表示するスレ", 10, 1)], DateTimeOffset.UtcNow);

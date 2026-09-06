@@ -18,6 +18,9 @@ using ChBrowser.Services.Url;
 
 namespace ChBrowser.Services.Api;
 
+/// <summary>ふたばの「そうだね！」送信結果。</summary>
+public sealed record FutabaSoudaneResult(bool Success, int? Count, string Message);
+
 /// <summary>
 /// bbs.cgi への書き込み (レス + スレ立て) クライアント。
 ///
@@ -117,6 +120,52 @@ public sealed class PostClient
             catch (Exception ex) { Debug.WriteLine($"[PostClient] donguri save failed: {ex.Message}"); }
         }
     }
+
+    /// <summary>
+    /// ふたばの「そうだね！」を送信する。公式ページと同じ <c>sd.php?板.レス番号</c>
+    /// を呼び、返却された最新件数をそのまま返す。
+    /// </summary>
+    public async Task<FutabaSoudaneResult> SendFutabaSoudaneAsync(Board board, string threadKey, int postNumber, CancellationToken ct = default)
+    {
+        if (!FutabaUrl.IsFutabaHost(board.Host) || string.IsNullOrWhiteSpace(threadKey) || postNumber <= 0)
+            return new FutabaSoudaneResult(false, null, "ふたばの有効なレスを選択してください。");
+
+        var uri = BuildFutabaSoudaneUri(board, postNumber);
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.TryAddWithoutValidation("Referer", FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey));
+        _donguri.Cookies.ApplyToRequest(request);
+
+        try
+        {
+            using var response = await _http.Http.SendAsync(request, ct).ConfigureAwait(false);
+            _donguri.Cookies.MergeFromResponse(response);
+            try { await _donguri.Cookies.SaveAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) { Debug.WriteLine($"[PostClient] Futaba cookie save failed: {ex.Message}"); }
+
+            var text = (await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)).Trim();
+            ChBrowser.Services.Logging.LogService.Instance.Write(
+                $"[FutabaSoudane] response host={board.Host} board={board.DirectoryName} post={postNumber} status={(int)response.StatusCode} body={text}");
+            if (!response.IsSuccessStatusCode)
+                return new FutabaSoudaneResult(false, null, $"そうだね！の送信に失敗しました (HTTP {(int)response.StatusCode})。");
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count < 0)
+                return new FutabaSoudaneResult(false, null, "そうだね！の応答を確認できませんでした。");
+
+            return new FutabaSoudaneResult(true, count, "");
+        }
+        catch (HttpRequestException ex)
+        {
+            return new FutabaSoudaneResult(false, null, $"そうだね！の送信に失敗しました: {ex.Message}");
+        }
+        catch (TaskCanceledException)
+        {
+            return new FutabaSoudaneResult(false, null, ct.IsCancellationRequested
+                ? "そうだね！の送信を取り消しました。"
+                : "そうだね！の送信がタイムアウトしました。");
+        }
+    }
+
+    private static Uri BuildFutabaSoudaneUri(Board board, int postNumber)
+        => new(new Uri(board.Url), $"/sd.php?{board.DirectoryName}.{postNumber}");
 
     /// <summary>
     /// ふたば☆ちゃんねるの標準フォーム (<c>futaba.php</c>) へテキスト投稿する。

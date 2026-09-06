@@ -483,6 +483,18 @@ public sealed partial class MainViewModel
         OpenPostDialogInternal(tab, $">>{postNumber}\n");
     }
 
+    /// <summary>スレ表示の「そうだね！」ボタンから、ふたばへ反応を送信する。</summary>
+    public async Task<FutabaSoudaneResult> SendFutabaSoudaneAsync(ThreadTabViewModel tab, int postNumber)
+    {
+        if (!FutabaUrl.IsFutabaHost(tab.Board.Host))
+            return new FutabaSoudaneResult(false, null, "ふたばのスレッドでのみ使えます。");
+
+        StatusMessage = "そうだね！を送信中…";
+        var result = await _postClient.SendFutabaSoudaneAsync(tab.Board, tab.ThreadKey, postNumber).ConfigureAwait(true);
+        StatusMessage = result.Success ? "そうだね！を送信しました。" : result.Message;
+        return result;
+    }
+
     // ---- AI チャット (LLM 連携) ----
     //
     // スレッドタブの「AI」ボタンから呼ばれる。スレ単位でモードレスのチャットウィンドウを開き、

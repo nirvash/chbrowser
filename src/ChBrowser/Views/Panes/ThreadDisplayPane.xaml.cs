@@ -192,6 +192,7 @@ public partial class ThreadDisplayPane : UserControl
             case "aiMetadataRequest":  HandleAiMetadataRequest(sender, payload); break;
             case "openInViewer":       HandleOpenInViewer(payload); break;
             case "replyToPost":        HandleReplyToPost(sender, payload); break;
+            case "futabaSoudane":      _ = HandleFutabaSoudaneAsync(sender, payload); break;
             case "ngAdd":              HandleNgAdd(sender, payload); break;
             case "toggleOwnPost":      HandleToggleOwnPost(sender, payload); break;
             case "postNoContextMenu":  HandlePostNoContextMenu(sender, payload); break;
@@ -1249,6 +1250,26 @@ public partial class ThreadDisplayPane : UserControl
         if (Vm is not { } main) return;
         if (!payload.TryGetProperty("number", out var nProp) || !nProp.TryGetInt32(out var num)) return;
         main.OpenReplyDialog(tab, num);
+    }
+
+    /// <summary>ふたばレスの「そうだね！」ボタンを送信し、返却件数を同じ WebView に反映する。</summary>
+    private async Task HandleFutabaSoudaneAsync(object sender, JsonElement payload)
+    {
+        if (sender is not WebView2 wv) return;
+        if (wv.DataContext is not ThreadTabViewModel tab) return;
+        if (Vm is not { } main) return;
+        if (!payload.TryGetProperty("number", out var nProp) || !nProp.TryGetInt32(out var number) || number <= 0) return;
+
+        var result = await main.SendFutabaSoudaneAsync(tab, number);
+        if (wv.CoreWebView2 is null) return;
+        wv.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
+        {
+            type = "futabaSoudaneResult",
+            number,
+            success = result.Success,
+            count = result.Count,
+            message = result.Message,
+        }));
     }
 
     /// <summary>JS の post-no クリックメニューで「NG登録 (名前/ID/ワッチョイ)」を選んだとき。
