@@ -352,7 +352,7 @@ public sealed class ThreadToolset : IAgentToolset
                 function = new
                 {
                     name        = "get_posts",
-                    description = $"指定した実レス番号の範囲のレスを取得する (両端含む)。1 度に最大 {MaxPostsPerCall} 件まで。" +
+                    description = $"先頭からの相対番号の範囲でレスを取得する (既定)。number_mode=absolute を指定すると実レス番号の範囲になる。両端含む、1 度に最大 {MaxPostsPerCall} 件まで。" +
                                   "thread_url 省略時は attached スレ。広い範囲を読みたい場合は何度かに分けて呼ぶこと。",
                     parameters  = new
                     {
@@ -361,6 +361,7 @@ public sealed class ThreadToolset : IAgentToolset
                         {
                             start      = new { type = "integer", description = "開始レス番号 (含む。ふたばの大きなレス番号にも対応)" },
                             end        = new { type = "integer", description = "終了レス番号 (含む)" },
+                            number_mode = new { type = "string", @enum = new[] { "relative", "absolute" }, description = "relative (既定): 先頭からの位置。absolute: Post.Number の実レス番号" },
                             thread_url = ThreadUrlParam(),
                         },
                         required = new[] { "start", "end" },
@@ -1017,13 +1018,25 @@ public sealed class ThreadToolset : IAgentToolset
 
         if (ctx.Posts.Count == 0) return JsonSerializer.Serialize(new { posts = Array.Empty<object>() }, JsonOpts);
 
+        var numberMode = "relative";
+        if (args.TryGetProperty("number_mode", out var modeEl) && modeEl.ValueKind != JsonValueKind.Null)
+        {
+            numberMode = modeEl.GetString()?.Trim().ToLowerInvariant() ?? "";
+            if (numberMode is not ("relative" or "absolute"))
+                return ErrorJson("number_mode は relative または absolute を指定してください");
+        }
+
         if (start < 1 || end < start)
             return ErrorJson($"範囲が空です (start={start}, end={end}, total={ctx.Posts.Count})");
 
         var slice = new List<object>();
-        foreach (var p in ctx.Posts)
+        for (var i = 0; i < ctx.Posts.Count; i++)
         {
-            if (p.Number < start || p.Number > end) continue;
+            var p = ctx.Posts[i];
+            var selected = numberMode == "absolute"
+                ? p.Number >= start && p.Number <= end
+                : i + 1 >= start && i + 1 <= end;
+            if (!selected) continue;
             slice.Add(new
             {
                 n    = p.Number,
