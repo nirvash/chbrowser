@@ -330,7 +330,9 @@ public sealed partial class MainViewModel
             tab.State = finalState;
         }
         catch (System.Net.Http.HttpRequestException hex)
-            when (hex.StatusCode == System.Net.HttpStatusCode.NotFound && tab.Posts.Count == 0)
+            when (hex.StatusCode == System.Net.HttpStatusCode.NotFound
+                && tab.Posts.Count == 0
+                && !FutabaUrl.IsFutabaHost(board.Host))
         {
             // 5ch.io でのアーカイブ (dat 落ち) スレは raw dat が 404 になり、本アプリで読めない。
             // ローカルキャッシュも無いケース (= タブを今初めて作っているケース) では、失敗タブを残しても
