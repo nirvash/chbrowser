@@ -352,16 +352,16 @@ public sealed class ThreadToolset : IAgentToolset
                 function = new
                 {
                     name        = "get_posts",
-                    description = $"先頭からの相対番号の範囲でレスを取得する (既定)。number_mode=absolute を指定すると実レス番号の範囲になる。両端含む、1 度に最大 {MaxPostsPerCall} 件まで。" +
+                    description = $"実レス番号の範囲でレスを取得する (既定)。number_mode=relative を指定すると先頭からの相対位置の範囲になる。両端含む、1 度に最大 {MaxPostsPerCall} 件まで。" +
                                   "thread_url 省略時は attached スレ。広い範囲を読みたい場合は何度かに分けて呼ぶこと。",
                     parameters  = new
                     {
                         type       = "object",
                         properties = new
                         {
-                            start      = new { type = "integer", description = "開始レス番号 (含む。ふたばの大きなレス番号にも対応)" },
-                            end        = new { type = "integer", description = "終了レス番号 (含む)" },
-                            number_mode = new { type = "string", @enum = new[] { "relative", "absolute" }, description = "relative (既定): 先頭からの位置。absolute: Post.Number の実レス番号" },
+                            start      = new { type = "integer", description = "開始実レス番号 (含む。ふたばの大きなレス番号にも対応)" },
+                            end        = new { type = "integer", description = "終了実レス番号 (含む)" },
+                            number_mode = new { type = "string", @enum = new[] { "absolute", "relative" }, description = "absolute (既定): Post.Number の実レス番号。relative: 先頭からの位置" },
                             thread_url = ThreadUrlParam(),
                         },
                         required = new[] { "start", "end" },
@@ -1018,7 +1018,7 @@ public sealed class ThreadToolset : IAgentToolset
 
         if (ctx.Posts.Count == 0) return JsonSerializer.Serialize(new { posts = Array.Empty<object>() }, JsonOpts);
 
-        var numberMode = "relative";
+        var numberMode = "absolute";
         if (args.TryGetProperty("number_mode", out var modeEl) && modeEl.ValueKind != JsonValueKind.Null)
         {
             numberMode = modeEl.GetString()?.Trim().ToLowerInvariant() ?? "";
