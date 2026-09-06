@@ -13,7 +13,7 @@ using ChBrowser.Services.Url;
 namespace ChBrowser.Services.Api;
 
 /// <summary>dat 取得結果 (パース済みレス + dat 全体のバイト長)。</summary>
-public sealed record DatFetchResult(IReadOnlyList<Post> Posts, long DatSize);
+public sealed record DatFetchResult(IReadOnlyList<Post> Posts, long DatSize, string? FutabaExpiryText = null);
 
 /// <summary>
 /// dat の取得・保存・パース。
@@ -56,7 +56,7 @@ public sealed class DatClient
             var htmlPath = _paths.FutabaThreadHtmlPath(board.Host, board.DirectoryName, threadKey);
             await File.WriteAllBytesAsync(htmlPath, bytes, ct).ConfigureAwait(false);
             var posts = await FutabaAnalysisCache.LoadAsync(bytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey)), htmlPath, ct).ConfigureAwait(false);
-            var result = new DatFetchResult(posts, bytes.LongLength);
+            var result = new DatFetchResult(posts, bytes.LongLength, FutabaThreadClient.ExtractExpiryText(bytes));
             if (result.Posts.Count > 0) progress.Report(result.Posts);
             return result;
         }
@@ -231,7 +231,7 @@ public sealed class DatClient
             if (!File.Exists(futabaPath)) return null;
             var htmlBytes = await File.ReadAllBytesAsync(futabaPath, ct).ConfigureAwait(false);
             var posts = await FutabaAnalysisCache.LoadAsync(htmlBytes, new Uri(FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey)), futabaPath, ct).ConfigureAwait(false);
-            return new DatFetchResult(posts, htmlBytes.LongLength);
+            return new DatFetchResult(posts, htmlBytes.LongLength, FutabaThreadClient.ExtractExpiryText(htmlBytes));
         }
 
         var path = _paths.DatPath(board.Host, board.DirectoryName, threadKey);

@@ -8,6 +8,7 @@
 //     metaPopupClickOnly?, videoLoop?, imageClickMaximize?, slotScale?, debug? }        — Phase 11 設定の即時反映
 //   { type: 'setFilter', mediaReachableOnly? } — 生存確認済みメディアだけを残すフィルタの即時反映
 //   { type: 'setShortcutBindings', bindings: [...] }                 — Phase 16 ショートカット bind 一覧の同期
+//   { type: 'setFutabaExpiry', value }                               — ふたばスレ末尾のサーバー明示消滅予定時刻
 //   { type: 'jumpToUnread' }                                        — 「未」ボタン: 既見範囲の下端から最初の未見レスへジャンプ
 // Messages sent to host (C#) via window.chrome.webview.postMessage:
 //   { type: 'ready' }                       — JS が初期化完了したことを通知
@@ -43,7 +44,40 @@
     });
 
     let allPosts = [];
+    let futabaExpiryText = null;
+    let futabaExpiryFooter = null;
     let postsByNumber = new Map();
+
+    function setFutabaExpiry(value) {
+        futabaExpiryText = typeof value === 'string' && value.length > 0 ? value : null;
+        placeFutabaExpiry();
+    }
+
+    function placeFutabaExpiry() {
+        const root = document.getElementById('posts');
+        if (!root) return;
+        const footer = futabaExpiryFooter || document.getElementById('futaba-expiry') || document.createElement('div');
+        futabaExpiryFooter = footer;
+        footer.id = 'futaba-expiry';
+        if (!footer) return;
+        if (!futabaExpiryText) {
+            footer.hidden = true;
+            footer.textContent = '';
+            return;
+        }
+        footer.hidden = false;
+        footer.textContent = futabaExpiryText;
+        // 差分境界は描画モードにより root 直下とは限らないため、
+        // 新着を含む最上位ブロックを探してその直前へ置く。
+        let deltaTarget = document.getElementById('new-posts-mark-band');
+        if (!deltaTarget && viewMode === 'dedupTree2')
+            deltaTarget = root.querySelector(':scope > .incremental-section.dt2-live');
+        if (!deltaTarget && markPostNumber != null)
+            deltaTarget = document.getElementById('r' + markPostNumber);
+        while (deltaTarget && deltaTarget.parentNode !== root) deltaTarget = deltaTarget.parentNode;
+        if (deltaTarget && deltaTarget.parentNode === root) root.insertBefore(footer, deltaTarget);
+        else root.appendChild(footer);
+    }
     /** 「自分の書き込み」としてマークされているレス番号集合。
      *  appendPosts のペイロード ownPostNumbers で初期化 / 上書き、
      *  updateOwnPosts メッセージで増分更新される。renderPost のレンダ判定に使う。 */
@@ -1644,6 +1678,7 @@
         tryScrollToTarget();
         updateRichScrollbar();
         updateNewPostsMarkBand();
+        placeFutabaExpiry();
         updateThreadEndMarkBand();
         updateMarkScrollbarMarker();
         markNewPosts();
@@ -5278,6 +5313,7 @@ function findReadProgressMaxNumber() {
         tryScrollToTarget();
         updateRichScrollbar();
         updateNewPostsMarkBand();
+        placeFutabaExpiry();
         updateThreadEndMarkBand();
         updateMarkScrollbarMarker();
         markNewPosts();
@@ -5372,6 +5408,12 @@ function findReadProgressMaxNumber() {
                     if (Array.isArray(msg.ownPostNumbers)) {
                         ownPostNumbers = new Set(msg.ownPostNumbers);
                     }
+                    // 初回バインド時は AttachedProperty の到着順が前後し得るため、
+                    // レス本体と同じメッセージにも消滅予定時刻を同梱して競合をなくす。
+                    if (Object.prototype.hasOwnProperty.call(msg, 'futabaExpiryText')) {
+                        futabaExpiryText = typeof msg.futabaExpiryText === 'string' && msg.futabaExpiryText.length > 0
+                            ? msg.futabaExpiryText : null;
+                    }
                     window.appendPosts(msg.posts, msg.scrollTarget, msg.markPostNumber, msg.incremental, msg.scrollTargetOffsetPx, msg.scrollExactY, msg.scrollExactDocH);
                     break;
                 case 'updateOwnPosts':
@@ -5380,6 +5422,9 @@ function findReadProgressMaxNumber() {
                     if (msg.value && Array.isArray(msg.value.changes)) {
                         applyOwnPostsChanges(msg.value.changes);
                     }
+                    break;
+                case 'setFutabaExpiry':
+                    setFutabaExpiry(msg.value);
                     break;
                 case 'setViewMode': window.setViewMode(msg.mode); break;
                 case 'setPreview':  window.setPreviewPost(msg.post); break;
@@ -5403,6 +5448,7 @@ function findReadProgressMaxNumber() {
                         lastDeltaMark       = null;
                         markPostNumber      = null;
                         pendingScrollTarget = null;
+                        setFutabaExpiry(msg.futabaExpiryText);
 
                         if (typeof msg.viewMode === 'string'
                             && Object.prototype.hasOwnProperty.call(VIEW_MODE_STRATEGIES, msg.viewMode)) {
@@ -5472,6 +5518,7 @@ function findReadProgressMaxNumber() {
                         // tree / dedupTree の dedup 状態 (= section A/B 分割) は次回ビューモード切替や
                         // フル再オープンでだけ更新する方針 (= ユーザのスクロール位置と視線を温存)。
                         updateNewPostsMarkBand();
+                        placeFutabaExpiry();
                         updateMarkScrollbarMarker();
                     }
                     break;

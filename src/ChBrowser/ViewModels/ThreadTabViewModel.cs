@@ -388,6 +388,10 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     [ObservableProperty]
     private OwnPostsUpdateData? _ownPostsUpdate;
 
+    /// <summary>ふたばサーバーが OP に明示したスレ消滅予定時刻。null なら末尾表示しない。</summary>
+    [ObservableProperty]
+    private string? _futabaExpiryText;
+
     /// <summary>絞り込みのテキストボックス (= スレッドペイン ヘッダ左) にバインドされる文字列。
     /// 変更で <see cref="Filter"/> が再構築される (= JS への push 経由で表示が即時更新される)。</summary>
     [ObservableProperty]

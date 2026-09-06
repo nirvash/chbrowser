@@ -971,5 +971,11 @@ body.slot-resizing * {
     font-size: 12px !important;
 }
 
+#futaba-expiry {
+    margin: 16px 12px 28px;
+    color: #666;
+    font-size: 13px;
+}
+
 /* レス番号クリックメニューは Phase 25 で WPF ネイティブ ContextMenu に移行
  * (= ThreadDisplayPane.xaml の PostNoContextMenu リソース)。HTML 側のスタイルは不要なので削除。 */

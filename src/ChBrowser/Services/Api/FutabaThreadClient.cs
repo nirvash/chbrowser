@@ -28,6 +28,7 @@ public sealed class FutabaThreadClient
     private static readonly Regex LeadingQuoteRe = new(@"^\s*(?:>\s*)+", RegexOptions.Compiled);
     private static readonly Regex SoudaneRe = new(@"<a\b[^>]*\bclass\s*=\s*['""]?sod['""]?[^>]*>\s*そうだねx(?<count>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex FutabaDateRe = new(@"^(?<yy>\d{2})/(?<mm>\d{2})/(?<dd>\d{2})(?<dow>\([^)]*\))(?<time>\d{2}:\d{2}:\d{2})(?:\.(?<frac>\d{1,2}))?$", RegexOptions.Compiled);
+    private static readonly Regex ExpiryRe = new(@"(?<expiry>(?:(?:\d{2}日)?\d{2}:\d{2})頃消えます)", RegexOptions.Compiled);
 
     private readonly MonazillaClient _client;
 
@@ -38,7 +39,7 @@ public sealed class FutabaThreadClient
         var bytes = await FetchBytesAsync(board, threadKey, ct).ConfigureAwait(false);
         var url = FutabaUrl.BuildThreadUrl(board.Host, board.DirectoryName, threadKey);
         var posts = await Task.Run(() => FutabaQuoteAnalyzer.Analyze(Parse(bytes, new Uri(url)), ct), ct).ConfigureAwait(false);
-        return new DatFetchResult(posts, bytes.LongLength);
+        return new DatFetchResult(posts, bytes.LongLength, ExtractExpiryText(bytes));
     }
 
     public async Task<byte[]> FetchBytesAsync(Board board, string threadKey, CancellationToken ct = default)
@@ -84,6 +85,14 @@ public sealed class FutabaThreadClient
             posts.Add(new Post(number, name, "", date, "", body, posts.Count == 0 ? title : null, soudane, quoteInfo));
         }
         return posts;
+    }
+
+    /// <summary>ふたばの OP にサーバーが明示する消滅予定時刻を、その表示文のまま取得する。</summary>
+    internal static string? ExtractExpiryText(byte[] shiftJisHtml)
+    {
+        var html = Encoding.GetEncoding(932).GetString(shiftJisHtml);
+        var match = ExpiryRe.Match(WebUtility.HtmlDecode(html));
+        return match.Success ? match.Groups["expiry"].Value : null;
     }
 
     private static List<string> ExtractAttachments(string content, Uri pageUri)

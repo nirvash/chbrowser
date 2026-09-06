@@ -271,6 +271,7 @@ public sealed partial class MainViewModel
             {
                 AppendPostsWithNg(tab, local.Posts);
                 tab.DatSize       = local.DatSize;
+                tab.FutabaExpiryText = local.FutabaExpiryText;
                 prevCount         = local.Posts.Count;
                 // dat 連番ベースの件数で初期化 (= 取得失敗で Step 2 が走らなくても、後続 refresh の境界が正しくなる)。
                 tab.FetchedPostCount = local.Posts.Count;
@@ -317,6 +318,7 @@ public sealed partial class MainViewModel
             SaveFetchedPostCount(board, info.Key, result.Posts.Count);
             // dat 連番ベースの件数を記録 (= 後続の差分取得の境界に使う。NG 透明化では減らない)。
             tab.FetchedPostCount = result.Posts.Count;
+            tab.FutabaExpiryText = result.FutabaExpiryText;
 
             // お気に入りスレのメディアを先読み (全レス分。差分重複は Service の dedup set が吸収)。
             MediaPrefetch?.EnqueueForPosts(board.Host, board.DirectoryName, info.Key, result.Posts);
@@ -400,6 +402,7 @@ public sealed partial class MainViewModel
 
             SaveFetchedPostCount(tab.Board, tab.ThreadKey, result.Posts.Count);
             tab.FetchedPostCount = result.Posts.Count;
+            tab.FutabaExpiryText = result.FutabaExpiryText;
 
             // 手動差分取得: 新着があったときだけ新着先頭レスまでスクロールする。
             // PendingScrollToPost への setter で JS に scrollToPost が push される。appendPosts の各 batch

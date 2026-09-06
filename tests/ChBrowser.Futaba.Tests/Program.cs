@@ -25,6 +25,8 @@ try
     Check(FutabaCatalogClient.CatalogGridColumns == 14
         && FutabaCatalogClient.CatalogGridRows == 50
         && FutabaCatalogClient.CatalogSettingsCookie == "cxyl=14x50x100x0x0", "catalog fetch grid covers 700 threads");
+    Check(FutabaThreadClient.ExtractExpiryText(Encoding.GetEncoding(932).GetBytes("<span class=cnw>26/09/06(日)05:00:01</span> 09:06頃消えます")) == "09:06頃消えます", "Futaba expiry time is extracted from OP metadata");
+    Check(FutabaThreadClient.ExtractExpiryText(Encoding.GetEncoding(932).GetBytes("<span class=cnw>26/09/06(日)05:00:01</span> 01日09:06頃消えます")) == "01日09:06頃消えます", "Futaba expiry time retains its day");
     var textResult = FutabaQuoteAnalyzer.Analyze([P(100, "some original text"), P(200, "original", 1)]);
     Check(textResult[1].FutabaQuoteResolution is { State: "resolved" } tr && tr.ParentNumbers.SequenceEqual([100]), "indexed substring matches");
     var ambiguous = FutabaQuoteAnalyzer.Analyze([P(100, "same original"), P(150, "same original"), P(200, "original", 1)]);

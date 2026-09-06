@@ -162,6 +162,7 @@ public static partial class WebView2Helper
 
         // streaming 中もこのバッチで対象レスが現れる可能性があるので scroll target / mark を併送
         var binding      = wv.DataContext as IThreadDisplayBinding;
+        var futabaExpiryText = (wv.DataContext as ChBrowser.ViewModels.ThreadTabViewModel)?.FutabaExpiryText;
         var scrollTarget = binding?.ScrollTargetPostNumber;
         var markPostNumber = binding?.MarkPostNumber;
         // 「自分の書き込み」のレス番号集合も併送 (= JS 側で「自分」バッジ表示)。
@@ -197,6 +198,7 @@ public static partial class WebView2Helper
         {
             type             = "appendPosts",
             posts            = data.Posts,
+            futabaExpiryText,
             scrollTarget,
             scrollTargetOffsetPx = binding?.ScrollTargetOffsetPx,
             scrollExactY     = exactY,
@@ -240,6 +242,7 @@ public static partial class WebView2Helper
                              ? tab.ScrollTargetScrollY : null,
             scrollExactDocH = tab.ScrollTargetDocHeight,
             markPostNumber = (int?)tab.MarkPostNumber,
+            futabaExpiryText = tab.FutabaExpiryText,
             ownPostNumbers = System.Linq.Enumerable.ToArray(tab.OwnPostNumbers),
             filter = new
             {
@@ -254,6 +257,23 @@ public static partial class WebView2Helper
             + $"ScrollTarget={tab.ScrollTargetPostNumber?.ToString() ?? "null"}, "
             + $"OwnPosts={tab.OwnPostNumbers.Count}");
         return PostJsonWhenReadyAsync(wv, json, NavScope.ThreadShell);
+    }
+
+    // ------------------------------------------------------------
+    // FutabaExpiryText (スレ末尾: ふたばサーバーが明示した消滅予定時刻)
+    // ------------------------------------------------------------
+    public static readonly DependencyProperty FutabaExpiryTextProperty =
+        DependencyProperty.RegisterAttached("FutabaExpiryText", typeof(string), typeof(WebView2Helper),
+            new PropertyMetadata(null, OnFutabaExpiryTextChanged));
+
+    public static string? GetFutabaExpiryText(DependencyObject d) => (string?)d.GetValue(FutabaExpiryTextProperty);
+    public static void SetFutabaExpiryText(DependencyObject d, string? value) => d.SetValue(FutabaExpiryTextProperty, value);
+
+    private static void OnFutabaExpiryTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not WebView2 wv) return;
+        var json = JsonSerializer.Serialize(new { type = "setFutabaExpiry", value = e.NewValue as string }, PostJsonOptions);
+        _ = PostJsonWhenReadyAsync(wv, json, NavScope.ThreadShell);
     }
 
     // ------------------------------------------------------------
