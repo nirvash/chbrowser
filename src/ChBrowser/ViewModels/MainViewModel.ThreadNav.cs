@@ -144,6 +144,14 @@ public sealed partial class MainViewModel
         var board  = tab.Board;
         var curKey = tab.ThreadKey;
 
+        // ふたばは通常の5chリンク走査とは異なり、カタログの同名・類似名と
+        // スレ立て時刻ベースのキーで前後を判定する。
+        if (FutabaUrl.IsFutabaHost(board.Host))
+        {
+            await ResolveFutabaThreadChainAsync(tab).ConfigureAwait(true);
+            return;
+        }
+
         // スレ key が数値でない形式 (= epoch 秒でない) は方向判定ができないため対象外。
         if (!ulong.TryParse(curKey, out var curNum))
         {
@@ -190,6 +198,47 @@ public sealed partial class MainViewModel
         // 隣接スレのテンプレが自スレを前スレとして宣言していればそこから前後関係が分かる。
         InferNavFromSiblingTabs(tab);
 
+    }
+
+    /// <summary>ふたば用の前後スレ推測。ふたばのスレキーはスレ立て時刻なので、同一板の
+    /// カタログから現スレタイトルと同名・類似名のスレを候補化し、キーの大小で前後を分ける。
+    /// 確定値 (idx.json) は通常経路と同じく最優先で尊重する。</summary>
+    private async Task ResolveFutabaThreadChainAsync(ThreadTabViewModel tab)
+    {
+        var board = tab.Board;
+        var index = _threadIndex.Load(board.Host, board.DirectoryName, tab.ThreadKey);
+        var excluded = index?.NavExcludedKeys is { Length: > 0 } arr
+            ? new HashSet<string>(arr, StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        var subjects = await GetSubjectsForNavAsync(board).ConfigureAwait(true);
+        var currentTitle = (tab.Title ?? "").Trim().ToLowerInvariant();
+        var hasCurrentTime = ulong.TryParse(tab.ThreadKey, out var currentTime);
+        var scored = subjects
+            .Where(s => s.Key != tab.ThreadKey && !excluded.Contains(s.Key))
+            .Select(s => (Info: s, Score: LongestCommonSubstringLength(currentTitle, s.Title.Trim().ToLowerInvariant())))
+            .Where(x => x.Score >= 6)
+            .Where(x => ulong.TryParse(x.Info.Key, out _))
+            .ToList();
+
+        List<ThreadNavCandidate> BuildCandidates(bool previous)
+            => scored
+                .Where(x => ulong.TryParse(x.Info.Key, out var time) &&
+                    (!hasCurrentTime || (previous ? time < currentTime : time > currentTime)))
+                .OrderByDescending(x => x.Score)
+                .ThenBy(x => x.Info.Order)
+                .Take(NavMaxCandidates)
+                .Select(x => new ThreadNavCandidate(x.Info.Key, x.Info.Title, x.Info.PostCount, x.Score))
+                .ToList();
+
+        var prevCandidates = hasCurrentTime ? BuildCandidates(previous: true) : new List<ThreadNavCandidate>();
+        var nextCandidates = BuildCandidates(previous: false);
+
+        await ApplySideWithLockAsync(tab, isPrev: true, index?.PrevThreadKey, prevCandidates,
+            subjects.ToDictionary(x => x.Key, StringComparer.Ordinal), board).ConfigureAwait(true);
+        await ApplySideWithLockAsync(tab, isPrev: false, index?.NextThreadKey, nextCandidates,
+            subjects.ToDictionary(x => x.Key, StringComparer.Ordinal), board).ConfigureAwait(true);
+        ChBrowser.Services.Logging.LogService.Instance.Write(
+            $"[threadNav] Futaba title candidates: {tab.ThreadKey} prev={FmtTop(prevCandidates)} next={FmtTop(nextCandidates)}");
     }
 
     /// <summary>開いている他タブの解決結果を逆参照して、自スレの前後候補を補完する。
