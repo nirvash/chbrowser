@@ -66,6 +66,13 @@ if (savedColumnWidths is null || savedColumnWidths.GetValueOrDefault("title") !=
     throw new Exception("Thread-list column widths were not persisted in AppConfig");
 Console.WriteLine("PASS thread-list column widths persist in AppConfig");
 
+var autoRefreshConfigRoot = Path.Combine(Path.GetTempPath(), "ChBrowser-Auto-Refresh-Test-" + Guid.NewGuid().ToString("N"));
+var autoRefreshConfigStore = new ConfigStorage(new DataPaths(autoRefreshConfigRoot));
+autoRefreshConfigStore.Save(new AppConfig { ThreadAutoRefreshEnabled = true });
+if (!autoRefreshConfigStore.Load().ThreadAutoRefreshEnabled)
+    throw new Exception("Auto-refresh enabled state was not persisted in AppConfig");
+Console.WriteLine("PASS auto-refresh enabled state persists in AppConfig");
+
 var promptMethod = typeof(AiImageMetadataService).GetMethod(
     "ExtractTextFromComfyNode",
     BindingFlags.NonPublic | BindingFlags.Static)

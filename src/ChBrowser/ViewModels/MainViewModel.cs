@@ -783,8 +783,8 @@ public sealed partial class MainViewModel : ObservableObject, ChBrowser.Services
         _futabaCatalogSortIndex = Math.Clamp(config.FutabaCatalogSortIndex, 0, 5);
         CurrentConfig = config;
         EnforceNonFavoritedThreadTabLimit();
-        if (IsAutoRefreshEnabled)
-            _autoRefreshTimer.Interval = TimeSpan.FromMinutes(Math.Max(1, config.ThreadAutoRefreshIntervalMinutes));
+        IsAutoRefreshEnabled = config.ThreadAutoRefreshEnabled;
+        ApplyAutoRefreshForSelectedTab();
 
         // (デバッグ) 自動リカバリ停止 + 分析ログのフラグを実行時へ同期 (起動時 + 設定即時反映の両経路を通る)。
         ChBrowser.Services.Logging.DebugFlags.DisableRecoveryAndLog = config.DebugDisableRecovery;

@@ -347,6 +347,7 @@
                     <!-- 差分取得 -->
                     <ToggleButton Style="{StaticResource ToolbarToggleIconButton}"
                                   IsChecked="{Binding Main.IsAutoRefreshEnabled, Mode=TwoWay}"
+                                  IsEnabled="{Binding SelectedTab.IsFavorited}"
                                   Command="{Binding Main.ToggleAutoRefreshCommand}"
                                   ToolTip="定期巡回">
                         <TextBlock Text="⟳" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />

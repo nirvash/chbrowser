@@ -153,6 +153,9 @@ public sealed partial class MainViewModel
             listTab.IsBoardFavorited = listTab.Board is not null
                 && Favorites.FindBoard(listTab.Board.Host, listTab.Board.DirectoryName) is not null;
         }
+
+        // ON/OFF は維持するが、お気に入り解除された対象は巡回を停止する。
+        ApplyAutoRefreshForSelectedTab();
     }
 
     /// <summary>D&amp;D による移動を実行。target が null なら root 末尾、folder なら配下、それ以外は target の直後に。</summary>

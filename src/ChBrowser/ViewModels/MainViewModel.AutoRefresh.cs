@@ -19,15 +19,26 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private void ToggleAutoRefresh()
     {
-        if (!IsAutoRefreshEnabled)
+        // IsChecked の TwoWay バインドが先に値を更新する。非お気に入りでは UI も無効化し、
+        // キー操作などでここに来ても保存済みの手動状態へ戻す。
+        if (SelectedThreadTab?.IsFavorited != true)
         {
-            _autoRefreshTimer.Stop();
-            _autoRefreshRoot = null;
-            _autoRefreshNext = null;
+            IsAutoRefreshEnabled = CurrentConfig.ThreadAutoRefreshEnabled;
             return;
         }
 
-        _autoRefreshRoot = SelectedThreadTab;
+        UpdateAndPersistConfig(c => c with { ThreadAutoRefreshEnabled = IsAutoRefreshEnabled });
+        ApplyAutoRefreshForSelectedTab();
+    }
+
+    private void ApplyAutoRefreshForSelectedTab()
+    {
+        _autoRefreshTimer.Stop();
+        _autoRefreshRoot = null;
+        _autoRefreshNext = null;
+        if (!IsAutoRefreshEnabled || SelectedThreadTab is not { IsFavorited: true } selected) return;
+
+        _autoRefreshRoot = selected;
         _autoRefreshTimer.Interval = TimeSpan.FromMinutes(Math.Max(1, CurrentConfig.ThreadAutoRefreshIntervalMinutes));
         _autoRefreshTimer.Tick -= AutoRefreshTimer_Tick;
         _autoRefreshTimer.Tick += AutoRefreshTimer_Tick;
@@ -44,7 +55,13 @@ public sealed partial class MainViewModel
         try
         {
             var root = _autoRefreshRoot;
-            if (!AllThreadTabs.Contains(root)) { IsAutoRefreshEnabled = false; return; }
+            if (!AllThreadTabs.Contains(root) || !root.IsFavorited)
+            {
+                _autoRefreshTimer.Stop();
+                _autoRefreshRoot = null;
+                _autoRefreshNext = null;
+                return;
+            }
 
             await RefreshThreadAsync(root, scrollToFirstNewPost: false, preserveNewPostsMarker: true).ConfigureAwait(true);
             if (_autoRefreshNext is { } nextTarget && AllThreadTabs.Contains(nextTarget))
@@ -69,12 +86,6 @@ public sealed partial class MainViewModel
 
     private void OnSelectedThreadTabForAutoRefresh(ThreadTabViewModel? value)
     {
-        if (IsAutoRefreshEnabled && !ReferenceEquals(value, _autoRefreshRoot))
-        {
-            IsAutoRefreshEnabled = false;
-            _autoRefreshTimer.Stop();
-            _autoRefreshRoot = null;
-            _autoRefreshNext = null;
-        }
+        ApplyAutoRefreshForSelectedTab();
     }
 }
