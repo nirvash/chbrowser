@@ -71,6 +71,9 @@ try
         "<div class=thre><span class=cno>No.1</span><blockquote>base</blockquote></div>" +
         "<td class=rtd><span class=cno>No.2</span><blockquote><font color=\"#789922\">&gt;one<br><font color=\"#789922\">&gt;&gt;two</font><br></font>reply</blockquote></td>"), uri);
     Check(parsed[1].FutabaQuoteInfo!.Lines.Select(x => x.QuoteDepth).SequenceEqual([1, 2, 0]), "nested quote tags and br preserve depth");
+    var idParsed = FutabaThreadClient.Parse(Encoding.GetEncoding(932).GetBytes(
+        "<div class=thre><span class=cnw>26/09/06(土)02:13:40 ID:Qr4bAJCk</span><span class=cno>No.1</span><blockquote>base</blockquote></div>"), uri);
+    Check(idParsed[0].Id == "Qr4bAJCk" && idParsed[0].DateText == "2026/09/06(土) 02:13:40", "Futaba post ID is extracted separately from the date");
 
     var html = Html();
     var cold = await FutabaAnalysisCache.LoadAsync(html, uri, path);

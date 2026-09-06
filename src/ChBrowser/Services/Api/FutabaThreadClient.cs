@@ -18,6 +18,7 @@ public sealed class FutabaThreadClient
     private static readonly Regex NumberRe = new(@"<span\s+class\s*=\s*(?:['""])?cno(?:['""])?\s*>\s*No\.(?<number>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex NameRe = new(@"<span\s+class\s*=\s*(?:['""])?cnm(?:['""])?\s*>(?<name>.*?)</span>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex DateRe = new(@"<span\s+class\s*=\s*(?:['""])?cnw(?:['""])?\s*>(?<date>.*?)</span>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+    private static readonly Regex IdRe = new(@"(?:^|\s)ID:(?<id>[^\s<]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex BodyRe = new(@"<blockquote[^>]*>(?<body>.*?)</blockquote>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex AttachmentRe = new(@"<a\s+[^>]*href\s*=\s*(?:['""])?(?<url>[^'""\s>]+)(?:['""])?[^>]*>\s*<img\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex QuoteFontRe = new(@"<font\b[^>]*\bcolor\s*=\s*(?:['""])?#789922(?:['""])?[^>]*>(?<body>.*?)</font>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -67,8 +68,11 @@ public sealed class FutabaThreadClient
 
             var name = NameRe.Match(content) is { Success: true } nameMatch
                 ? nameMatch.Groups["name"].Value.Trim() : "";
-            var date = DateRe.Match(content) is { Success: true } dateMatch
-                ? NormalizeDate(WebUtility.HtmlDecode(dateMatch.Groups["date"].Value).Trim()) : "";
+            var rawDate = DateRe.Match(content) is { Success: true } dateMatch
+                ? WebUtility.HtmlDecode(dateMatch.Groups["date"].Value).Trim() : "";
+            var idMatch = IdRe.Match(rawDate);
+            var date = NormalizeDate(idMatch.Success ? rawDate[..idMatch.Index].TrimEnd() : rawDate);
+            var id = idMatch.Success ? idMatch.Groups["id"].Value : "";
             var rawBodyHtml = bodyMatch.Groups["body"].Value;
             var attachments = ExtractAttachments(content, pageUri);
             var quoteInfo = BuildQuoteInfo(rawBodyHtml, attachments);
@@ -82,7 +86,7 @@ public sealed class FutabaThreadClient
             if (posts.Count == 0) body = "[[CHB_FUTABA_OP]]" + body;
 
             int? soudane = SoudaneRe.Match(content) is { Success: true } soudaneMatch && int.TryParse(soudaneMatch.Groups["count"].Value, out var sc) ? sc : null;
-            posts.Add(new Post(number, name, "", date, "", body, posts.Count == 0 ? title : null, soudane, quoteInfo));
+            posts.Add(new Post(number, name, "", date, id, body, posts.Count == 0 ? title : null, soudane, quoteInfo));
         }
         return posts;
     }
