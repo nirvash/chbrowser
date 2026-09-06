@@ -1,4 +1,7 @@
 # AGENTS.md
+
+反復的なリリース／ローカル配布手順は [skills/chbrowser-release-deploy/SKILL.md](skills/chbrowser-release-deploy/SKILL.md) に分離した。リリースまたは配布を依頼された場合のみ参照する。
+
 ## upstream 追従履歴
 
 upstream 由来の修正を現行コードへ手動移植した記録は [docs/upstream-followup.md](docs/upstream-followup.md) にまとめる。
