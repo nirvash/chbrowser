@@ -1,5 +1,8 @@
 using System.Reflection;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using ChBrowser.Models;
@@ -127,3 +130,78 @@ var appMethod = typeof(AiImageMetadataService).GetMethod(
 var appLabel = (string?)appMethod.Invoke(null, [new Dictionary<string, string> { ["software"] = "\"scom-v 0.1.0\"" }]);
 if (appLabel != "scom-v") throw new Exception($"Unexpected video app label: {appLabel}");
 Console.WriteLine("PASS scom-v video software tag gets a stable generator label");
+
+var datRoot = Path.Combine(Path.GetTempPath(), "ChBrowser-Dat-Race-Test-" + Guid.NewGuid().ToString("N"));
+var datPaths = new DataPaths(datRoot);
+var datBoard = new Board("test", "test", "https://example.5ch.io/test/", "test", 0);
+const string datKey = "1234567890";
+var firstDatLine = Encoding.GetEncoding(932).GetBytes("name<>mail<>date<>same body<>title\n");
+var secondDatLine = Encoding.GetEncoding(932).GetBytes("name<>mail<>date<>same body<>\n");
+var completeDat = firstDatLine.Concat(secondDatLine).ToArray();
+await File.WriteAllBytesAsync(datPaths.DatPath(datBoard.Host, datBoard.DirectoryName, datKey), firstDatLine);
+
+var datHandler = new BlockingRangeDatHandler(completeDat);
+using var datMonazilla = new MonazillaClient(datHandler);
+var datClient = new DatClient(datMonazilla, datPaths);
+var firstFetch = datClient.FetchAsync(datBoard, datKey);
+await datHandler.FirstRangeRequestObserved.Task;
+var secondFetch = datClient.FetchAsync(datBoard, datKey);
+await Task.Delay(100);
+if (datHandler.RangeRequestCount != 1)
+    throw new Exception("same dat cache was requested concurrently before the first append completed");
+datHandler.AllowFirstRangeResponse.TrySetResult();
+await Task.WhenAll(firstFetch, secondFetch);
+
+var storedDat = await File.ReadAllBytesAsync(datPaths.DatPath(datBoard.Host, datBoard.DirectoryName, datKey));
+var storedPosts = DatParser.Parse(storedDat);
+if (!storedDat.SequenceEqual(completeDat) || storedPosts.Count != 2 ||
+    storedPosts[0].Number != 1 || storedPosts[1].Number != 2)
+    throw new Exception("dat fetch race produced duplicate or missing posts");
+if (datHandler.RangeStarts.Count != 2 ||
+    datHandler.RangeStarts[0] != firstDatLine.Length ||
+    datHandler.RangeStarts[1] != completeDat.Length)
+    throw new Exception("queued dat fetch did not recalculate its Range from the completed cache");
+Console.WriteLine("PASS dat fetch serializes one cache file and retains same-body different-number posts");
+
+sealed class BlockingRangeDatHandler(byte[] completeDat) : HttpMessageHandler
+{
+    private readonly object _sync = new();
+    private int _rangeRequestCount;
+
+    public TaskCompletionSource FirstRangeRequestObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource AllowFirstRangeResponse { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int RangeRequestCount => Volatile.Read(ref _rangeRequestCount);
+    public List<long> RangeStarts { get; } = [];
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var range = request.Headers.Range?.Ranges.SingleOrDefault();
+        if (range?.From is not long from)
+            return CreateResponse(HttpStatusCode.OK, completeDat, null);
+
+        var requestNumber = Interlocked.Increment(ref _rangeRequestCount);
+        lock (_sync) RangeStarts.Add(from);
+        if (requestNumber == 1)
+        {
+            FirstRangeRequestObserved.TrySetResult();
+            await AllowFirstRangeResponse.Task.WaitAsync(cancellationToken);
+        }
+
+        if (from >= completeDat.Length)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.RequestedRangeNotSatisfiable);
+            response.Content.Headers.ContentRange = new ContentRangeHeaderValue(completeDat.Length);
+            return response;
+        }
+
+        return CreateResponse(HttpStatusCode.PartialContent, completeDat[(int)from..],
+            new ContentRangeHeaderValue(from, completeDat.Length - 1, completeDat.Length));
+    }
+
+    private static HttpResponseMessage CreateResponse(HttpStatusCode status, byte[] bytes, ContentRangeHeaderValue? contentRange)
+    {
+        var response = new HttpResponseMessage(status) { Content = new ByteArrayContent(bytes) };
+        response.Content.Headers.ContentRange = contentRange;
+        return response;
+    }
+}

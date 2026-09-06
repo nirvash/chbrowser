@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
@@ -28,6 +29,12 @@ public sealed class DatClient
 
     private readonly MonazillaClient _client;
     private readonly DataPaths       _paths;
+    // 同じキャッシュファイルへの Range 取得と追記を直列化する。DatClient は App で 1 個だけ
+    // 生成されるため、UI 更新・お気に入り巡回・AI ツール等の全経路で共有される。
+    // 安全な待機者付き回収を伴わない TryRemove は別 Semaphore を作る競合を起こすため、
+    // このインスタンスの寿命中はキーを保持する。
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _fetchLocks =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public DatClient(MonazillaClient client, DataPaths paths)
     {
@@ -63,6 +70,13 @@ public sealed class DatClient
 
         var url  = $"{board.Url.TrimEnd('/')}/dat/{threadKey}.dat";
         var path = _paths.DatPath(board.Host, board.DirectoryName, threadKey);
+        var fetchLock = _fetchLocks.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+
+        // existing の読取りから全てのキャッシュ書込み完了までを保護する。これにより、
+        // 待機した後続取得は先行取得後のファイル長で Range を組み立てる。
+        await fetchLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
 
         long existing = File.Exists(path) ? new FileInfo(path).Length : 0;
 
@@ -87,8 +101,31 @@ public sealed class DatClient
         {
             case 206: // Partial Content - 既存 + 末尾差分
                 {
+                    // Range 応答の開始位置が、要求時点で読んだキャッシュ末尾と一致しなければ
+                    // append は危険。本文一致での救済は、同文連投を誤って消すため行わない。
+                    var contentRange = resp.Content.Headers.ContentRange;
+                    var expectedLength = contentRange?.From is long from && contentRange.To is long to
+                        ? to - from + 1
+                        : -1;
+                    if (contentRange?.From != existing ||
+                        contentRange.To is null ||
+                        contentRange.To < existing ||
+                        contentRange.Length is null ||
+                        contentRange.Length <= contentRange.To ||
+                        expectedLength < 0 ||
+                        (resp.Content.Headers.ContentLength is long contentLength && contentLength != expectedLength))
+                    {
+                        throw new IOException(
+                            $"Invalid Content-Range for dat append: requested={existing}, received={contentRange}");
+                    }
+
                     // 既存分はディスクから一括読み出し → 1 バッチで先に通知
                     var existingBytes = await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false);
+                    if (existingBytes.LongLength != existing)
+                    {
+                        throw new IOException(
+                            $"dat cache changed while fetching: requested={existing}, actual={existingBytes.LongLength}");
+                    }
                     var existingPosts = DatParser.Parse(existingBytes);
                     allPosts.AddRange(existingPosts);
                     if (existingPosts.Count > 0) progress.Report(existingPosts);
@@ -158,6 +195,11 @@ public sealed class DatClient
         }
 
         return new DatFetchResult(allPosts, finalSize);
+        }
+        finally
+        {
+            fetchLock.Release();
+        }
     }
 
     /// <summary>dat 404 時のフォールバック: <c>read.cgi</c> から HTML を取得して
