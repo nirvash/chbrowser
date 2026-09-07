@@ -39,6 +39,29 @@
         }
     };
 
+    // スレッド内のメディアスロットを DOM 順にたどる。現在位置は viewport 中央に
+    // 最も近いスロットとして扱い、前後のスロットを中央へ移動する。
+    window.chScrollMedia = function(step) {
+        var slots = Array.prototype.slice.call(document.querySelectorAll('.image-slot'));
+        if (!slots.length || (step !== -1 && step !== 1)) return;
+        var center = window.innerHeight / 2;
+        var current = -1;
+        var bestDistance = Infinity;
+        for (var i = 0; i < slots.length; i++) {
+            var rect = slots[i].getBoundingClientRect();
+            var distance = rect.top <= center && rect.bottom >= center
+                ? 0
+                : Math.min(Math.abs(rect.top - center), Math.abs(rect.bottom - center));
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                current = i;
+            }
+        }
+        var targetIndex = current < 0 ? (step > 0 ? 0 : slots.length - 1) : current + step;
+        if (targetIndex < 0 || targetIndex >= slots.length) return;
+        slots[targetIndex].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    };
+
     window.createShortcutBridge = function(opts) {
         opts = opts || {};
         const localActions      = opts.localActions || {};

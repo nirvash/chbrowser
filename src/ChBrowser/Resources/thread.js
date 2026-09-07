@@ -42,6 +42,8 @@
         localActions: {
             'thread.scroll_top':    function() { window.chScrollPage(false); },
             'thread.scroll_bottom': function() { window.chScrollPage(true);  },
+            'thread.prev_media':    function() { window.chScrollMedia(-1); },
+            'thread.next_media':    function() { window.chScrollMedia(1);  },
         },
     });
 

@@ -471,6 +471,9 @@ public partial class App : Application
             // push される。JS ブリッジは local actionId table を持って C# 経由なしで実行する)。
             ["thread.scroll_top"]                   = _ => { },
             ["thread.scroll_bottom"]                = _ => { },
+            // メディア移動は WebView 内の DOM 順序と viewport を使うため JS ローカルで処理する。
+            ["thread.prev_media"]                   = _ => { },
+            ["thread.next_media"]                   = _ => { },
             ["thread_list.scroll_top"]              = _ => { },
             ["thread_list.scroll_bottom"]           = _ => { },
 
