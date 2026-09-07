@@ -58,6 +58,23 @@
         placeFutabaExpiry();
     }
 
+    // 保存完了を表示するが、クリックやキー操作を遮らない非モーダル通知。
+    function showMediaSaveToast(fileName) {
+        let toast = document.getElementById('media-save-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'media-save-toast';
+            toast.style.cssText = 'position:fixed;right:28px;bottom:28px;z-index:10000;pointer-events:none;'
+                + 'padding:9px 14px;border-radius:6px;background:rgba(35,120,65,.94);color:#fff;'
+                + 'font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.25);opacity:0;transition:opacity .15s ease;';
+            document.body.appendChild(toast);
+        }
+        toast.textContent = '保存しました' + (fileName ? ': ' + fileName : '');
+        toast.style.opacity = '1';
+        clearTimeout(showMediaSaveToast.timer);
+        showMediaSaveToast.timer = setTimeout(function() { toast.style.opacity = '0'; }, 2200);
+    }
+
     function placeFutabaExpiry() {
         const root = document.getElementById('posts');
         if (!root) return;
@@ -5462,6 +5479,9 @@ function findReadProgressMaxNumber() {
                     break;
                 case 'futabaSoudaneResult':
                     applyFutabaSoudaneResult(msg.number, msg.success === true, msg.count, msg.message);
+                    break;
+                case 'mediaSaveCompleted':
+                    showMediaSaveToast(msg.fileName);
                     break;
                 case 'setViewMode': window.setViewMode(msg.mode); break;
                 case 'setPreview':  window.setPreviewPost(msg.post); break;

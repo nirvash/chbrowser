@@ -631,8 +631,9 @@ public partial class ThreadDisplayPane : UserControl
     /// キャッシュ済ならキャッシュファイルをコピー、未キャッシュならキャッシュを経由せず直接 DL 保存する。</summary>
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (UrlMenuOf(sender).Ctx is not { } ctx) return;
-        _ = SaveMediaToConfiguredDirAsync(ctx.SrcUrl);
+        var menuInfo = UrlMenuOf(sender);
+        if (menuInfo.Ctx is not { } ctx) return;
+        _ = SaveMediaToConfiguredDirAsync(ctx.SrcUrl, menuInfo.Menu?.PlacementTarget as WebView2);
     }
 
     /// <summary>UrlContextMenu「名前を付けて保存」項目クリック。設定に関係なく必ず
@@ -647,10 +648,10 @@ public partial class ThreadDisplayPane : UserControl
     {
         var url = payload.TryGetProperty("url", out var up) ? up.GetString() : null;
         if (string.IsNullOrWhiteSpace(url)) return Task.CompletedTask;
-        return SaveMediaToConfiguredDirAsync(url);
+        return SaveMediaToConfiguredDirAsync(url, sender as WebView2);
     }
 
-    private async Task SaveMediaToConfiguredDirAsync(string url)
+    private async Task SaveMediaToConfiguredDirAsync(string url, WebView2? feedbackWebView = null)
     {
         var isVideo  = IsVideoUrlForSave(url);
         var ownerWin = Window.GetWindow(this);
@@ -701,8 +702,21 @@ public partial class ThreadDisplayPane : UserControl
         }
 
         var saved = await SaveMediaCoreAsync(url, destPath, isVideo, ownerWin);
-        if (saved && Group?.SelectedTab is { } tab)
-            tab.StatusMessage = $"メディアを保存しました: {System.IO.Path.GetFileName(destPath)}";
+        if (saved)
+        {
+            var fileName = System.IO.Path.GetFileName(destPath);
+            if (Group?.SelectedTab is { } tab) tab.StatusMessage = $"メディアを保存しました: {fileName}";
+            ShowMediaSavedToast(feedbackWebView, fileName);
+        }
+    }
+
+    private static void ShowMediaSavedToast(WebView2? webView, string fileName)
+    {
+        if (webView?.CoreWebView2 is null) return;
+        webView.CoreWebView2.PostWebMessageAsJson(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "mediaSaveCompleted", fileName,
+        }));
     }
 
     private async Task SaveMediaWithDialogAsync(string url)
