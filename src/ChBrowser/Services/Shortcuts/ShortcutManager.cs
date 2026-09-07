@@ -183,7 +183,10 @@ public sealed class ShortcutManager
             if (!_handlers.TryGetValue(action.Id, out var handler))
                 continue; // 未実装アクションは skip
 
-            if (!string.IsNullOrEmpty(shortcut) && TryParseShortcut(shortcut, out var key, out var mods))
+            // WebView 内の DOM を操作するローカルアクションは WPF KeyBinding にも登録すると、
+            // WebView の keydown より先に WPF がキーを消費してしまう。JS ブリッジ側だけで処理させる。
+            var jsLocalOnly = action.Id is "thread.prev_media" or "thread.next_media";
+            if (!jsLocalOnly && !string.IsNullOrEmpty(shortcut) && TryParseShortcut(shortcut, out var key, out var mods))
             {
                 foreach (var targetWindow in GetKeyBindingTargetWindows(action.Category))
                 {
