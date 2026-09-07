@@ -57,6 +57,7 @@ public static class ShortcutRegistry
         new ShortcutAction("thread.scroll_bottom",            "スレッド表示領域", "最下部へスクロール",         "", "",                          "→↑"),
         new ShortcutAction("thread.prev_media",               "スレッド表示領域", "前のメディアへ移動",           "", "",                          ""),
         new ShortcutAction("thread.next_media",               "スレッド表示領域", "次のメディアへ移動",           "", "",                          ""),
+        new ShortcutAction("thread.save_media",               "スレッド表示領域", "表示中のメディアを保存",         "", "",                          ""),
         new ShortcutAction("thread.delete_log",               "スレッド表示領域", "ログを削除",                 "", "",                          "←↓→↑←"),
         new ShortcutAction("thread.close_current_in_body",    "スレッド表示領域", "現在のスレッドタブを閉じる", "", "",                          "→←"),
         new ShortcutAction("thread.next_tab_in_body",         "スレッド表示領域", "次のタブ",                   "", "右クリック+ホイールダウン", ""),

@@ -62,6 +62,28 @@
         slots[targetIndex].scrollIntoView({ block: 'center', behavior: 'smooth' });
     };
 
+    window.chSaveCurrentMedia = function() {
+        var slots = Array.prototype.slice.call(document.querySelectorAll('.image-slot'));
+        if (!slots.length) return;
+        var center = window.innerHeight / 2;
+        var current = null;
+        var bestDistance = Infinity;
+        for (var i = 0; i < slots.length; i++) {
+            var rect = slots[i].getBoundingClientRect();
+            var distance = rect.top <= center && rect.bottom >= center
+                ? 0
+                : Math.min(Math.abs(rect.top - center), Math.abs(rect.bottom - center));
+            if (distance < bestDistance) { bestDistance = distance; current = slots[i]; }
+        }
+        var url = current && (current.dataset.url || current.dataset.src || '');
+        if (!url || !window.chrome || !window.chrome.webview) return;
+        window.chrome.webview.postMessage({
+            type: 'saveMediaShortcut',
+            url: url,
+            mediaType: current.dataset.mediaType || 'image'
+        });
+    };
+
     window.createShortcutBridge = function(opts) {
         opts = opts || {};
         const localActions      = opts.localActions || {};

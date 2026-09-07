@@ -197,6 +197,7 @@ public partial class ThreadDisplayPane : UserControl
             case "toggleOwnPost":      HandleToggleOwnPost(sender, payload); break;
             case "postNoContextMenu":  HandlePostNoContextMenu(sender, payload); break;
             case "urlContextMenu":     HandleUrlContextMenu(sender, payload); break;
+            case "saveMediaShortcut":  _ = HandleSaveMediaShortcutAsync(sender, payload); break;
             case "refreshThread":      HandleRefreshThread(sender); break;
             case "threadPageZoomDelta": HandleThreadPageZoomDelta(sender, payload); break;
             case "jsDebug":
@@ -642,6 +643,13 @@ public partial class ThreadDisplayPane : UserControl
         _ = SaveMediaWithDialogAsync(ctx.SrcUrl);
     }
 
+    private Task HandleSaveMediaShortcutAsync(object sender, JsonElement payload)
+    {
+        var url = payload.TryGetProperty("url", out var up) ? up.GetString() : null;
+        if (string.IsNullOrWhiteSpace(url)) return Task.CompletedTask;
+        return SaveMediaToConfiguredDirAsync(url);
+    }
+
     private async Task SaveMediaToConfiguredDirAsync(string url)
     {
         var isVideo  = IsVideoUrlForSave(url);
@@ -692,7 +700,9 @@ public partial class ThreadDisplayPane : UserControl
             destPath = dlg.FileName;
         }
 
-        await SaveMediaCoreAsync(url, destPath, isVideo, ownerWin);
+        var saved = await SaveMediaCoreAsync(url, destPath, isVideo, ownerWin);
+        if (saved && Group?.SelectedTab is { } tab)
+            tab.StatusMessage = $"メディアを保存しました: {System.IO.Path.GetFileName(destPath)}";
     }
 
     private async Task SaveMediaWithDialogAsync(string url)
@@ -709,15 +719,17 @@ public partial class ThreadDisplayPane : UserControl
         };
         if (dlg.ShowDialog(ownerWin) != true) return;
 
-        await SaveMediaCoreAsync(url, dlg.FileName, isVideo, ownerWin);
+        var saved = await SaveMediaCoreAsync(url, dlg.FileName, isVideo, ownerWin);
+        if (saved && Group?.SelectedTab is { } tab)
+            tab.StatusMessage = $"メディアを保存しました: {System.IO.Path.GetFileName(dlg.FileName)}";
     }
 
     /// <summary>保存の共通本体: キャッシュ済みならコピー、未キャッシュ (= 未DL 含む) なら直接 DL。</summary>
-    private static async Task SaveMediaCoreAsync(string url, string destPath, bool isVideo, System.Windows.Window? ownerWin)
+    private static async Task<bool> SaveMediaCoreAsync(string url, string destPath, bool isVideo, System.Windows.Window? ownerWin)
     {
         try
         {
-            if (Application.Current is not App app) return;
+            if (Application.Current is not App app) return false;
 
             // キャッシュ済み → キャッシュファイルをコピーするだけ (再ダウンロードしない)。
             var kind = isVideo ? ChBrowser.Services.Image.CacheKind.Video
@@ -727,15 +739,16 @@ public partial class ThreadDisplayPane : UserControl
                 System.IO.File.Copy(hit.FilePath, destPath, overwrite: false);
                 ChBrowser.Services.Logging.LogService.Instance.Write(
                     $"[mediaSave] キャッシュから保存: {destPath}");
-                return;
+                return true;
             }
 
             // 未キャッシュ → キャッシュを経由せず保存先へ直接ダウンロード
             // (SaveDirectAsync はブラウザ UA / 長タイムアウトの DL 用クライアント。画像にもそのまま使える)。
-            if (app.VideoDownloadManagerInstance is not { } mgr) return;
+            if (app.VideoDownloadManagerInstance is not { } mgr) return false;
             ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 直接ダウンロード開始: {url} → {destPath}");
             await mgr.SaveDirectAsync(url, destPath);
             ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] 保存完了: {destPath}");
+            return true;
         }
         catch (Exception ex)
         {
@@ -743,6 +756,7 @@ public partial class ThreadDisplayPane : UserControl
             MessageBox.Show(ownerWin ?? Application.Current.MainWindow!,
                 $"保存に失敗しました: {ex.Message}", "ChBrowser",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
         }
     }
 

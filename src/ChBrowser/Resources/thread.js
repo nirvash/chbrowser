@@ -44,6 +44,7 @@
             'thread.scroll_bottom': function() { window.chScrollPage(true);  },
             'thread.prev_media':    function() { window.chScrollMedia(-1); },
             'thread.next_media':    function() { window.chScrollMedia(1);  },
+            'thread.save_media':    function() { window.chSaveCurrentMedia(); },
         },
     });
 
