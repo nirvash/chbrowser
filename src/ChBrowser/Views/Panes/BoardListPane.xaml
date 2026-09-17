@@ -32,6 +32,7 @@
                                       Text="{Binding BoardListSearchQuery, UpdateSourceTrigger=PropertyChanged}" />
             </DockPanel>
             <wv2:WebView2 x:Name="BoardListWebView"
+                          DefaultBackgroundColor="White"
                           ctrl:WebView2Helper.Html="{Binding BoardListHtml}"
                           ctrl:WebView2Helper.PaneConfigJson="{Binding BoardListConfigJson}"
                           ctrl:WebView2Helper.PaneShortcutsJson="{Binding BoardListShortcutsJson}"

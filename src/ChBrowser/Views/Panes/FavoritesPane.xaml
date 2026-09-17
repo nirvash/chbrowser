@@ -80,6 +80,7 @@
                                       Text="{Binding FavoritesSearchQuery, UpdateSourceTrigger=PropertyChanged}" />
             </DockPanel>
             <wv2:WebView2 x:Name="FavoritesWebView"
+                          DefaultBackgroundColor="White"
                           ctrl:WebView2Helper.Html="{Binding FavoritesHtml}"
                           ctrl:WebView2Helper.PaneConfigJson="{Binding FavoritesConfigJson}"
                           ctrl:WebView2Helper.PaneShortcutsJson="{Binding FavoritesShortcutsJson}"

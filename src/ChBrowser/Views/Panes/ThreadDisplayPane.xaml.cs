@@ -326,6 +326,9 @@ public partial class ThreadDisplayPane : UserControl
     {
         if (sender is not WebView2 wv) return;
 
+        // WebView2 の初期化途中に黒い描画サーフェスが一瞬見えるのを防ぐ。
+        ThreadLoadingOverlay.Visibility = Visibility.Collapsed;
+
         // 永続化済みページズーム (Ctrl+ホイール) を適用
         if (Application.Current is App appReady)
         {

@@ -586,6 +586,7 @@
             <ItemsControl.ItemTemplate>
                 <DataTemplate DataType="{x:Type vm:ThreadTabViewModel}">
                     <wv2:WebView2 ctrl:WebView2Helper.AppendBatch="{Binding LatestAppendBatch}"
+                                  DefaultBackgroundColor="White"
                                   ctrl:WebView2Helper.FutabaExpiryText="{Binding FutabaExpiryText}"
                                   ctrl:WebView2Helper.OwnPostsUpdate="{Binding OwnPostsUpdate}"
                                   ctrl:WebView2Helper.MarkPostNumberPush="{Binding MarkPostNumber}"
@@ -605,6 +606,10 @@
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>
+        <Border x:Name="ThreadLoadingOverlay"
+                Grid.Row="2"
+                Background="White"
+                IsHitTestVisible="False" />
     </Grid>
     </Border>
 </UserControl>
