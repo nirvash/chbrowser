@@ -33,7 +33,18 @@ public sealed class NgQuickAddDialog : Window
     /// <summary>OK で確定された NG ルール。Cancel なら null のまま。</summary>
     public NgRule? CreatedRule { get; private set; }
 
-    public NgQuickAddDialog(Board currentBoard, string presetTarget, string presetValue)
+    /// <summary>登録時点の選択状態。呼出元が次回起動用に保存する。</summary>
+    public string SelectedMatchKind => (_kindCombo.SelectedValue as string) ?? "literal";
+    public string SelectedScope => (_scopeCombo.SelectedValue as string) ?? "board";
+    public string SelectedExpiry => (_expiryCombo.SelectedValue as string) ?? "1d";
+
+    public NgQuickAddDialog(
+        Board currentBoard,
+        string presetTarget,
+        string presetValue,
+        string lastMatchKind = "literal",
+        string lastScope = "board",
+        string lastExpiry = "1d")
     {
         _board                = currentBoard ?? throw new ArgumentNullException(nameof(currentBoard));
         Title                 = "NG 登録";
@@ -48,9 +59,9 @@ public sealed class NgQuickAddDialog : Window
         // プリセット
         SelectByValue(_targetCombo, NormalizeTarget(presetTarget));
         _patternBox.Text = presetValue ?? "";
-        SelectByValue(_kindCombo,   "literal");
-        SelectByValue(_scopeCombo,  "board");   // 既定: この板のみ
-        SelectByValue(_expiryCombo, "1d");      // 既定: 1 日
+        SelectByValue(_kindCombo,   NormalizeMatchKind(lastMatchKind));
+        SelectByValue(_scopeCombo,  NormalizeScope(lastScope));
+        SelectByValue(_expiryCombo, NormalizeExpiry(lastExpiry));
 
         Loaded += (_, _) => _patternBox.Focus();
     }
@@ -121,9 +132,9 @@ public sealed class NgQuickAddDialog : Window
         try
         {
             var target  = (_targetCombo.SelectedValue as string) ?? "name";
-            var kind    = (_kindCombo.SelectedValue   as string) ?? "literal";
-            var scope   = (_scopeCombo.SelectedValue  as string) ?? "board";
-            var expiry  = (_expiryCombo.SelectedValue as string) ?? "1d";
+            var kind    = SelectedMatchKind;
+            var scope   = SelectedScope;
+            var expiry  = SelectedExpiry;
             var pattern = (_patternBox.Text ?? "").Trim();
 
             if (string.IsNullOrEmpty(pattern))
@@ -197,6 +208,24 @@ public sealed class NgQuickAddDialog : Window
     {
         "name" or "id" or "watchoi" or "word" => t,
         _ => "name",
+    };
+
+    private static string NormalizeMatchKind(string value) => value switch
+    {
+        "literal" or "regex" => value,
+        _ => "literal",
+    };
+
+    private static string NormalizeScope(string value) => value switch
+    {
+        "board" or "global" => value,
+        _ => "board",
+    };
+
+    private static string NormalizeExpiry(string value) => value switch
+    {
+        "1d" or "1w" or "1m" or "inf" => value,
+        _ => "1d",
     };
 
     private static IReadOnlyList<LabelValue> TargetItems() => new[]

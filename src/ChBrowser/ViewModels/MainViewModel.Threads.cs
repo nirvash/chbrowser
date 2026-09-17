@@ -1060,12 +1060,26 @@ public sealed partial class MainViewModel
                 return;
             }
 
-            var dlg = new ChBrowser.Views.NgQuickAddDialog(tab.Board, target, value)
+            var cfg = CurrentConfig;
+            var dlg = new ChBrowser.Views.NgQuickAddDialog(
+                tab.Board,
+                target,
+                value,
+                cfg.LastNgQuickAddMatchKind,
+                cfg.LastNgQuickAddScope,
+                cfg.LastNgQuickAddExpiry)
             {
                 Owner = System.Windows.Application.Current?.MainWindow,
             };
             var ok = dlg.ShowDialog();
             if (ok != true || dlg.CreatedRule is not { } rule) return;
+
+            UpdateAndPersistConfig(c => c with
+            {
+                LastNgQuickAddMatchKind = dlg.SelectedMatchKind,
+                LastNgQuickAddScope      = dlg.SelectedScope,
+                LastNgQuickAddExpiry     = dlg.SelectedExpiry,
+            });
 
             // 既存 + 新規 を 1 つの set にして保存。
             var newRules = new System.Collections.Generic.List<ChBrowser.Models.NgRule>(_ng.All.Rules) { rule };

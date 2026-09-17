@@ -106,6 +106,15 @@ public sealed record AppConfig
     /// 既定 4。1 で従来の逐次相当。</summary>
     public int NgAiConcurrency { get; init; } = 4;
 
+    /// <summary>NG クイック登録ダイアログで最後に選択した検索方式を保持する。</summary>
+    public string LastNgQuickAddMatchKind { get; init; } = "literal";
+
+    /// <summary>NG クイック登録ダイアログで最後に選択したスコープを保持する。</summary>
+    public string LastNgQuickAddScope { get; init; } = "board";
+
+    /// <summary>NG クイック登録ダイアログで最後に選択した期限を保持する。</summary>
+    public string LastNgQuickAddExpiry { get; init; } = "1d";
+
     /// <summary>NG 判定リクエストに「リーズニング無効化のための一般的な設定一式」を付加するか。
     /// リーズニングモデルだと思考過程の生成で遅くなるため、既定 true。サーバ側で OFF にできているなら不要。</summary>
     public bool NgAiDisableReasoning { get; init; } = true;
