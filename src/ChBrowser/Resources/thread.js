@@ -3116,7 +3116,9 @@
     function applyImageMeta(url, meta) {
         imageMetaCache.set(url, meta);
         document.querySelectorAll('.image-slot').forEach(function (slot) {
-            if (isVideoMediaSlot(slot) || slot.dataset.src !== url) return;
+            // isVideoMediaSlot はフィルタ上 YouTube も含むが、YouTube のサムネは画像メタ応答でロードする。
+            // ここで除外するのは <video> に材化する直リンク動画だけ。
+            if (slot.dataset.mediaType === 'video' || slot.classList.contains('video') || slot.dataset.src !== url) return;
             slot.dataset.mediaReachable = (meta.ok && !meta.imageLoadFailed) ? 'true' : 'false';
             if (slot.classList.contains('deferred')) applyMetaToSlot(slot, meta);
         });
