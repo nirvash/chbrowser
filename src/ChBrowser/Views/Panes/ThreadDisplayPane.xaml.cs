@@ -197,6 +197,7 @@ public partial class ThreadDisplayPane : UserControl
             case "toggleOwnPost":      HandleToggleOwnPost(sender, payload); break;
             case "postNoContextMenu":  HandlePostNoContextMenu(sender, payload); break;
             case "urlContextMenu":     HandleUrlContextMenu(sender, payload); break;
+            case "selectionContextMenu": HandleSelectionContextMenu(sender, payload); break;
             case "saveMediaShortcut":  _ = HandleSaveMediaShortcutAsync(sender, payload); break;
             case "refreshThread":      HandleRefreshThread(sender); break;
             case "threadPageZoomDelta": HandleThreadPageZoomDelta(sender, payload); break;
