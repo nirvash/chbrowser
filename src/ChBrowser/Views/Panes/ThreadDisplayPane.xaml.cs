@@ -23,6 +23,7 @@ namespace ChBrowser.Views.Panes;
 /// 旧 MainWindow の ThreadPane の役割と中央ツールバー (旧 Grid.Row=2) を本ペイン内に統合した。</summary>
 public partial class ThreadDisplayPane : UserControl
 {
+    private bool _googleImageSearchPending;
     public ThreadDisplayPane()
     {
         InitializeComponent();
@@ -1124,6 +1125,7 @@ public partial class ThreadDisplayPane : UserControl
                 case "save":         mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
                 case "saveAs":       mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
                 case "deleteCache":  mi.Visibility = isMedia ? Visibility.Visible : Visibility.Collapsed; break;
+                case "googleImageSearch": mi.Visibility = mediaType == "image" ? Visibility.Visible : Visibility.Collapsed; break;
             }
         }
         menu.PlacementTarget = wv;
@@ -1137,6 +1139,24 @@ public partial class ThreadDisplayPane : UserControl
         if (UrlMenuOf(sender).Ctx is not { } ctx) return;
         try { Clipboard.SetText(ctx.Url); }
         catch (Exception ex) { Debug.WriteLine($"[UrlCopy] Clipboard.SetText failed: {ex.Message}"); }
+    }
+
+    private async void GoogleImageSearch_Click(object sender, RoutedEventArgs e)
+    {
+        if (UrlMenuOf(sender).Ctx is not { MediaType: "image" } ctx) return;
+        if (_googleImageSearchPending) return;
+        _googleImageSearchPending = true;
+        var source = ctx.SrcUrl; // Snapshot before awaiting; selection/tab changes cannot redirect this request.
+        try
+        {
+            var app = Application.Current as App;
+            using var service = new GoogleImageSearchService();
+            var ticket = await service.PrepareUploadAsync(source, app?.ImageCacheServiceInstance);
+            try { Process.Start(new ProcessStartInfo(ticket.Url) { UseShellExecute = true }); }
+            catch { ticket.Dispose(); throw; }
+        }
+        catch (Exception ex) { MessageBox.Show($"画像をGoogleへ送信できませんでした。\n{ex.Message}", "Googleで画像検索", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        finally { _googleImageSearchPending = false; }
     }
 
     /// <summary>UrlContextMenu の「ビューアで開く」項目クリック。

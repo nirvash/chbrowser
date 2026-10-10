@@ -11,4 +11,5 @@ Expect(url == "https://www.google.com/search?q=" + Uri.EscapeDataString("日本�
 Expect(url.Contains("%26") && url.Contains("%2B") && url.Contains("%23") && url.Contains("%0A"), "reserved characters and newline must be encoded");
 Expect(!GoogleSearchUrl.TryCreate(" \r\n\t ", out var emptyUrl) && emptyUrl == "", "whitespace-only selection must not create a URL");
 Expect(!GoogleSearchUrl.TryCreate(null, out _), "null selection must not create a URL");
+Expect(GoogleSearchUrl.TryCreate(text, out var unchangedTextUrl) && unchangedTextUrl == url, "existing text search must remain unchanged");
 Console.WriteLine("GoogleSearchUrl checks passed.");
