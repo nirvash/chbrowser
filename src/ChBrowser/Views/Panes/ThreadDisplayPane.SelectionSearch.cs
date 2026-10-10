@@ -1,41 +1,30 @@
 using System.Diagnostics;
-using System.Text.Json;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using Microsoft.Web.WebView2.Wpf;
+using Microsoft.Web.WebView2.Core;
 using ChBrowser.Services;
 
 namespace ChBrowser.Views.Panes;
 
 public partial class ThreadDisplayPane
 {
-    private void HandleSelectionContextMenu(object sender, JsonElement payload)
+    private static void AttachSelectionGoogleSearch(CoreWebView2 core)
     {
-        if (sender is not WebView2 wv) return;
-        if (!payload.TryGetProperty("text", out var textProperty)
-            || textProperty.ValueKind != JsonValueKind.String) return;
-        var selectedText = textProperty.GetString();
-        if (string.IsNullOrWhiteSpace(selectedText)) return;
-
-        var menu = new ContextMenu
-        {
-            PlacementTarget = wv,
-            Placement = PlacementMode.MousePoint,
-            DataContext = selectedText,
-        };
-        var searchItem = new MenuItem { Header = "Googleで検索" };
-        searchItem.Click += SelectionGoogleSearch_Click;
-        var copyItem = new MenuItem { Header = "コピー" };
-        copyItem.Click += SelectionCopy_Click;
-        menu.Items.Add(searchItem);
-        menu.Items.Add(copyItem);
-        menu.IsOpen = true;
+        core.ContextMenuRequested -= ThreadWebView_ContextMenuRequested;
+        core.ContextMenuRequested += ThreadWebView_ContextMenuRequested;
     }
 
-    private void SelectionGoogleSearch_Click(object sender, RoutedEventArgs e)
+    private static void ThreadWebView_ContextMenuRequested(object? sender, CoreWebView2ContextMenuRequestedEventArgs e)
     {
-        if (SelectionTextOf(sender) is not { } text || !GoogleSearchUrl.TryCreate(text, out var url)) return;
+        var target = e.ContextMenuTarget;
+        if (!target.HasSelection || !GoogleSearchUrl.TryCreate(target.SelectionText, out var url)) return;
+
+        if (sender is not CoreWebView2 core) return;
+        var item = core.Environment.CreateContextMenuItem("Googleで検索", null, CoreWebView2ContextMenuItemKind.Command);
+        item.CustomItemSelected += (_, _) => LaunchGoogleSearch(url);
+        e.MenuItems.Add(item);
+    }
+
+    private static void LaunchGoogleSearch(string url)
+    {
         try
         {
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
@@ -45,14 +34,4 @@ public partial class ThreadDisplayPane
             Debug.WriteLine($"[SelectionGoogleSearch] Browser launch failed: {ex.Message}");
         }
     }
-
-    private static void SelectionCopy_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectionTextOf(sender) is not { } text) return;
-        try { Clipboard.SetText(text); }
-        catch (Exception ex) { Debug.WriteLine($"[SelectionCopy] Clipboard.SetText failed: {ex.Message}"); }
-    }
-
-    private static string? SelectionTextOf(object sender)
-        => (sender as MenuItem)?.DataContext as string;
 }

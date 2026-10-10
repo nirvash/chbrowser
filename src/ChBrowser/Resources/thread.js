@@ -25,7 +25,6 @@
 //   { type: 'paneActivated' }               — Phase 14: pane 内任意の mousedown (アドレスバー切替用)
 //   { type: 'shortcut', descriptor }        — Phase 16: ショートカット/マウス操作のディスパッチ要求
 //   { type: 'gesture',  descriptor }        — Phase 16: マウスジェスチャー認識結果のディスパッチ要求
-//   { type: 'selectionContextMenu', text }   — 選択文字列の右クリックメニュー要求 (右クリック時点のスナップショット)
 //
 // 各タブが専属 WebView2 を持つので、タブ切替で DOM が再構築されることはない。
 // scroll target の同梱と tryScrollToTarget は「初回ロード時 (idx.json からの位置復元)」用。
@@ -3117,7 +3116,9 @@
     function applyImageMeta(url, meta) {
         imageMetaCache.set(url, meta);
         document.querySelectorAll('.image-slot').forEach(function (slot) {
-            if (isVideoMediaSlot(slot) || slot.dataset.src !== url) return;
+            // YouTube は動画フィルタの対象だが、サムネイル取得は画像経路で行う。
+            // ここで除外するのは videoCacheQuery 経路の直リンク動画だけ。
+            if (slot.classList.contains('video') || slot.dataset.mediaType === 'video' || slot.dataset.src !== url) return;
             slot.dataset.mediaReachable = (meta.ok && !meta.imageLoadFailed) ? 'true' : 'false';
             if (slot.classList.contains('deferred')) applyMetaToSlot(slot, meta);
         });
@@ -3894,20 +3895,8 @@ function findReadProgressMaxNumber() {
     }
 
     // 右クリックは contextmenu イベントで拾い、ブラウザ既定メニューを抑制してから C# に送る。
-    // 優先順位: 選択文字列 → post-no → URL リンク (テキスト or 画像) → 既定挙動。
+    // 優先順位: post-no → URL リンク (テキスト or 画像) → 既定挙動。
     document.addEventListener('contextmenu', function(e) {
-        // 選択文字列は WPF メニューがフォーカスを奪う前にスナップショットする。
-        const selection = window.getSelection ? window.getSelection() : null;
-        const selectedText = selection ? selection.toString() : '';
-        if (selectedText.trim()) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (window.chrome && window.chrome.webview) {
-                window.chrome.webview.postMessage({ type: 'selectionContextMenu', text: selectedText });
-            }
-            return;
-        }
-
         // 1) post-no
         const postNo = e.target.closest && e.target.closest('.post-no');
         if (postNo && postNo.dataset && postNo.dataset.number) {

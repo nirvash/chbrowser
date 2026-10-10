@@ -18,7 +18,7 @@ function dispatch({ selection = '', postNo = null, url = null } = {}) {
     let prevented = false;
     const target = { closest(selector) {
         if (selector === '.post-no' && postNo !== null) return { dataset: { number: String(postNo) } };
-        if (selector === 'a[data-url], .image-slot[data-url]' && url !== null) return { dataset: url, classList: { contains: c => c === 'image-slot' && !!url.mediaType } };
+        if (selector === 'a[data-url], .image-slot[data-url]' && url !== null) return { dataset: url, classList: { contains: c => c === 'image-slot' && !!url.isSlot } };
         return null;
     } };
     const context = vm.createContext({
@@ -34,12 +34,25 @@ function dispatch({ selection = '', postNo = null, url = null } = {}) {
     return { messages, calls, prevented };
 }
 
-test('selected text is snapshotted at context-menu time before native focus changes', () => {
-    const r = dispatch({ selection: '  日本語 & + #\n query  ' });
-    assert.equal(r.messages.length, 1);
-    assert.equal(r.messages[0].type, 'selectionContextMenu');
-    assert.equal(r.messages[0].text, '  日本語 & + #\n query  ');
+test('selected text does not steal image or video URL context menus', () => {
+    const image = dispatch({ selection: 'sticky', url: { url: 'https://image.test', isSlot: true, src: 'https://cdn.test/a.png' } });
+    assert.deepEqual(image.calls, [['url', 'https://image.test', 'image', 'https://cdn.test/a.png']]);
+    assert.equal(image.prevented, true);
+    const video = dispatch({ selection: 'sticky', url: { url: 'https://video.test', isSlot: true, mediaType: 'video', src: 'https://cdn.test/a.mp4' } });
+    assert.deepEqual(video.calls, [['url', 'https://video.test', 'video', 'https://cdn.test/a.mp4']]);
+    assert.equal(video.prevented, true);
+});
+
+test('selected text does not steal post-number context menu', () => {
+    const r = dispatch({ selection: 'sticky', postNo: 42 });
+    assert.deepEqual(r.calls, [['postNo', 42]]);
     assert.equal(r.prevented, true);
+});
+
+test('ordinary selected text falls through to native context menu', () => {
+    const r = dispatch({ selection: '  日本語 & + #\n query  ' });
+    assert.equal(r.messages.length, 0);
+    assert.equal(r.prevented, false);
 });
 
 test('without selection, post number and URL context menus keep their existing routes', () => {
@@ -50,7 +63,7 @@ test('without selection, post number and URL context menus keep their existing r
 
 test('whitespace selection falls through to existing post-number and media routes', () => {
     assert.deepEqual(dispatch({ selection: ' \n\t ', postNo: 7 }).calls, [['postNo', 7]]);
-    assert.deepEqual(dispatch({ selection: '  ', url: { url: 'https://image.test', mediaType: 'image', src: 'https://cdn.test/a.png' } }).calls,
+    assert.deepEqual(dispatch({ selection: '  ', url: { url: 'https://image.test', isSlot: true, src: 'https://cdn.test/a.png' } }).calls,
         [['url', 'https://image.test', 'image', 'https://cdn.test/a.png']]);
     assert.equal(dispatch({ selection: '  ' }).prevented, false);
 });
