@@ -984,6 +984,8 @@
         // imgur アルバム — アルバムページの og:image (表紙サムネ) を C# 側が取得して展開。
         // 単画像ページ imgur.com/<id> は URL_EXPANDERS の同期展開で先に処理される。
         /^https?:\/\/(?:www\.|m\.)?imgur\.com\/a\/[A-Za-z0-9]+/i,
+        // ImgBB 画像ページ — og:image を C# 側で取得する。
+        /^https?:\/\/ibb\.co\/[A-Za-z0-9]+(?:[?#]|$)/i,
     ];
 
     function isExpandableAsync(url) {
