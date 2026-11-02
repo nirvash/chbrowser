@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
@@ -1963,6 +1963,13 @@ public partial class ThreadDisplayPane : UserControl
             };
             menu.Items.Add(item);
         }
+    }
+
+    private void NavSearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ThreadPaneGroupViewModel { SelectedTab: { } tab }) return;
+        if (Vm is not { } main) return;
+        _ = main.SearchNextThreadAsync(tab);
     }
 
     /// <summary>✅ クリック。現採用 target を「本物」として確定 (idx.json へ永続化)。</summary>

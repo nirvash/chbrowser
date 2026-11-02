@@ -104,9 +104,19 @@ public sealed partial class MainViewModel
     /// <paramref name="force"/>= false の通常呼び出しは「本文が前回解決から変化していない
     /// (<see cref="ThreadTabViewModel.NavResolvedAtPostCount"/> == Posts.Count) 場合スキップ」する
     /// (= 判定結果の実質キャッシュ。新着 0 件の差分取得では再解析しない)。</summary>
-    public async Task ResolveThreadChainAsync(ThreadTabViewModel tab, bool force = false)
+    public async Task ResolveThreadChainAsync(
+        ThreadTabViewModel tab, bool force = false, bool refreshSubjects = false)
     {
-        if (tab is null || tab.NavResolving) return;
+        if (tab is null) return;
+        if (tab.NavResolving)
+        {
+            if (refreshSubjects)
+            {
+                tab.NavSearchRequested = true;
+                tab.IsNavSearchInProgress = true;
+            }
+            return;
+        }
         if (!force && tab.Posts.Count > 0 && tab.NavResolvedAtPostCount == tab.Posts.Count)
         {
             ChBrowser.Services.Logging.LogService.Instance.Write(
@@ -119,7 +129,11 @@ public sealed partial class MainViewModel
             $"[threadNav] resolve start: {tab.Header} posts={tab.Posts.Count}{(force ? " (force)" : "")}");
         try
         {
-            await ResolveThreadChainCoreAsync(tab).ConfigureAwait(true);
+            await ResolveThreadChainCoreAsync(tab, refreshSubjects).ConfigureAwait(true);
+            if (refreshSubjects)
+                tab.StatusMessage = (tab.NextNavCandidates?.Count ?? 0) > 0
+                    ? $"最新の板情報で次スレ候補を更新しました: {tab.NextNavTitle} [{tab.NextNavKey}]"
+                    : "最新の板情報を検索しましたが、次スレ候補は見つかりませんでした";
             tab.NavResolvedAtPostCount = tab.Posts.Count; // 完走時のみキャッシュ (= 失敗は再解析対象)
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[threadNav] resolve end ({sw.ElapsedMilliseconds}ms): {tab.Header} " +
@@ -128,18 +142,25 @@ public sealed partial class MainViewModel
         }
         catch (Exception ex)
         {
+            if (refreshSubjects) tab.StatusMessage = $"次スレ検索に失敗しました。既存候補を維持します: {ex.Message}";
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[threadNav] {tab.Header}: 解決エラー ({sw.ElapsedMilliseconds}ms) {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
         }
         finally
         {
             tab.NavResolving = false;
+            if (tab.NavSearchRequested)
+            {
+                tab.NavSearchRequested = false;
+                tab.IsNavSearchInProgress = false;
+                _ = SearchNextThreadAsync(tab);
+            }
         }
     }
 
     /// <summary><see cref="ResolveThreadChainAsync"/> の本体。UI スレッド前提
     /// (ObservableProperty 更新とディスク列挙を含む)。</summary>
-    private async Task ResolveThreadChainCoreAsync(ThreadTabViewModel tab)
+    private async Task ResolveThreadChainCoreAsync(ThreadTabViewModel tab, bool refreshSubjects)
     {
         var board  = tab.Board;
         var curKey = tab.ThreadKey;
@@ -148,7 +169,7 @@ public sealed partial class MainViewModel
         // スレ立て時刻ベースのキーで前後を判定する。
         if (FutabaUrl.IsFutabaHost(board.Host))
         {
-            await ResolveFutabaThreadChainAsync(tab).ConfigureAwait(true);
+            await ResolveFutabaThreadChainAsync(tab, refreshSubjects).ConfigureAwait(true);
             return;
         }
 
@@ -167,7 +188,7 @@ public sealed partial class MainViewModel
         var lockedNext  = index?.NextThreadKey;
 
         var curTitleLower = (tab.Title ?? "").ToLowerInvariant();
-        var subjects      = await GetSubjectsForNavAsync(board).ConfigureAwait(true);
+        var subjects      = await GetSubjectsForNavAsync(board, refreshSubjects).ConfigureAwait(true);
         var subjByKey     = new Dictionary<string, ThreadInfo>(subjects.Count, StringComparer.Ordinal);
         foreach (var s in subjects) subjByKey[s.Key] = s;
         var logKeys = GetLogKeysCached(board);
@@ -203,14 +224,14 @@ public sealed partial class MainViewModel
     /// <summary>ふたば用の前後スレ推測。ふたばのスレキーはスレ立て時刻なので、同一板の
     /// カタログから現スレタイトルと同名・類似名のスレを候補化し、キーの大小で前後を分ける。
     /// 確定値 (idx.json) は通常経路と同じく最優先で尊重する。</summary>
-    private async Task ResolveFutabaThreadChainAsync(ThreadTabViewModel tab)
+    private async Task ResolveFutabaThreadChainAsync(ThreadTabViewModel tab, bool refreshSubjects)
     {
         var board = tab.Board;
         var index = _threadIndex.Load(board.Host, board.DirectoryName, tab.ThreadKey);
         var excluded = index?.NavExcludedKeys is { Length: > 0 } arr
             ? new HashSet<string>(arr, StringComparer.Ordinal)
             : new HashSet<string>(StringComparer.Ordinal);
-        var subjects = await GetSubjectsForNavAsync(board).ConfigureAwait(true);
+        var subjects = await GetSubjectsForNavAsync(board, refreshSubjects).ConfigureAwait(true);
         var currentTitle = (tab.Title ?? "").Trim().ToLowerInvariant();
         var hasCurrentTime = ulong.TryParse(tab.ThreadKey, out var currentTime);
         var scored = subjects
@@ -663,10 +684,10 @@ public sealed partial class MainViewModel
     /// <summary>ナビ解決用の subject.txt を取得する (メモリ TTL キャッシュ付き)。
     /// ネットワーク取得は 8 秒で打ち切り (= 起動直後など回線が遅くてもボタン状態を長時間
     /// ブランクにしない)。失敗 / タイムアウト時はローカルキャッシュへフォールバック。</summary>
-    private async Task<IReadOnlyList<ThreadInfo>> GetSubjectsForNavAsync(Board board)
+    private async Task<IReadOnlyList<ThreadInfo>> GetSubjectsForNavAsync(Board board, bool forceNetwork = false)
     {
         var cacheKey = (board.Host, board.DirectoryName);
-        if (_navSubjectCache.TryGetValue(cacheKey, out var hit) &&
+        if (!forceNetwork && _navSubjectCache.TryGetValue(cacheKey, out var hit) &&
             DateTimeOffset.UtcNow - hit.FetchedAt < NavSubjectCacheTtl)
             return hit.Subjects;
 
@@ -678,6 +699,7 @@ public sealed partial class MainViewModel
         }
         catch (Exception ex)
         {
+            if (forceNetwork) throw;
             ChBrowser.Services.Logging.LogService.Instance.Write(
                 $"[threadNav] subject fetch 失敗 ({board.BoardName}), disk fallback: {ex.Message}");
             try { subjects = await _subjectClient.LoadFromDiskAsync(board).ConfigureAwait(true); }
@@ -889,6 +911,23 @@ public sealed partial class MainViewModel
         await ResolveThreadChainAsync(tab, force: true).ConfigureAwait(true);
     }
 
+    /// <summary>板の最新情報を取得して次スレ候補を再解決する。スレ移動は行わない。</summary>
+    public async Task SearchNextThreadAsync(ThreadTabViewModel tab)
+    {
+        if (tab is null) return;
+        if (tab.IsNavSearchInProgress) return;
+        if (tab.NavResolving)
+        {
+            tab.NavSearchRequested = true;
+            tab.IsNavSearchInProgress = true;
+            tab.StatusMessage = "現在の候補解決後に最新の板情報を検索します";
+            return;
+        }
+        tab.IsNavSearchInProgress = true;
+        tab.StatusMessage = "最新の板情報を取得して次スレ候補を検索しています…";
+        try { await ResolveThreadChainAsync(tab, force: true, refreshSubjects: true).ConfigureAwait(true); }
+        finally { tab.IsNavSearchInProgress = false; }
+    }
     /// <summary>idx.json のナビ関連フィールドを更新する共通ヘルパ (load → mutate → save)。</summary>
     private void UpdateNavIndex(ThreadTabViewModel tab, Func<ThreadIndex, ThreadIndex> mutate)
     {

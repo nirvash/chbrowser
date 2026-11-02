@@ -133,6 +133,11 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     /// PropertyChanged 不要 (= 内部排他制御のみ)。OpenThreadAsync / RefreshThreadAsync の完了フックが
     /// 重なって同時実行するのを防ぐ。</summary>
     public bool NavResolving { get; set; }
+    /// <summary>自動解決中に押された手動検索を完了後に実行する。</summary>
+    public bool NavSearchRequested { get; set; }
+
+    [ObservableProperty]
+    private bool _isNavSearchInProgress;
 
     /// <summary>最後にナビ解決が「完走」したときの <see cref="Posts"/> 件数。
     /// 同一件数なら本文は不変 (= 前スレリンクはレス 1〜5、次スレは既走査範囲に含まれる) なので
@@ -147,6 +152,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     partial void OnPrevNavTitleChanged(string? value)    => NotifyNavDerived();
     partial void OnIsPrevNavConfirmedChanged(bool value) => NotifyNavDerived();
     partial void OnNextNavKeyChanged(string? value)      => NotifyNavDerived();
+    partial void OnIsNavSearchInProgressChanged(bool value) => OnPropertyChanged(nameof(CanSearchNextThread));
     partial void OnNextNavTitleChanged(string? value)    => NotifyNavDerived();
     partial void OnIsNextNavConfirmedChanged(bool value) => NotifyNavDerived();
 
@@ -168,6 +174,8 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
 
     /// <summary>次スレが確定している (= 「次」が押せる)。</summary>
     public bool HasNextNav => !string.IsNullOrEmpty(NextNavKey);
+
+    public bool CanSearchNextThread => !IsNavSearchInProgress;
 
     /// <summary>✅ 確定ボタンが押せるか = 「未確定の採用 target」が少なくとも片方ある。
     /// 両サイド確定済みなら押す意味がないので無効。</summary>

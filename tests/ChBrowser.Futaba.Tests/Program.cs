@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -7,13 +10,23 @@ using ChBrowser.Models;
 using ChBrowser.Services.Api;
 
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+var tests = 0;
+var threadToolbar = await File.ReadAllTextAsync(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/ChBrowser/Views/Panes/ThreadDisplayPane.xaml")));
+if (!threadToolbar.Contains("次スレ検索", StringComparison.Ordinal))
+    throw new Exception("RED: toolbar must expose the next-thread search action");
+tests++; Console.WriteLine("PASS toolbar exposes next-thread search");
+var toolbarXml = System.Xml.Linq.XDocument.Parse(threadToolbar);
+var searchButton = toolbarXml.Descendants().Single(e => e.Name.LocalName == "Button"
+    && (string?)e.Attribute("Click") == "NavSearchButton_Click");
+if (!double.TryParse((string?)searchButton.Attribute("Width"), out var searchButtonWidth) || searchButtonWidth < 55)
+    throw new Exception("search button must fit its full label instead of the 28px icon width");
+tests++; Console.WriteLine("PASS search button fits its full label");
 var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "ChBrowser-Futaba-Tests-" + Guid.NewGuid().ToString("N")));
 Directory.CreateDirectory(root);
 var uri = new Uri("https://may.2chan.net/b/res/100.htm");
 var path = Path.Combine(root, "100.futaba.htm");
 var cachePath = FutabaAnalysisCache.PathFor(path);
 var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-var tests = 0;
 void Check(bool ok, string name) { if (!ok) throw new Exception(name); tests++; Console.WriteLine("PASS " + name); }
 Post P(int n, string text, int depth = 0, string? attachment = null) => new(n, "", "", "", "", text, null, null,
     new([new(text, depth, text, text)], attachment is null ? [] : [attachment], text));
@@ -126,10 +139,138 @@ try
         Check(sample.All(p => p.FutabaQuoteResolution is not null), "sample resolutions complete");
         if (args.Length > 1) await File.WriteAllTextAsync(args[1], JsonSerializer.Serialize(sample, jsonOptions));
     }
+    var catalogBoard = new Board("b", "fixture", "https://may.2chan.net/b/", "", 0);
+    var catalogHandler = new SequenceHttpHandler(
+        Encoding.GetEncoding(932).GetBytes("<td><a href=\"res/100.htm\"><img src=\"/b/cat/100s.jpg\"></a><br><small>Same daily thread old</small><br><font size=2>10</font></td>"),
+        Encoding.GetEncoding(932).GetBytes("<td><a href=\"res/200.htm\"><img src=\"/b/cat/200s.jpg\"></a><br><small>Same daily thread new</small><br><font size=2>1</font></td>"));
+    using (var catalogHttp = new MonazillaClient(catalogHandler))
+    {
+        var catalogClient = new FutabaCatalogClient(catalogHttp);
+        var oldCatalog = await catalogClient.FetchAsync(catalogBoard);
+        var refreshedCatalog = await catalogClient.FetchAsync(catalogBoard);
+        Check(catalogHandler.RequestCount == 2 && oldCatalog.Any(x => x.Key == "100")
+            && refreshedCatalog.Any(x => x.Key == "200"), "catalog refresh fetches current fixture after an earlier result");
+    }
+    var navFetchHandler = new SequenceHttpHandler(
+        Encoding.GetEncoding(932).GetBytes("<td><a href=\"res/100.htm\"><img src=\"/b/cat/100s.jpg\"></a><br><small>Same daily thread old</small><br><font size=2>10</font></td>"),
+        Encoding.GetEncoding(932).GetBytes("<td><a href=\"res/200.htm\"><img src=\"/b/cat/200s.jpg\"></a><br><small>Same daily thread next day</small><br><font size=2>1</font></td>"));
+    using (var navHttp = new MonazillaClient(navFetchHandler))
+    {
+        var navMain = (ChBrowser.ViewModels.MainViewModel)RuntimeHelpers.GetUninitializedObject(typeof(ChBrowser.ViewModels.MainViewModel));
+        var paths = new ChBrowser.Services.Storage.DataPaths(Path.Combine(root, "nav-data"));
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_subjectClient", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(navMain, new SubjectTxtClient(navHttp, paths));
+        var navCache = new Dictionary<(string Host, string Dir), (DateTimeOffset FetchedAt, IReadOnlyList<ThreadInfo> Subjects)>();
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_navSubjectCache", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(navMain, navCache);
+        var getNavSubjects = typeof(ChBrowser.ViewModels.MainViewModel).GetMethod("GetSubjectsForNavAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        async Task<IReadOnlyList<ThreadInfo>> FetchNavSubjects(bool force)
+            => await (Task<IReadOnlyList<ThreadInfo>>)getNavSubjects.Invoke(navMain, [catalogBoard, force])!;
+        var cachedOld = await FetchNavSubjects(false);
+        var forcedNew = await FetchNavSubjects(true);
+        Check(cachedOld.Any(x => x.Key == "100") && forcedNew.Any(x => x.Key == "200")
+            && navFetchHandler.RequestCount == 2, "manual refresh bypasses warm nav cache and finds next-day catalog thread");
+    }
+    using (var failureHttp = new MonazillaClient(new ThrowingHttpHandler()))
+    {
+        var failureMain = (ChBrowser.ViewModels.MainViewModel)RuntimeHelpers.GetUninitializedObject(typeof(ChBrowser.ViewModels.MainViewModel));
+        var paths = new ChBrowser.Services.Storage.DataPaths(Path.Combine(root, "failure-data"));
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_subjectClient", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(failureMain, new SubjectTxtClient(failureHttp, paths));
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_threadIndex", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(failureMain, new ChBrowser.Services.Storage.ThreadIndexService(paths));
+        var oldState = new Dictionary<(string Host, string Dir), (DateTimeOffset FetchedAt, IReadOnlyList<ThreadInfo> Subjects)>
+        {
+            [(catalogBoard.Host, catalogBoard.DirectoryName)] = (DateTimeOffset.UtcNow, [new ThreadInfo("100", "Same daily thread old", 10, 1)])
+        };
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_navSubjectCache", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(failureMain, oldState);
+        var getNavSubjects = typeof(ChBrowser.ViewModels.MainViewModel).GetMethod("GetSubjectsForNavAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        try
+        {
+            await (Task<IReadOnlyList<ThreadInfo>>)getNavSubjects.Invoke(failureMain, [catalogBoard, true])!;
+            throw new Exception("forced search must propagate network failure");
+        }
+        catch (HttpRequestException) { Check(oldState[(catalogBoard.Host, catalogBoard.DirectoryName)].Subjects[0].Key == "100", "refresh failure retains cached candidates without disk fallback"); }
+        var failureTab = new ChBrowser.ViewModels.ThreadTabViewModel(catalogBoard, new ThreadInfo("100", "Same daily thread old", 10, 1), _ => { })
+        {
+            NextNavKey = "150",
+            NextNavTitle = "previous candidate",
+            IsNextNavConfirmed = true,
+            NextNavCandidates = [new ChBrowser.ViewModels.ThreadNavCandidate("150", "previous candidate", 1, 10)]
+        };
+        await failureMain.SearchNextThreadAsync(failureTab);
+        Check(failureTab.NextNavKey == "150" && failureTab.IsNextNavConfirmed
+            && failureTab.StatusMessage.Contains("失敗", StringComparison.Ordinal), "refresh failure reports error and preserves adopted next target");
+    }
+    var successHandler = new SequenceHttpHandler(
+        Encoding.GetEncoding(932).GetBytes("<td><a href=\"res/1433000200.htm\"><img src=\"/b/cat/200s.jpg\"></a><br><small>毎日21時の読書会スレッド 10/08</small><br><font size=2>1</font></td>"),
+        Encoding.GetEncoding(932).GetBytes("<td><a href=\"res/1433000300.htm\"><img src=\"/b/cat/300s.jpg\"></a><br><small>別の話題</small><br><font size=2>1</font></td>"));
+    using (var successHttp = new MonazillaClient(successHandler))
+    {
+        var main = (ChBrowser.ViewModels.MainViewModel)RuntimeHelpers.GetUninitializedObject(typeof(ChBrowser.ViewModels.MainViewModel));
+        var paths = new ChBrowser.Services.Storage.DataPaths(Path.Combine(root, "success-data"));
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_subjectClient", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(main, new SubjectTxtClient(successHttp, paths));
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_threadIndex", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(main, new ChBrowser.Services.Storage.ThreadIndexService(paths));
+        typeof(ChBrowser.ViewModels.MainViewModel).GetField("_navSubjectCache", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(main, new Dictionary<(string Host, string Dir), (DateTimeOffset FetchedAt, IReadOnlyList<ThreadInfo> Subjects)>
+            {
+                [(catalogBoard.Host, catalogBoard.DirectoryName)] = (DateTimeOffset.UtcNow,
+                    [new ThreadInfo("1433000100", "毎日21時の読書会スレッド 10/07", 1, 1)])
+            });
+        var oldTab = new ChBrowser.ViewModels.ThreadTabViewModel(catalogBoard,
+            new ThreadInfo("1433000100", "毎日21時の読書会スレッド 10/07", 1, 1), _ => { });
+        oldTab.AppendPosts([P(1433000100, "前日の保存済み本文")]);
+        oldTab.NavResolvedAtPostCount = oldTab.Posts.Count;
+        await main.SearchNextThreadAsync(oldTab);
+        Check(oldTab.NextNavKey == "1433000200" && oldTab.NextNavCandidates?.Single().Key == "1433000200"
+            && successHandler.RequestCount == 1 && oldTab.Posts.Count == 1
+            && oldTab.ThreadKey == "1433000100" && !oldTab.IsNavSearchInProgress
+            && oldTab.StatusMessage.Contains("更新", StringComparison.Ordinal),
+            "search from expired previous-day cached thread resolves new catalog candidate without reloading old thread or navigating");
+        await main.SearchNextThreadAsync(oldTab);
+        Check(oldTab.NextNavKey is null && oldTab.NextNavCandidates?.Count == 0
+            && successHandler.RequestCount == 2 && !oldTab.IsNavSearchInProgress
+            && oldTab.StatusMessage.Contains("見つかりません", StringComparison.Ordinal),
+            "manual search clears unconfirmed stale target and reports no matching current thread");
+    }
+    var queuedMain = (ChBrowser.ViewModels.MainViewModel)RuntimeHelpers.GetUninitializedObject(typeof(ChBrowser.ViewModels.MainViewModel));
+    var queuedTab = new ChBrowser.ViewModels.ThreadTabViewModel(catalogBoard, new ThreadInfo("100", "Same daily thread old", 10, 1), _ => { }) { NavResolving = true };
+    await queuedMain.SearchNextThreadAsync(queuedTab);
+    Check(queuedTab.NavSearchRequested && queuedTab.IsNavSearchInProgress, "search request during automatic resolution is queued");
+    var duplicateTab = new ChBrowser.ViewModels.ThreadTabViewModel(catalogBoard, new ThreadInfo("100", "Same daily thread old", 10, 1), _ => { }) { NavResolving = true, IsNavSearchInProgress = true };
+    await queuedMain.SearchNextThreadAsync(duplicateTab);
+    Check(!duplicateTab.NavSearchRequested, "duplicate search while active is ignored");
+    var tab = new ChBrowser.ViewModels.ThreadTabViewModel(catalogBoard, new ThreadInfo("100", "Same daily thread old", 1, 1), _ => { });
+    Check(tab.CanSearchNextThread, "next-thread search enabled for an open tab");
+    tab.IsNavSearchInProgress = true;
+    Check(!tab.CanSearchNextThread, "next-thread search disabled while searching");
     Console.WriteLine($"PASS total={tests}");
 }
 finally
 {
     if (!root.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase)) throw new Exception("unsafe test path");
     Directory.Delete(root, recursive: true);
+}
+
+sealed class SequenceHttpHandler(params byte[][] responses) : HttpMessageHandler
+{
+    private readonly Queue<byte[]> _responses = new(responses);
+    public int RequestCount { get; private set; }
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        RequestCount++;
+        var bytes = _responses.Dequeue();
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(bytes)
+        });
+    }
+}
+
+sealed class ThrowingHttpHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        => Task.FromException<HttpResponseMessage>(new HttpRequestException("fixture unavailable"));
 }
