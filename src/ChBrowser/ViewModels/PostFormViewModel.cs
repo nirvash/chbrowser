@@ -93,6 +93,24 @@ public sealed partial class PostFormViewModel : ObservableObject
     /// <summary>ふたばでは5ch専用のどんぐり Cookie / 認証モードを使わない。</summary>
     public bool SupportsDonguriAuth => !FutabaUrl.IsFutabaHost(_board.Host);
 
+    /// <summary>ファイル添付に対応した板か (現状ふたばのみ)。</summary>
+    public bool SupportsAttachment => FutabaUrl.IsFutabaHost(_board.Host);
+
+    /// <summary>添付するファイル。null なら添付なし。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasAttachment))]
+    [NotifyPropertyChangedFor(nameof(AttachmentSummary))]
+    private PostAttachment? _attachment;
+
+    public bool HasAttachment => Attachment is not null;
+
+    /// <summary>「foo.png (123 KB)」のような添付表示。添付なしは「なし」。</summary>
+    public string AttachmentSummary => Attachment is { } a
+        ? $"{a.FileName} ({FormatSize(a.Data.Length)})"
+        : "なし";
+
+    public IRelayCommand ClearAttachmentCommand { get; }
+
     /// <summary>書き込み対象スレの板。書き込み先確認ダイアログで「今表示中のスレと同じか」判定に使う。</summary>
     public Board Board => _board;
 
@@ -117,7 +135,10 @@ public sealed partial class PostFormViewModel : ObservableObject
         _threadTitle = threadTitle ?? "";
         DialogTitle  = $"レスを書き込む: {threadTitle}";
         AuthMode     = SupportsDonguriAuth ? defaultAuthMode : PostAuthMode.None;
-        SubmitCommand = new AsyncRelayCommand(SubmitAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(Message));
+        // ふたばのレスは画像だけ (本文なし) でも投稿できる。
+        SubmitCommand = new AsyncRelayCommand(SubmitAsync,
+            () => !IsBusy && (!string.IsNullOrWhiteSpace(Message) || HasAttachment));
+        ClearAttachmentCommand = new RelayCommand(() => Attachment = null, () => HasAttachment && !IsBusy);
     }
 
     /// <summary>スレ立て用コンストラクタ。<paramref name="defaultAuthMode"/> で初期選択する認証モードを指定する。</summary>
@@ -132,6 +153,7 @@ public sealed partial class PostFormViewModel : ObservableObject
         AuthMode     = SupportsDonguriAuth ? defaultAuthMode : PostAuthMode.None;
         SubmitCommand = new AsyncRelayCommand(SubmitAsync,
             () => !IsBusy && !string.IsNullOrWhiteSpace(Message) && !string.IsNullOrWhiteSpace(Subject));
+        ClearAttachmentCommand = new RelayCommand(() => Attachment = null, () => HasAttachment && !IsBusy);
     }
 
     partial void OnIsSageChanged(bool value)
@@ -156,7 +178,44 @@ public sealed partial class PostFormViewModel : ObservableObject
         OnPropertyChanged(nameof(IsOverLineLimit));
     }
     partial void OnSubjectChanged(string value)  => SubmitCommand.NotifyCanExecuteChanged();
-    partial void OnIsBusyChanged(bool value)     => SubmitCommand.NotifyCanExecuteChanged();
+    partial void OnIsBusyChanged(bool value)
+    {
+        SubmitCommand.NotifyCanExecuteChanged();
+        ClearAttachmentCommand.NotifyCanExecuteChanged();
+    }
+    partial void OnAttachmentChanged(PostAttachment? value)
+    {
+        SubmitCommand.NotifyCanExecuteChanged();
+        ClearAttachmentCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>添付ファイルの上限 (誤操作で巨大ファイルを読み込まないための安全弁)。
+    /// 実際の上限は板ごとにサーバが判定し、超過時はエラー文言がそのまま表示される。</summary>
+    public const int MaxAttachmentBytes = 20 * 1024 * 1024;
+
+    /// <summary>ファイル内容を添付として設定する。対応外の形式・サイズならエラー文言を返し、添付は変えない。</summary>
+    public string? TrySetAttachment(string fileName, byte[] data)
+    {
+        if (!SupportsAttachment) return "この板ではファイルを添付できません。";
+        if (IsBusy) return "送信中は添付を変更できません。";
+        if (data.Length == 0) return "空のファイルは添付できません。";
+        if (data.Length > MaxAttachmentBytes)
+            return BuildTooLargeMessage(data.Length);
+        var attachment = PostAttachment.Create(fileName, data);
+        if (attachment is null)
+            return "対応していない形式です (jpg / png / gif / webp / mp4 / webm)。";
+        Attachment = attachment;
+        ErrorMessage = "";
+        return null;
+    }
+
+    public static string BuildTooLargeMessage(long bytes)
+        => $"ファイルが大きすぎます ({FormatSize(bytes)})。{FormatSize(MaxAttachmentBytes)} までです。";
+
+    private static string FormatSize(long bytes)
+        => bytes >= 1024 * 1024
+            ? $"{bytes / 1024.0 / 1024.0:0.0} MB"
+            : $"{Math.Max(1, (bytes + 1023) / 1024)} KB";
     partial void OnLineLimitChanged(int? value)
     {
         OnPropertyChanged(nameof(LineCountText));
@@ -197,7 +256,8 @@ public sealed partial class PostFormViewModel : ObservableObject
                 Mail:        Mail,
                 Message:     Message,
                 AuthMode:    AuthMode,
-                ThreadTitle: IsNewThread ? null : _threadTitle);
+                ThreadTitle: IsNewThread ? null : _threadTitle,
+                Attachment:  SupportsAttachment ? Attachment : null);
 
             var result = await _postClient.PostAsync(req, ct).ConfigureAwait(true);
             LastResult = result;

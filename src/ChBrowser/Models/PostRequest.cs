@@ -42,7 +42,9 @@ public sealed record PostRequest(
     string  Message,
     PostAuthMode AuthMode = PostAuthMode.MailAuth,
     /// <summary>レス書き込み時の元スレタイトル (kakikomi.txt 等の記録用)。新スレ立て時は null で OK。</summary>
-    string? ThreadTitle = null)
+    string? ThreadTitle = null,
+    /// <summary>添付ファイル (ふたばのみ対応)。null なら添付なし。</summary>
+    PostAttachment? Attachment = null)
 {
     public bool IsNewThread => !string.IsNullOrEmpty(Subject) && string.IsNullOrEmpty(ThreadKey);
     public bool IsReply     =>  string.IsNullOrEmpty(Subject) && !string.IsNullOrEmpty(ThreadKey);
@@ -55,4 +57,32 @@ public sealed record PostRequest(
     public string PageUrl => IsReply
         ? $"https://{Board.Host}/test/read.cgi/{Board.DirectoryName}/{ThreadKey}/"
         : Board.Url;
+}
+
+/// <summary>投稿に添付する 1 ファイル分 (ふたばの upfile)。</summary>
+public sealed record PostAttachment(string FileName, string ContentType, byte[] Data)
+{
+    /// <summary>ふたばが受け付ける添付形式 (拡張子 → Content-Type)。</summary>
+    public static readonly System.Collections.Generic.IReadOnlyDictionary<string, string> SupportedTypes =
+        new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            [".jpg"]  = "image/jpeg",
+            [".jpeg"] = "image/jpeg",
+            [".png"]  = "image/png",
+            [".gif"]  = "image/gif",
+            [".webp"] = "image/webp",
+            [".mp4"]  = "video/mp4",
+            [".webm"] = "video/webm",
+        };
+
+    /// <summary>ファイル名の拡張子から添付を作る。未対応形式なら null。</summary>
+    public static PostAttachment? Create(string fileName, byte[] data)
+    {
+        var ext = System.IO.Path.GetExtension(fileName ?? "");
+        if (!SupportedTypes.TryGetValue(ext, out var contentType)) return null;
+        return new PostAttachment(System.IO.Path.GetFileName(fileName!), contentType, data);
+    }
+
+    public string Extension => System.IO.Path.GetExtension(FileName).ToLowerInvariant();
+    public bool IsVideo => ContentType.StartsWith("video/", System.StringComparison.OrdinalIgnoreCase);
 }

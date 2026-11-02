@@ -222,6 +222,10 @@ public static partial class WebView2Helper
     /// と文字列を揃えているので変更する場合は両方を修正すること。</summary>
     internal const string ThemeVirtualHostName = "chbrowser-theme.local";
 
+    /// <summary>書き込みダイアログのレビュー表示で、添付ファイル (一時フォルダ) を配信する仮想ホスト。
+    /// 画像キャッシュへは取り込まない。</summary>
+    internal const string UploadPreviewVirtualHostName = "chbrowser-upload.local";
+
     /// <summary>App.OnStartup で 1 度だけ呼ぶ。画像キャッシュ機能を有効化する。</summary>
     public static void RegisterImageCache(ImageCacheService cache) => _imageCache = cache;
 
@@ -411,6 +415,7 @@ public static partial class WebView2Helper
                 // テーマ仮想ホストのリソースは画像キャッシュに取り込まない
                 // (= アプリ管理アセットが LRU prune 対象になる二重管理を避ける)。
                 if (url.StartsWith("https://" + ThemeVirtualHostName + "/", StringComparison.OrdinalIgnoreCase)) return;
+                if (url.StartsWith("https://" + UploadPreviewVirtualHostName + "/", StringComparison.OrdinalIgnoreCase)) return;
                 if (cache.Contains(url)) return; // 既にキャッシュ済み
 
                 Stream? stream;

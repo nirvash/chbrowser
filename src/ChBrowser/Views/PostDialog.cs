@@ -46,6 +46,12 @@ public sealed class PostDialog : Window
     private bool                _editorReady;   // textarea シェルの 'ready' を受けたか
     private bool                _editorEcho;     // editor→VM 反映中フラグ (= VM→editor の押し戻しでキャレットを壊さないため)
 
+    // ---- 添付ファイル (ふたばのみ) ----
+    /// <summary>レビュー表示用に添付ファイルのコピーを置く一時フォルダ (仮想ホストへマップする)。</summary>
+    private string?             _uploadPreviewDir;
+    /// <summary>レビュー表示で添付として描画させる仮想ホスト URL。添付なしは null。</summary>
+    private string?             _uploadPreviewUrl;
+
     private Button?             _cookieSettingsToggleBtn;
     private FrameworkElement?   _cookieSettingsPanel;
 
@@ -103,7 +109,17 @@ public sealed class PostDialog : Window
             vm.PropertyChanged -= OnVmPropertyChanged;
             _previewDebounceTimer?.Stop();
             try { _messageWebView?.Dispose(); } catch { /* 破棄失敗は無視 */ }
+            DeleteUploadPreviewDir();
         };
+
+        // エクスプローラ等からのファイルドロップで添付 (本文エディタ上のドロップは WebView 内の JS で受ける)。
+        if (vm.SupportsAttachment)
+        {
+            AllowDrop  = true;
+            // TextBox が FileDrop を拒否して先に処理済みにしないよう Preview で受ける。
+            PreviewDragOver += OnWindowDragOver;
+            PreviewDrop     += OnWindowDrop;
+        }
 
         // 非アクティブになったらタイトルバーだけ残して畳み、再アクティブで元に戻す (Jane Xeno 風)。
         // レビューウィンドウへフォーカスが移っただけのときは畳まない (= TryRollUpDeferred 内で判定)。
@@ -270,6 +286,12 @@ public sealed class PostDialog : Window
             PushEditorText();
         }
 
+        if (e.PropertyName == nameof(PostFormViewModel.Attachment))
+        {
+            UpdateUploadPreviewFile();
+            SchedulePreviewPush();
+        }
+
         // プレビュー反映対象 (= 名前 / メール / 本文 / 題名 / IsSage)。
         if (e.PropertyName is nameof(PostFormViewModel.Name)
                           or nameof(PostFormViewModel.Mail)
@@ -291,9 +313,10 @@ public sealed class PostDialog : Window
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (1) Name + Mail + sage
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (2) "本文:"
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // (3) message
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (4) Cookie 設定パネル (初期非表示)
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (5) error banner
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (6) status + buttons
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (4) 添付ファイル (ふたばのみ)
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (5) Cookie 設定パネル (初期非表示)
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (6) error banner
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // (7) status + buttons
 
         // (0) Subject (スレ立て時のみ)。レス書き込みなら row 0 は空 = Auto は 0 高さ。
         if (_vm.IsNewThread)
@@ -407,17 +430,25 @@ public sealed class PostDialog : Window
         Grid.SetRow(msgBorder, 3);
         root.Children.Add(msgBorder);
 
-        // (4) Cookie 設定パネル — フッターの「Cookie 設定」ボタンで開閉する折り畳み領域。
+        // (4) 添付ファイル行 (ふたばのみ)。
+        if (_vm.SupportsAttachment)
+        {
+            var attachRow = BuildAttachmentRow();
+            Grid.SetRow(attachRow, 4);
+            root.Children.Add(attachRow);
+        }
+
+        // (5) Cookie 設定パネル — フッターの「Cookie 設定」ボタンで開閉する折り畳み領域。
         // 中身は認証モード切替 (どんぐり: なし / 通常 / メール認証) と Cookie 削除ボタン。
         // 初期状態 Collapsed (= 高さ 0) なので、開かない限り本文 (row 3 / Star) の表示領域を奪わない。
         if (_vm.SupportsDonguriAuth)
         {
             _cookieSettingsPanel = BuildCookieSettingsPanel();
-            Grid.SetRow(_cookieSettingsPanel, 4);
+            Grid.SetRow(_cookieSettingsPanel, 5);
             root.Children.Add(_cookieSettingsPanel);
         }
 
-        // (5) エラーバナー (ErrorMessage が空でないとき表示)
+        // (6) エラーバナー (ErrorMessage が空でないとき表示)
         var errorBanner = new Border
         {
             Background  = new SolidColorBrush(Color.FromRgb(0xFC, 0xE4, 0xE4)),
@@ -439,10 +470,10 @@ public sealed class PostDialog : Window
         {
             Converter = new EmptyStringToVisibilityConverter(),
         });
-        Grid.SetRow(errorBanner, 5);
+        Grid.SetRow(errorBanner, 6);
         root.Children.Add(errorBanner);
 
-        // (6) ステータス + Cookie 設定 / レビュー / 送信 / 取消
+        // (7) ステータス + Cookie 設定 / レビュー / 送信 / 取消
         var footer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
         footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -480,7 +511,7 @@ public sealed class PostDialog : Window
         Grid.SetColumn(btnPanel, 1);
         footer.Children.Add(btnPanel);
 
-        Grid.SetRow(footer, 6);
+        Grid.SetRow(footer, 7);
         root.Children.Add(footer);
 
         Loaded += (_, _) =>
@@ -595,10 +626,24 @@ public sealed class PostDialog : Window
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
             var root = doc.RootElement;
             var type = root.TryGetProperty("type", out var tp) ? tp.GetString() : null;
+            // 添付画像スロットのメタ問い合わせ: ローカルファイルなので「キャッシュ済み」として即ロードさせる。
+            if (type == "imageMetaRequest")
+            {
+                var metaUrl = root.TryGetProperty("url", out var mu) ? mu.GetString() : null;
+                if (metaUrl is not null && IsUploadPreviewUrl(metaUrl))
+                {
+                    _previewWebView?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new
+                    {
+                        type = "imageMeta", url = metaUrl, ok = true, cached = true,
+                    }));
+                }
+                return;
+            }
             if (type != "openInViewer") return;
             if (!root.TryGetProperty("url", out var up)) return;
             var url = up.GetString();
             if (string.IsNullOrEmpty(url)) return;
+            if (IsUploadPreviewUrl(url)) return;   // 添付 (ローカル) はビューアで取得できないので開かない
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
             if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return;
             if (System.Windows.Application.Current is App app) app.ShowImageInViewer(url);
@@ -616,6 +661,14 @@ public sealed class PostDialog : Window
             // EnsureCoreAsync 経由で初期化 (= 画像キャッシュ + pixiv Referer ハンドラを同梱で install)。
             // 直接 EnsureCoreWebView2Async だけ呼ぶと WebResourceRequested が無く、cache 透過と Referer 補正が効かない。
             await WebView2Helper.EnsureCoreAsync(_previewWebView!).ConfigureAwait(true);
+            if (_vm.SupportsAttachment)
+            {
+                // 添付ファイルのコピー置き場を仮想ホスト化し、レビュー上で通常の画像スロットとして描画させる。
+                _previewWebView!.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    WebView2Helper.UploadPreviewVirtualHostName,
+                    EnsureUploadPreviewDir(),
+                    CoreWebView2HostResourceAccessKind.Allow);
+            }
             var tcs = new TaskCompletionSource();
             void OnNav(object? s, CoreWebView2NavigationCompletedEventArgs e)
             {
@@ -648,7 +701,7 @@ public sealed class PostDialog : Window
             await WebView2Helper.EnsureCoreAsync(_messageWebView).ConfigureAwait(true);
             // 'ready' を取りこぼさないよう NavigateToString より前に購読する。
             _messageWebView.WebMessageReceived += OnEditorWebMessageReceived;
-            _messageWebView.CoreWebView2.NavigateToString(BuildMessageEditorHtml());
+            _messageWebView.CoreWebView2.NavigateToString(BuildMessageEditorHtml(_vm.SupportsAttachment));
         }
         catch (Exception ex)
         {
@@ -658,7 +711,7 @@ public sealed class PostDialog : Window
 
     /// <summary>本文 textarea を内包する最小 HTML。絵文字フォントが有効なら @font-face を注入し、
     /// textarea の font-family に絵文字フォントを差し込んでカラー表示する (無効時は従来の WPF と同じ顔ぶれ)。</summary>
-    private static string BuildMessageEditorHtml()
+    private static string BuildMessageEditorHtml(bool acceptAttachments)
     {
         var fontFace = ChBrowser.Services.Fonts.EmojiFontService.BuildFontFaceCssOrNull() ?? "";
         var emojiFam = ChBrowser.Services.Fonts.EmojiFontService.Active
@@ -681,6 +734,7 @@ ed.addEventListener('keydown',function(e){
  else if(e.key==='Tab'){e.preventDefault();var s=ed.selectionStart,en=ed.selectionEnd,v=ed.value;
   ed.value=v.slice(0,s)+'\t'+v.slice(en);ed.selectionStart=ed.selectionEnd=s+1;send({type:'edit',text:ed.value});}
 });
+" + (acceptAttachments ? AttachmentEditorScript : "") + @"
 if(window.chrome&&window.chrome.webview){window.chrome.webview.addEventListener('message',function(ev){
  var d=ev.data;if(!d||typeof d!=='object')return;
  if(d.type==='setText'){if(ed.value!==d.text)ed.value=(d.text||'');}
@@ -716,6 +770,9 @@ send({type:'ready'});
                     break;
                 case "cancel":
                     if (!_vm.IsBusy) Close();
+                    break;
+                case "attachFile":
+                    HandleEditorAttachFile(root);
                     break;
             }
         }
@@ -782,6 +839,8 @@ send({type:'ready'});
         // post-body の white-space: pre-wrap が残った \r を改行扱いしてしまい、<br> と二重になるので
         // ここで \n 単一に正規化する。dat 由来の Post.Body は元々 \n だけなので thread 表示側は無対策で OK。
         var bodyNormalized = (_vm.Message ?? "").Replace("\r\n", "\n").Replace("\r", "\n");
+        // 添付はふたばのスレ表示と同じく「本文先頭行のメディア URL」として渡し、通常のメディアスロットで描画させる。
+        if (_uploadPreviewUrl is not null) bodyNormalized = _uploadPreviewUrl + "\n" + bodyNormalized;
 
         var post = new
         {
@@ -796,6 +855,164 @@ send({type:'ready'});
         var json = JsonSerializer.Serialize(new { type = "setPreview", post });
         try { _previewWebView.CoreWebView2.PostWebMessageAsJson(json); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[PostDialog] preview push failed: {ex.Message}"); }
+    }
+
+    // -----------------------------------------------------------------
+    // 添付ファイル (ふたばのみ)
+    // -----------------------------------------------------------------
+
+    /// <summary>本文エディタ内でのファイルドロップ / 画像貼り付けを C# へ渡すスクリプト。
+    /// ファイルは base64 (data URL) で 'attachFile' として送る。</summary>
+    private const string AttachmentEditorScript = @"
+function attachBlob(blob,name){var r=new FileReader();r.onload=function(){send({type:'attachFile',name:name||blob.name||'',data:String(r.result||'')});};r.readAsDataURL(blob);}
+function hasFiles(dt){return !!dt&&Array.prototype.indexOf.call(dt.types||[],'Files')>=0;}
+document.addEventListener('dragover',function(e){if(hasFiles(e.dataTransfer)){e.preventDefault();e.dataTransfer.dropEffect='copy';}});
+document.addEventListener('drop',function(e){if(!hasFiles(e.dataTransfer))return;e.preventDefault();var f=e.dataTransfer.files[0];if(f)attachBlob(f,f.name);});
+ed.addEventListener('paste',function(e){var items=(e.clipboardData&&e.clipboardData.items)||[];
+ for(var i=0;i<items.length;i++){var it=items[i];if(it.kind!=='file')continue;var f=it.getAsFile();if(!f)continue;
+  if(!/^(image|video)\//.test(f.type||''))continue;
+  e.preventDefault();var ext=(f.type.split('/')[1]||'png').replace('jpeg','jpg');
+  attachBlob(f,(f.name&&f.name!=='image.png'&&/\.[A-Za-z0-9]+$/.test(f.name))?f.name:('clipboard.'+ext));return;}
+});
+";
+
+    /// <summary>「添付: foo.png (120 KB)  [ファイル選択…] [添付解除]」行。</summary>
+    private FrameworkElement BuildAttachmentRow()
+    {
+        var row = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var label = new TextBlock { Text = "添付:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+        Grid.SetColumn(label, 0); row.Children.Add(label);
+
+        var summary = new TextBlock
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+            Margin            = new Thickness(0, 0, 8, 0),
+            ToolTip           = "ファイル選択のほか、ファイルのドラッグ&ドロップや本文欄への Ctrl+V (画像) でも添付できます。",
+        };
+        summary.SetBinding(TextBlock.TextProperty, new Binding(nameof(PostFormViewModel.AttachmentSummary)));
+        Grid.SetColumn(summary, 1); row.Children.Add(summary);
+
+        var pickBtn = new Button { Content = "ファイル選択…", Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 8, 0) };
+        pickBtn.Click += (_, _) => PickAttachmentFile();
+        Grid.SetColumn(pickBtn, 2); row.Children.Add(pickBtn);
+
+        var clearBtn = new Button { Content = "添付解除", Padding = new Thickness(8, 2, 8, 2) };
+        clearBtn.SetBinding(ButtonBase_CommandProxy, new Binding(nameof(PostFormViewModel.ClearAttachmentCommand)));
+        Grid.SetColumn(clearBtn, 3); row.Children.Add(clearBtn);
+
+        return row;
+    }
+
+    private void PickAttachmentFile()
+    {
+        if (_vm.IsBusy) return;
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title  = "添付するファイルを選択",
+            Filter = "画像・動画 (*.jpg;*.jpeg;*.png;*.gif;*.webp;*.mp4;*.webm)|*.jpg;*.jpeg;*.png;*.gif;*.webp;*.mp4;*.webm|すべてのファイル (*.*)|*.*",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        AttachFromPath(dlg.FileName);
+    }
+
+    private void AttachFromPath(string path)
+    {
+        try
+        {
+            var info = new System.IO.FileInfo(path);
+            // 巨大ファイルを丸ごと読み込まないよう、上限超過はサイズだけで弾く。
+            if (info.Length > PostFormViewModel.MaxAttachmentBytes)
+            {
+                _vm.ErrorMessage = PostFormViewModel.BuildTooLargeMessage(info.Length);
+                return;
+            }
+            var error = _vm.TrySetAttachment(info.Name, System.IO.File.ReadAllBytes(path));
+            if (error is not null) _vm.ErrorMessage = error;
+        }
+        catch (Exception ex)
+        {
+            _vm.ErrorMessage = $"ファイルを読み込めませんでした: {ex.Message}";
+        }
+    }
+
+    private static string? FirstDroppedFile(DragEventArgs e)
+        => e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files
+            ? files[0] : null;
+
+    private void OnWindowDragOver(object sender, DragEventArgs e)
+    {
+        if (FirstDroppedFile(e) is null) return;   // テキストのドラッグ等は通常どおり
+        e.Effects = _vm.IsBusy ? DragDropEffects.None : DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    private void OnWindowDrop(object sender, DragEventArgs e)
+    {
+        var path = FirstDroppedFile(e);
+        if (path is null) return;
+        e.Handled = true;
+        AttachFromPath(path);
+    }
+
+    /// <summary>本文エディタ (WebView) からの 'attachFile' (ドロップ / 貼り付け) を添付にする。</summary>
+    private void HandleEditorAttachFile(JsonElement root)
+    {
+        var name = root.TryGetProperty("name", out var np) ? np.GetString() ?? "" : "";
+        var data = root.TryGetProperty("data", out var dp) ? dp.GetString() ?? "" : "";
+        var comma = data.IndexOf(',');
+        if (comma < 0) { _vm.ErrorMessage = "ファイルを読み込めませんでした。"; return; }
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(data[(comma + 1)..]); }
+        catch (FormatException) { _vm.ErrorMessage = "ファイルを読み込めませんでした。"; return; }
+        var error = _vm.TrySetAttachment(name, bytes);
+        if (error is not null) _vm.ErrorMessage = error;
+    }
+
+    private string EnsureUploadPreviewDir()
+    {
+        _uploadPreviewDir ??= System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ChBrowser", "post-upload",
+            Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(_uploadPreviewDir);
+        return _uploadPreviewDir;
+    }
+
+    /// <summary>添付の変更をレビュー用の一時ファイルへ反映する。
+    /// 毎回別名で書き出し、ブラウザ側のキャッシュで古い画像が出ないようにする。</summary>
+    private void UpdateUploadPreviewFile()
+    {
+        _uploadPreviewUrl = null;
+        try
+        {
+            var dir = EnsureUploadPreviewDir();
+            foreach (var old in System.IO.Directory.GetFiles(dir))
+            {
+                try { System.IO.File.Delete(old); } catch { /* 使用中なら残す (ダイアログを閉じる時にまとめて消す) */ }
+            }
+            if (_vm.Attachment is not { } a) return;
+            var fileName = Guid.NewGuid().ToString("N") + a.Extension;
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, fileName), a.Data);
+            _uploadPreviewUrl = $"https://{WebView2Helper.UploadPreviewVirtualHostName}/{fileName}";
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PostDialog] upload preview write failed: {ex.Message}");
+        }
+    }
+
+    private static bool IsUploadPreviewUrl(string url)
+        => url.StartsWith($"https://{WebView2Helper.UploadPreviewVirtualHostName}/", StringComparison.OrdinalIgnoreCase);
+
+    private void DeleteUploadPreviewDir()
+    {
+        if (_uploadPreviewDir is null) return;
+        try { System.IO.Directory.Delete(_uploadPreviewDir, recursive: true); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[PostDialog] upload preview cleanup failed: {ex.Message}"); }
     }
 
     /// <summary>PostAuthMode を 本文ヘッダの「どんぐり: ～」インジケータ用 日本語ラベルに変換する

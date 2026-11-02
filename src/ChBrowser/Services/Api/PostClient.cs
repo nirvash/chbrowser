@@ -168,22 +168,30 @@ public sealed class PostClient
         => new(new Uri(board.Url), $"/sd.php?{board.DirectoryName}.{postNumber}");
 
     /// <summary>
-    /// ふたば☆ちゃんねるの標準フォーム (<c>futaba.php</c>) へテキスト投稿する。
-    /// 5ch の bbs.cgi / どんぐり認証とは別プロトコルであり、本文は UTF-8 の
-    /// application/x-www-form-urlencoded として送る。添付ファイルは投稿ダイアログが
-    /// 未対応のため、スレ立てでは textonly=on を明示する。
+    /// ふたば☆ちゃんねるの標準フォーム (<c>futaba.php</c>) へ投稿する。
+    /// 5ch の bbs.cgi / どんぐり認証とは別プロトコル。本文は UTF-8 で送る。
+    /// 添付なしは application/x-www-form-urlencoded + textonly=on、
+    /// 添付ありは multipart/form-data で upfile にファイルを載せる (textonly は付けない)。
     /// </summary>
     private async Task<PostResult> PostToFutabaAsync(PostRequest request, CancellationToken ct)
     {
         var uri = new Uri(new Uri(request.Board.Url), "futaba.php?guid=on");
-        var body = BuildFutabaFormBody(request);
+        HttpContent content;
+        if (request.Attachment is null)
+        {
+            content = new ByteArrayContent(BuildFutabaFormBody(request));
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded")
+            {
+                CharSet = "UTF-8",
+            };
+        }
+        else
+        {
+            content = BuildFutabaMultipartContent(request);
+        }
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri)
         {
-            Content = new ByteArrayContent(body),
-        };
-        httpRequest.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded")
-        {
-            CharSet = "UTF-8",
+            Content = content,
         };
         httpRequest.Headers.TryAddWithoutValidation("Referer", request.IsReply
             ? FutabaUrl.BuildThreadUrl(request.Board.Host, request.Board.DirectoryName, request.ThreadKey!)
@@ -202,10 +210,18 @@ public sealed class PostClient
         {
             return new PostResult(PostOutcome.UnknownError, ex.Message, "");
         }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new PostResult(PostOutcome.UnknownError, "ふたばへの送信がタイムアウトしました。", "");
+        }
     }
 
     /// <summary>ふたば標準の regist フォーム値を UTF-8 で組み立てる。公開していないが API テストから検証する。</summary>
     private static byte[] BuildFutabaFormBody(PostRequest req)
+        => Encoding.UTF8.GetBytes(EncodeUtf8Form(BuildFutabaTextFields(req, textOnly: true)));
+
+    /// <summary>ふたば regist フォームのテキスト項目。添付ありのときは textonly を付けない。</summary>
+    private static List<KeyValuePair<string, string>> BuildFutabaTextFields(PostRequest req, bool textOnly)
     {
         var fields = new List<KeyValuePair<string, string>>
         {
@@ -215,11 +231,48 @@ public sealed class PostClient
             new("sub", req.IsNewThread ? req.Subject ?? "" : ""),
             new("com", req.Message),
             new("pwd", ""),
-            new("textonly", "on"),
-            new("submit", "送信する"),
         };
+        if (textOnly) fields.Add(new("textonly", "on"));
+        fields.Add(new("submit", "送信する"));
         if (req.IsReply) fields.Add(new("resto", req.ThreadKey!));
-        return Encoding.UTF8.GetBytes(EncodeUtf8Form(fields));
+        return fields;
+    }
+
+    /// <summary>添付付きのふたば投稿を multipart/form-data で組み立てる。
+    /// テキスト項目は urlencoded 版と同じく UTF-8 で、ブラウザと同様にパートごとの Content-Type は付けない。
+    /// ファイル名は ASCII 以外を含むとサーバ側で化けうるため、拡張子だけ残した安全な名前にする。</summary>
+    private static MultipartFormDataContent BuildFutabaMultipartContent(PostRequest req)
+    {
+        var attachment = req.Attachment!;
+        var multipart = new MultipartFormDataContent("----ChBrowserFutaba" + Guid.NewGuid().ToString("N"));
+        foreach (var field in BuildFutabaTextFields(req, textOnly: false))
+        {
+            var part = new ByteArrayContent(Encoding.UTF8.GetBytes(field.Value));
+            part.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("form-data")
+            {
+                Name = Quote(field.Key),
+            };
+            multipart.Add(part);
+        }
+
+        var file = new ByteArrayContent(attachment.Data);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(attachment.ContentType);
+        file.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("form-data")
+        {
+            Name     = Quote("upfile"),
+            FileName = Quote(BuildSafeUploadFileName(attachment)),
+        };
+        multipart.Add(file);
+        return multipart;
+
+        static string Quote(string s) => "\"" + s + "\"";
+    }
+
+    private static string BuildSafeUploadFileName(PostAttachment attachment)
+    {
+        var name = attachment.FileName;
+        var safe = !string.IsNullOrEmpty(name) && name.All(c => c is >= ' ' and <= '~' && c is not ('"' or '\\'));
+        return safe ? name : "upload" + attachment.Extension;
     }
 
     private static string EncodeUtf8Form(IReadOnlyList<KeyValuePair<string, string>> fields)
