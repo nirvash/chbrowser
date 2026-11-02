@@ -3116,7 +3116,9 @@
     function applyImageMeta(url, meta) {
         imageMetaCache.set(url, meta);
         document.querySelectorAll('.image-slot').forEach(function (slot) {
-            if (isVideoMediaSlot(slot) || slot.dataset.src !== url) return;
+            // YouTube は動画フィルタの対象だが、サムネイル取得は画像経路で行う。
+            // ここで除外するのは videoCacheQuery 経路の直リンク動画だけ。
+            if (slot.classList.contains('video') || slot.dataset.mediaType === 'video' || slot.dataset.src !== url) return;
             slot.dataset.mediaReachable = (meta.ok && !meta.imageLoadFailed) ? 'true' : 'false';
             if (slot.classList.contains('deferred')) applyMetaToSlot(slot, meta);
         });
@@ -3893,7 +3895,7 @@ function findReadProgressMaxNumber() {
     }
 
     // 右クリックは contextmenu イベントで拾い、ブラウザ既定メニューを抑制してから C# に送る。
-    // 優先順位: post-no が一番強い → URL リンク (テキスト or 画像) → それ以外は何もしない (= 既定挙動)。
+    // 優先順位: post-no → URL リンク (テキスト or 画像) → 既定挙動。
     document.addEventListener('contextmenu', function(e) {
         // 1) post-no
         const postNo = e.target.closest && e.target.closest('.post-no');

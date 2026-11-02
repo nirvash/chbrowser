@@ -260,6 +260,8 @@ public partial class ThreadDisplayPane : UserControl
         var core = wv.CoreWebView2;
         if (core is null) return;
 
+        AttachSelectionGoogleSearch(core);
+
         // (デバッグ) suspend コマンドが対象タブの WebView2 を引けるよう tab→wv を控える。
         if (wv.DataContext is ThreadTabViewModel tabForReg)
             _tabToWebView.AddOrUpdate(tabForReg, wv);
