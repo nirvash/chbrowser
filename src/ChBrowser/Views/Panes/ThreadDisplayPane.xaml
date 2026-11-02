@@ -84,6 +84,11 @@
                       Tag="deleteCache"
                       Click="DeleteCache_Click"
                       Visibility="Collapsed" />
+            <MenuItem Header="Googleで画像検索"
+                      Tag="googleImageSearch"
+                      ToolTip="この操作を選んだときだけ、ブラウザから画像をGoogleへ送信して検索します"
+                      Click="GoogleImageSearch_Click"
+                      Visibility="Collapsed" />
             <MenuItem Header="リンクをコピー" Click="UrlCopy_Click" />
         </ContextMenu>
 

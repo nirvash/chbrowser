@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Controls;
 using ChBrowser.Controls;
 using ChBrowser.Models;
+using ChBrowser.Services;
 using ChBrowser.Services.Image;
 using ChBrowser.ViewModels;
 using Microsoft.Web.WebView2.Core;
@@ -25,6 +26,7 @@ public partial class ImageViewerWindow : Window
     private readonly ImageSaver              _imageSaver;
     private readonly ImageCacheService       _imageCache;
     private readonly AiImageMetadataService  _aiImageMeta;
+    private bool _googleImageSearchPending;
 
     /// <summary>画像詳細ペイン (右側 Grid.Column=2) のデフォルト幅 (px)。
     /// Tab / アコーディオン帯クリックで 0 ↔ <see cref="DetailsPaneDefaultWidth"/> をトグルする。</summary>
@@ -292,8 +294,8 @@ public partial class ImageViewerWindow : Window
                 }
                 case "contextMenu":
                 {
-                    if (vm.SelectedTab is { Url: var url } && !string.IsNullOrEmpty(url))
-                        ShowImageContextMenu(url);
+                    if (vm.SelectedTab is { Url: var url } tab && !string.IsNullOrEmpty(url))
+                        ShowImageContextMenu(url, !tab.IsVideo);
                     break;
                 }
                 case "imageReady":
@@ -433,9 +435,13 @@ public partial class ImageViewerWindow : Window
     }
 
     /// <summary>Window.Resources の "ImageContextMenu" を取り出して URL を Tag に積んで popup。</summary>
-    private void ShowImageContextMenu(string url)
+    private void ShowImageContextMenu(string url, bool isImage)
     {
         if (Resources["ImageContextMenu"] is not ContextMenu menu) return;
+        foreach (var item in menu.Items)
+            if (item is MenuItem mi && (mi.Tag as string) == "googleImageSearch")
+                mi.Visibility = isImage
+                    ? Visibility.Visible : Visibility.Collapsed;
         menu.Tag             = url;
         menu.PlacementTarget = this;
         menu.Placement       = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
@@ -470,6 +476,22 @@ public partial class ImageViewerWindow : Window
         var url = UrlFromMenu(sender);
         if (string.IsNullOrEmpty(url)) return;
         OpenInBrowser(url);
+    }
+
+    private async void GoogleImageSearch_Click(object sender, RoutedEventArgs e)
+    {
+        var imageUrl = UrlFromMenu(sender); // Snapshot before await; menu tag remains this clicked image.
+        if (string.IsNullOrEmpty(imageUrl) || _googleImageSearchPending) return;
+        _googleImageSearchPending = true;
+        try
+        {
+            using var service = new GoogleImageSearchService();
+            var ticket = await service.PrepareUploadAsync(imageUrl, _imageCache);
+            try { Process.Start(new ProcessStartInfo(ticket.Url) { UseShellExecute = true }); }
+            catch { ticket.Dispose(); throw; }
+        }
+        catch (Exception ex) { MessageBox.Show($"画像をGoogleへ送信できませんでした。\n{ex.Message}", "Googleで画像検索", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        finally { _googleImageSearchPending = false; }
     }
 
     private void ZoomActual_Click(object sender, RoutedEventArgs e) => RequestZoomOnSelectedTab("actual");
