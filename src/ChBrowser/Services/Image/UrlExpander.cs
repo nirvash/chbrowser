@@ -81,6 +81,10 @@ public sealed class UrlExpander : IDisposable
         @"^https?://(?:www\.|m\.)?imgur\.com/a/(?<id>[A-Za-z0-9]+)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex ImgBbPageRe = new(
+        @"^https?://ibb\.co/(?<id>[A-Za-z0-9]+)(?:[?#]|$)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>アルバムページ HTML から表紙サムネイルを取り出す og:image meta タグ。
     /// 実マークアップは "<c>&lt;meta property="og:image" data-react-helmet="true" content="..."&gt;</c>"
     /// のように property / content 間に他属性が挟まるため、タグ内なら任意の位置を許容する
@@ -110,7 +114,7 @@ public sealed class UrlExpander : IDisposable
 
     /// <summary>URL が非同期展開対象 (x.com / pixiv / imgur アルバム等) かを高速に判定。</summary>
     public static bool IsAsyncExpandable(string url) =>
-        !string.IsNullOrEmpty(url) && (TwitterRe.IsMatch(url) || PixivRe.IsMatch(url) || ImgurAlbumRe.IsMatch(url));
+        !string.IsNullOrEmpty(url) && (TwitterRe.IsMatch(url) || PixivRe.IsMatch(url) || ImgurAlbumRe.IsMatch(url) || ImgBbPageRe.IsMatch(url));
 
     /// <summary>
     /// URL を実体画像 URL に展開。返値の <see cref="ExpandResult.Outcome"/> で 3 値判別。
@@ -145,6 +149,9 @@ public sealed class UrlExpander : IDisposable
 
             var im = ImgurAlbumRe.Match(url);
             if (im.Success) return await ExpandImgurAlbumAsync(im.Groups["id"].Value).ConfigureAwait(false);
+            var ib = ImgBbPageRe.Match(url);
+            if (ib.Success) return await ExpandImgBbAsync(ib.Groups["id"].Value).ConfigureAwait(false);
+
 
             return ExpandResult.Unavailable;
         }
@@ -335,6 +342,26 @@ public sealed class UrlExpander : IDisposable
         }
         // content 属性内の HTML エンティティ (&amp; 等) をデコードしてから渡す。
         return ExpandResult.Of(WebUtility.HtmlDecode(og.Groups["url"].Value));
+    }
+
+    private async Task<ExpandResult> ExpandImgBbAsync(string imageId)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"https://ibb.co/{imageId}");
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
+        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        if (res.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+            return ExpandResult.NoMedia;
+        if (!res.IsSuccessStatusCode) return ExpandResult.Unavailable;
+
+        var html = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+        var og = OgImageRe.Match(html);
+        if (!og.Success) return ExpandResult.Unavailable;
+        var imageUrl = WebUtility.HtmlDecode(og.Groups["url"].Value);
+        return Uri.TryCreate(imageUrl, UriKind.Absolute, out var uri)
+               && uri.Scheme == Uri.UriSchemeHttps
+               && uri.Host.Equals("i.ibb.co", StringComparison.OrdinalIgnoreCase)
+            ? ExpandResult.Of(imageUrl)
+            : ExpandResult.Unavailable;
     }
 
     public void Dispose() => _http.Dispose();
