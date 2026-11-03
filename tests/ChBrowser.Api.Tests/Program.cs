@@ -35,47 +35,25 @@ if (!form.Contains("%26%23x1F600%3B", StringComparison.OrdinalIgnoreCase))
 
 Console.WriteLine("PASS emoji survives SJIS form encoding as an HTML numeric entity");
 
-var futabaMethod = typeof(PostClient).GetMethod(
-    "BuildFutabaFormBody",
-    BindingFlags.NonPublic | BindingFlags.Static)
-    ?? throw new MissingMethodException(typeof(PostClient).FullName, "BuildFutabaFormBody");
 var futabaBoard = new Board("b", "二次元裏", "https://may.2chan.net/b/", "img", 0);
 var futabaRequest = new PostRequest(futabaBoard, "123456", null, "なまえ", "sage", "本文😀", PostAuthMode.None);
-var futabaForm = Encoding.UTF8.GetString((byte[])(futabaMethod.Invoke(null, [futabaRequest])
-    ?? throw new InvalidOperationException("BuildFutabaFormBody returned null")));
-if (!futabaForm.Contains("mode=regist") || !futabaForm.Contains("resto=123456") ||
-    !futabaForm.Contains("textonly=on") || !futabaForm.Contains("com=%E6%9C%AC%E6%96%87%F0%9F%98%80"))
-    throw new Exception($"Unexpected Futaba form: {futabaForm}");
-if (futabaForm.Contains("bbs=", StringComparison.Ordinal))
-    throw new Exception($"Futaba form contains 5ch-only field: {futabaForm}");
-Console.WriteLine("PASS Futaba reply form uses regist/resto and UTF-8 text");
-
-var futabaMultipartMethod = typeof(PostClient).GetMethod(
-    "BuildFutabaMultipartContent",
-    BindingFlags.NonPublic | BindingFlags.Static)
-    ?? throw new MissingMethodException(typeof(PostClient).FullName, "BuildFutabaMultipartContent");
-var imageBytes = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
-var attachment = PostAttachment.Create("画像.PNG", imageBytes)
-    ?? throw new Exception("PNG attachment was rejected");
-if (PostAttachment.Create("note.txt", imageBytes) is not null)
-    throw new Exception("Unsupported attachment type was accepted");
-var futabaUploadRequest = futabaRequest with { Attachment = attachment };
-using var multipart = (MultipartFormDataContent)(futabaMultipartMethod.Invoke(null, [futabaUploadRequest])
-    ?? throw new InvalidOperationException("BuildFutabaMultipartContent returned null"));
-var multipartBytes = await multipart.ReadAsByteArrayAsync();
-var multipartText = Encoding.UTF8.GetString(multipartBytes);
-if (multipart.Headers.ContentType?.MediaType != "multipart/form-data")
-    throw new Exception($"Unexpected multipart content type: {multipart.Headers.ContentType}");
-if (multipartText.Contains("name=\"textonly\"", StringComparison.Ordinal))
-    throw new Exception("Futaba upload must not send textonly");
-if (!multipartText.Contains("name=\"resto\"\r\n\r\n123456", StringComparison.Ordinal) ||
-    !multipartText.Contains("name=\"com\"\r\n\r\n本文😀", StringComparison.Ordinal) ||
-    !multipartText.Contains("name=\"upfile\"; filename=\"upload.png\"", StringComparison.Ordinal) ||
-    !multipartText.Contains("Content-Type: image/png", StringComparison.Ordinal))
-    throw new Exception($"Unexpected Futaba multipart form: {multipartText}");
-var pngIndex = multipartBytes.AsSpan().IndexOf(imageBytes);
-if (pngIndex < 0) throw new Exception("Futaba multipart form does not contain the attachment bytes");
-Console.WriteLine("PASS Futaba upload form uses multipart upfile without textonly");
+if (PostFormViewModel.MaxAttachmentBytes != 8192000)
+    throw new Exception("Futaba upload limit must match the official 8000KB limit");
+var classifyFutaba = typeof(PostClient).GetMethod("ClassifyFutaba", BindingFlags.NonPublic | BindingFlags.Static)!;
+foreach (var (status, body, expected) in new[] {
+    (HttpStatusCode.OK, "ok", PostOutcome.Success),
+    (HttpStatusCode.OK, "{\"no\":123456}", PostOutcome.Success),
+    (HttpStatusCode.Forbidden, "ok", PostOutcome.BlockedByRule),
+    (HttpStatusCode.OK, "<html><body>エラー ファイルが大きすぎます</body></html>", PostOutcome.BlockedByRule),
+    (HttpStatusCode.OK, "unexpected response", PostOutcome.UnknownError)
+}) {
+    using var response = new HttpResponseMessage(status) {
+        RequestMessage = new HttpRequestMessage(HttpMethod.Post, "https://may.2chan.net/b/futaba.php?guid=on")
+    };
+    var result = (PostResult)classifyFutaba.Invoke(null, [response, body, futabaRequest])!;
+    if (result.Outcome != expected) throw new Exception($"Unexpected official form response classification: {body}: {result.Outcome}");
+}
+Console.WriteLine("PASS Futaba official AJAX success, HTTP failures, server errors, and 8000KB limit");
 
 var soudaneMethod = typeof(PostClient).GetMethod(
     "BuildFutabaSoudaneUri",

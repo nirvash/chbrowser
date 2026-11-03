@@ -167,127 +167,40 @@ public sealed class PostClient
     private static Uri BuildFutabaSoudaneUri(Board board, int postNumber)
         => new(new Uri(board.Url), $"/sd.php?{board.DirectoryName}.{postNumber}");
 
-    /// <summary>
-    /// ふたば☆ちゃんねるの標準フォーム (<c>futaba.php</c>) へ投稿する。
-    /// 5ch の bbs.cgi / どんぐり認証とは別プロトコル。本文は UTF-8 で送る。
-    /// 添付なしは application/x-www-form-urlencoded + textonly=on、
-    /// 添付ありは multipart/form-data で upfile にファイルを載せる (textonly は付けない)。
-    /// </summary>
+    /// <summary>公式ページと公式JavaScriptをWebView2で実行して投稿する。自動再送はしない。</summary>
     private async Task<PostResult> PostToFutabaAsync(PostRequest request, CancellationToken ct)
     {
-        var uri = new Uri(new Uri(request.Board.Url), "futaba.php?guid=on");
-        HttpContent content;
-        if (request.Attachment is null)
-        {
-            content = new ByteArrayContent(BuildFutabaFormBody(request));
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded")
-            {
-                CharSet = "UTF-8",
-            };
-        }
-        else
-        {
-            content = BuildFutabaMultipartContent(request);
-        }
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, uri)
-        {
-            Content = content,
-        };
-        httpRequest.Headers.TryAddWithoutValidation("Referer", request.IsReply
-            ? FutabaUrl.BuildThreadUrl(request.Board.Host, request.Board.DirectoryName, request.ThreadKey!)
-            : request.Board.Url);
-        httpRequest.Headers.TryAddWithoutValidation("Origin", $"{uri.Scheme}://{uri.Host}");
-
+        var log = ChBrowser.Services.Logging.LogService.Instance;
+        log.Write($"[FutabaPost] start host={request.Board.Host} board={request.Board.DirectoryName} thread={request.ThreadKey ?? "new"} attachmentBytes={request.Attachment?.Data.Length ?? 0}");
         try
         {
-            using var response = await _http.Http.SendAsync(httpRequest, ct).ConfigureAwait(false);
-            var html = await DecodeHtmlAsync(response, ct).ConfigureAwait(false);
-            var result = ClassifyFutaba(response, html, request);
-            if (result.Outcome == PostOutcome.Success) AppendKakikomi(request);
-            return result;
+            if (request.Attachment is {} file && file.Data.Length > FutabaBrowserPoster.MaxAttachmentBytes)
+                throw new InvalidOperationException("添付ファイルは8000KBまでです。");
+            var (response, html) = await FutabaBrowserPoster.SendAsync(request, ct).ConfigureAwait(false);
+            using (response)
+            {
+                var result = ClassifyFutaba(response, html, request);
+                var diagnostic = result.Outcome == PostOutcome.Success ? "" : result.Message;
+                // Do not record submitted text, file contents, cookies, or dynamic form tokens.
+                foreach (var value in new[] { request.Message, request.Name, request.Mail, request.Subject })
+                    if (!string.IsNullOrEmpty(value)) diagnostic = diagnostic.Replace(value, "[redacted]", StringComparison.Ordinal);
+                diagnostic = WsRegex.Replace(diagnostic, " ");
+                if (diagnostic.Length > 600) diagnostic = diagnostic[..600];
+                log.Write($"[FutabaPost] response status={(int)response.StatusCode} outcome={result.Outcome} detail={diagnostic}");
+                if (result.Outcome == PostOutcome.Success) AppendKakikomi(request);
+                return result;
+            }
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
+            log.Write($"[FutabaPost] failed type={ex.GetType().Name} detail={WsRegex.Replace(ex.Message, " ")}");
             return new PostResult(PostOutcome.UnknownError, ex.Message, "");
         }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            return new PostResult(PostOutcome.UnknownError, "ふたばへの送信がタイムアウトしました。", "");
+            log.Write("[FutabaPost] cancelled before submission");
+            throw;
         }
-    }
-
-    /// <summary>ふたば標準の regist フォーム値を UTF-8 で組み立てる。公開していないが API テストから検証する。</summary>
-    private static byte[] BuildFutabaFormBody(PostRequest req)
-        => Encoding.UTF8.GetBytes(EncodeUtf8Form(BuildFutabaTextFields(req, textOnly: true)));
-
-    /// <summary>ふたば regist フォームのテキスト項目。添付ありのときは textonly を付けない。</summary>
-    private static List<KeyValuePair<string, string>> BuildFutabaTextFields(PostRequest req, bool textOnly)
-    {
-        var fields = new List<KeyValuePair<string, string>>
-        {
-            new("mode", "regist"),
-            new("name", req.Name),
-            new("email", req.Mail),
-            new("sub", req.IsNewThread ? req.Subject ?? "" : ""),
-            new("com", req.Message),
-            new("pwd", ""),
-        };
-        if (textOnly) fields.Add(new("textonly", "on"));
-        fields.Add(new("submit", "送信する"));
-        if (req.IsReply) fields.Add(new("resto", req.ThreadKey!));
-        return fields;
-    }
-
-    /// <summary>添付付きのふたば投稿を multipart/form-data で組み立てる。
-    /// テキスト項目は urlencoded 版と同じく UTF-8 で、ブラウザと同様にパートごとの Content-Type は付けない。
-    /// ファイル名は ASCII 以外を含むとサーバ側で化けうるため、拡張子だけ残した安全な名前にする。</summary>
-    private static MultipartFormDataContent BuildFutabaMultipartContent(PostRequest req)
-    {
-        var attachment = req.Attachment!;
-        var multipart = new MultipartFormDataContent("----ChBrowserFutaba" + Guid.NewGuid().ToString("N"));
-        foreach (var field in BuildFutabaTextFields(req, textOnly: false))
-        {
-            var part = new ByteArrayContent(Encoding.UTF8.GetBytes(field.Value));
-            part.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("form-data")
-            {
-                Name = Quote(field.Key),
-            };
-            multipart.Add(part);
-        }
-
-        var file = new ByteArrayContent(attachment.Data);
-        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(attachment.ContentType);
-        file.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("form-data")
-        {
-            Name     = Quote("upfile"),
-            FileName = Quote(BuildSafeUploadFileName(attachment)),
-        };
-        multipart.Add(file);
-        return multipart;
-
-        static string Quote(string s) => "\"" + s + "\"";
-    }
-
-    private static string BuildSafeUploadFileName(PostAttachment attachment)
-    {
-        var name = attachment.FileName;
-        var safe = !string.IsNullOrEmpty(name) && name.All(c => c is >= ' ' and <= '~' && c is not ('"' or '\\'));
-        return safe ? name : "upload" + attachment.Extension;
-    }
-
-    private static string EncodeUtf8Form(IReadOnlyList<KeyValuePair<string, string>> fields)
-        => string.Join("&", fields.Select(pair =>
-            Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)));
-
-    private static async Task<string> DecodeHtmlAsync(HttpResponseMessage response, CancellationToken ct)
-    {
-        var bytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-        var charset = response.Content.Headers.ContentType?.CharSet?.Trim('"');
-        if (string.Equals(charset, "shift_jis", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(charset, "shift-jis", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(charset, "sjis", StringComparison.OrdinalIgnoreCase))
-            return Encoding.GetEncoding(932).GetString(bytes);
-        return Encoding.UTF8.GetString(bytes);
     }
 
     /// <summary>
@@ -300,6 +213,15 @@ public sealed class PostClient
         var snippet = bodyText.Length > 400 ? bodyText[..400] : bodyText;
         if (!response.IsSuccessStatusCode)
             return new PostResult(PostOutcome.BlockedByRule, ShortenForUser(bodyText), snippet);
+
+        // Official ptfk treats "ok" and valid JSON as completion (base4esc.js isJson).
+        if (html.Trim() == "ok") return new PostResult(PostOutcome.Success, "", "ok");
+        try
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(html);
+            return new PostResult(PostOutcome.Success, "", "JSON response");
+        }
+        catch (System.Text.Json.JsonException) { }
 
         if (bodyText.Contains("拒絶", StringComparison.Ordinal) ||
             bodyText.Contains("エラー", StringComparison.OrdinalIgnoreCase) ||

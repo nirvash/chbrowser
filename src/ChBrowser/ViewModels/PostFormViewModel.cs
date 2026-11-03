@@ -189,9 +189,8 @@ public sealed partial class PostFormViewModel : ObservableObject
         ClearAttachmentCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>添付ファイルの上限 (誤操作で巨大ファイルを読み込まないための安全弁)。
-    /// 実際の上限は板ごとにサーバが判定し、超過時はエラー文言がそのまま表示される。</summary>
-    public const int MaxAttachmentBytes = 20 * 1024 * 1024;
+    /// <summary>公式フォームの8000KB上限。送信時には板のMAX_FILE_SIZEも確認する。</summary>
+    public const int MaxAttachmentBytes = FutabaBrowserPoster.MaxAttachmentBytes;
 
     /// <summary>ファイル内容を添付として設定する。対応外の形式・サイズならエラー文言を返し、添付は変えない。</summary>
     public string? TrySetAttachment(string fileName, byte[] data)
@@ -210,7 +209,7 @@ public sealed partial class PostFormViewModel : ObservableObject
     }
 
     public static string BuildTooLargeMessage(long bytes)
-        => $"ファイルが大きすぎます ({FormatSize(bytes)})。{FormatSize(MaxAttachmentBytes)} までです。";
+        => $"ファイルが大きすぎます ({FormatSize(bytes)})。8000 KB までです。";
 
     private static string FormatSize(long bytes)
         => bytes >= 1024 * 1024
