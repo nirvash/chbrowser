@@ -636,26 +636,30 @@ public partial class ThreadDisplayPane : UserControl
     {
         var menuInfo = UrlMenuOf(sender);
         if (menuInfo.Ctx is not { } ctx) return;
-        _ = SaveMediaToConfiguredDirAsync(ctx.SrcUrl, menuInfo.Menu?.PlacementTarget as WebView2);
+        _ = SaveMediaToConfiguredDirAsync(ctx.SrcUrl, menuInfo.Menu?.PlacementTarget as WebView2, ctx.PostNumber);
     }
 
     /// <summary>UrlContextMenu「名前を付けて保存」項目クリック。設定に関係なく必ず
     /// SaveFileDialog を出す (= 保存先 / ファイル名を都度ユーザが指定する従来動作)。</summary>
     private void SaveAs_Click(object sender, RoutedEventArgs e)
     {
-        if (UrlMenuOf(sender).Ctx is not { } ctx) return;
-        _ = SaveMediaWithDialogAsync(ctx.SrcUrl);
+        var menuInfo = UrlMenuOf(sender);
+        if (menuInfo.Ctx is not { } ctx) return;
+        _ = SaveMediaWithDialogAsync(ctx.SrcUrl, menuInfo.Menu?.PlacementTarget as WebView2, ctx.PostNumber);
     }
 
     private Task HandleSaveMediaShortcutAsync(object sender, JsonElement payload)
     {
         var url = payload.TryGetProperty("url", out var up) ? up.GetString() : null;
         if (string.IsNullOrWhiteSpace(url)) return Task.CompletedTask;
-        return SaveMediaToConfiguredDirAsync(url, sender as WebView2);
+        var postNumber = payload.TryGetProperty("postNumber", out var np) && np.ValueKind == JsonValueKind.Number && np.TryGetInt32(out var number) ? number : (int?)null;
+        return SaveMediaToConfiguredDirAsync(url, sender as WebView2, postNumber);
     }
 
-    private async Task SaveMediaToConfiguredDirAsync(string url, WebView2? feedbackWebView = null)
+    private async Task SaveMediaToConfiguredDirAsync(string url, WebView2? feedbackWebView = null, int? postNumber = null)
     {
+        // Capture the originating tab before any dialog/download can switch the selected tab.
+        var originTab = feedbackWebView?.DataContext as ThreadTabViewModel;
         var isVideo  = IsVideoUrlForSave(url);
         var ownerWin = Window.GetWindow(this);
         var suggestedName = ImageSaver.SuggestFileName(url, isVideo ? "video/mp4" : "image/jpeg");
@@ -708,8 +712,9 @@ public partial class ThreadDisplayPane : UserControl
         if (saved)
         {
             var fileName = System.IO.Path.GetFileName(destPath);
-            if (Group?.SelectedTab is { } tab) tab.StatusMessage = $"メディアを保存しました: {fileName}";
+            if (originTab is not null) originTab.StatusMessage = $"メディアを保存しました: {fileName}";
             ShowMediaSavedToast(feedbackWebView, fileName);
+            await SendSoudaneAfterMediaSaveAsync(originTab, feedbackWebView, postNumber);
         }
     }
 
@@ -722,8 +727,10 @@ public partial class ThreadDisplayPane : UserControl
         }));
     }
 
-    private async Task SaveMediaWithDialogAsync(string url)
+    private async Task SaveMediaWithDialogAsync(string url, WebView2? feedbackWebView, int? postNumber)
     {
+        // Capture the originating tab before any dialog/download can switch the selected tab.
+        var originTab = feedbackWebView?.DataContext as ThreadTabViewModel;
         var isVideo  = IsVideoUrlForSave(url);
         var ownerWin = Window.GetWindow(this);
         var dlg = new Microsoft.Win32.SaveFileDialog
@@ -737,8 +744,12 @@ public partial class ThreadDisplayPane : UserControl
         if (dlg.ShowDialog(ownerWin) != true) return;
 
         var saved = await SaveMediaCoreAsync(url, dlg.FileName, isVideo, ownerWin);
-        if (saved && Group?.SelectedTab is { } tab)
-            tab.StatusMessage = $"メディアを保存しました: {System.IO.Path.GetFileName(dlg.FileName)}";
+        if (saved)
+        {
+            if (originTab is not null)
+                originTab.StatusMessage = $"メディアを保存しました: {System.IO.Path.GetFileName(dlg.FileName)}";
+            await SendSoudaneAfterMediaSaveAsync(originTab, feedbackWebView, postNumber);
+        }
     }
 
     /// <summary>保存の共通本体: キャッシュ済みならコピー、未キャッシュ (= 未DL 含む) なら直接 DL。</summary>
@@ -994,7 +1005,7 @@ public partial class ThreadDisplayPane : UserControl
     /// <summary>URL メニューの対象。ContextMenu.Tag に積んで各 Click ハンドラから読み出す。
     /// Url = 元のページ URL (リンクコピー用)、SrcUrl = 実メディア URL (キャッシュキー / 保存・ビューア対象。
     /// スロット以外や data-src 未解決時は Url と同じ)、MediaType = "image" / "video" / "youtube" / ""。</summary>
-    private sealed record UrlMenuContext(string Url, string SrcUrl, string MediaType);
+    private sealed record UrlMenuContext(string Url, string SrcUrl, string MediaType, int? PostNumber);
 
     /// <summary>クリックされた MenuItem から (UrlMenuContext, ContextMenu) を取り出す共通ヘルパ。</summary>
     private static (UrlMenuContext? Ctx, ContextMenu? Menu) UrlMenuOf(object sender)
@@ -1130,7 +1141,8 @@ public partial class ThreadDisplayPane : UserControl
         }
         menu.PlacementTarget = wv;
         menu.Placement       = PlacementMode.MousePoint;
-        menu.Tag             = new UrlMenuContext(url!, srcUrl!, mediaType);
+        var postNumber = payload.TryGetProperty("postNumber", out var np) && np.ValueKind == JsonValueKind.Number && np.TryGetInt32(out var number) ? number : (int?)null;
+        menu.Tag             = new UrlMenuContext(url!, srcUrl!, mediaType, postNumber);
         menu.IsOpen          = true;
     }
 
@@ -1310,8 +1322,31 @@ public partial class ThreadDisplayPane : UserControl
         if (Vm is not { } main) return;
         if (!payload.TryGetProperty("number", out var nProp) || !nProp.TryGetInt32(out var number) || number <= 0) return;
 
+        await SendFutabaSoudaneAndUpdateAsync(wv, tab, number);
+    }
+
+    /// <summary>保存成功後だけ、保存を開始したふたばレスへそうだねを送る。</summary>
+    private async Task SendSoudaneAfterMediaSaveAsync(ThreadTabViewModel? tab, WebView2? wv, int? number)
+    {
+        if (tab is null || wv is null || number is not > 0 ||
+            !ChBrowser.Services.Url.FutabaUrl.IsFutabaHost(tab.Board.Host) ||
+            !tab.Posts.Any(p => p.Number == number.Value)) return;
+        try
+        {
+            await SendFutabaSoudaneAndUpdateAsync(wv, tab, number.Value);
+        }
+        catch (Exception ex)
+        {
+            // The file is already saved. A reaction failure must not turn it into a save failure.
+            ChBrowser.Services.Logging.LogService.Instance.Write($"[mediaSave] そうだね送信失敗 post={number}: {ex.Message}");
+        }
+    }
+
+    private async Task SendFutabaSoudaneAndUpdateAsync(WebView2 wv, ThreadTabViewModel tab, int number)
+    {
+        if (Vm is not { } main) return;
         var result = await main.SendFutabaSoudaneAsync(tab, number);
-        if (wv.CoreWebView2 is null) return;
+        if (wv.CoreWebView2 is null || !ReferenceEquals(wv.DataContext, tab)) return;
         wv.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new
         {
             type = "futabaSoudaneResult",

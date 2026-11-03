@@ -21,6 +21,7 @@
 //   { type: 'pageZoomCompensate', k, clientY, anchorPostNumber, anchorOffsetY }
 //                                            — ページズーム適用後の縦位置補正
 //                                              (clientY/anchorPostNumber 基準。無ければ中央)
+//   { type: 'urlContextMenu', url, mediaType, srcUrl, postNumber? } — 保存元レスも通知
 //   { type: 'futabaSoudane', number }      — ふたばレスへのそうだね！送信要求
 //   { type: 'paneActivated' }               — Phase 14: pane 内任意の mousedown (アドレスバー切替用)
 //   { type: 'shortcut', descriptor }        — Phase 16: ショートカット/マウス操作のディスパッチ要求
@@ -210,7 +211,7 @@
     //   - textQuery (= AND 条件): 本文に含まれていれば match (= 大文字小文字無視)。空なら本文条件なし。
     //   - popularOnly + mediaOnly (= 互いに OR): どちらかでも ON なら、その条件に match するレスだけ表示。
     //     両方 OFF なら toggle 条件なし (textQuery のみで判定)。
-    let currentFilter = { textQuery: '', popularOnly: false, mediaOnly: false, mediaPostsOnly: false, mediaWithPrompt: false, mediaImages: true, mediaVideos: true, mediaExclude404: false, mediaReachableOnly: false };
+    let currentFilter = { ownOnly: false, textQuery: '', popularOnly: false, mediaOnly: false, mediaPostsOnly: false, mediaWithPrompt: false, mediaImages: true, mediaVideos: true, mediaExclude404: false, mediaReachableOnly: false };
 
     // popularOnly フィルタの「展開済み include 集合」キャッシュ。
     // tree / dedupTree モードでは popular レス自身 + その配下 (= 返信チェイン) を全て表示する仕様で、
@@ -219,7 +220,7 @@
 
     /** 現在のフィルタが「全レス可視」(= フィルタなし) と等価か。短絡判定用。 */
     function isFilterEmpty() {
-        return !currentFilter.textQuery && !currentFilter.popularOnly && !currentFilter.mediaOnly;
+        return !currentFilter.ownOnly && !currentFilter.textQuery && !currentFilter.popularOnly && !currentFilter.mediaOnly;
     }
 
     /** popularOnly フィルタ用の include 集合を組む。
@@ -257,7 +258,8 @@
     /** 1 レス (= JS の post オブジェクト = postsByNumber の値) がフィルタ条件に match するか。
      *  textQuery は AND、popularOnly / mediaOnly は互いに OR。 */
     function postMatchesFilter(post) {
-        if (!post) return true;
+        if (!post) return !currentFilter.ownOnly;
+        if (currentFilter.ownOnly && !ownPostNumbers.has(post.number)) return false;
 
         // (1) textQuery (AND): 検索対象は本文 + 名前行のすべての要素
         //     (name = ワッチョイ含む / mail / dateText / id ユーザ ID)。
@@ -407,8 +409,8 @@
     }
 
     function requiresDirectPostResults() {
-        return currentFilter.mediaOnly
-            && (currentFilter.mediaPostsOnly || currentFilter.mediaWithPrompt);
+        return currentFilter.ownOnly || (currentFilter.mediaOnly
+            && (currentFilter.mediaPostsOnly || currentFilter.mediaWithPrompt));
     }
 
     function updateFilterViewMode() {
@@ -3847,6 +3849,7 @@ function findReadProgressMaxNumber() {
             }
         }
         for (const r of affectedReplyPosts) applyReplyToOwnBadge(r);
+        if (currentFilter.ownOnly) applyFilterToAllPosts();
         // 自分マーカーは scrollbar の mark トラックにも色違いで出している。
         // toggle 直後に必ず再描画 (= 即時反映、追加/解除の両方)。
         updateMarkScrollbarMarker();
@@ -3887,11 +3890,11 @@ function findReadProgressMaxNumber() {
      *  url    = オリジナルのページ URL (data-url。「リンクをコピー」で共有したい元 URL)。
      *  srcUrl = 実メディア URL (data-src。キャッシュキー / 保存・ビューア対象。無ければ空)。
      *  mediaType は C# 側で「ビューアで開く / 保存 / キャッシュ削除」項目の可視切替に使う。 */
-    function postUrlContextMenu(url, mediaType, srcUrl) {
+    function postUrlContextMenu(url, mediaType, srcUrl, postNumber) {
         if (!url) return;
         if (window.chrome && window.chrome.webview) {
             window.chrome.webview.postMessage({
-                type: 'urlContextMenu', url: url, mediaType: mediaType || '', srcUrl: srcUrl || '',
+                type: 'urlContextMenu', url: url, mediaType: mediaType || '', srcUrl: srcUrl || '', postNumber: postNumber || null,
             });
         }
     }
@@ -3919,7 +3922,10 @@ function findReadProgressMaxNumber() {
             const isSlot = urlEl.classList && urlEl.classList.contains('image-slot');
             const mt  = isSlot ? (urlEl.dataset.mediaType || 'image') : '';
             const src = isSlot ? (urlEl.dataset.src || '') : '';
-            postUrlContextMenu(urlEl.dataset.url, mt, src);
+            const postEl = urlEl.closest('.post');
+            const noEl = postEl && postEl.querySelector('.post-no[data-number]');
+            const postNumber = noEl ? parseInt(noEl.dataset.number, 10) : null;
+            postUrlContextMenu(urlEl.dataset.url, mt, src, postNumber);
             return;
         }
     });
@@ -5522,6 +5528,7 @@ function findReadProgressMaxNumber() {
                             currentFilter = {
                                 textQuery:   typeof msg.filter.textQuery === 'string' ? msg.filter.textQuery : '',
                                 popularOnly: msg.filter.popularOnly === true,
+                                ownOnly: msg.filter.ownOnly === true,
                                 mediaOnly:   msg.filter.mediaOnly   === true,
                                 mediaPostsOnly: msg.filter.mediaPostsOnly === true,
                                 mediaWithPrompt: msg.filter.mediaWithPrompt === true,
@@ -5551,6 +5558,7 @@ function findReadProgressMaxNumber() {
                     currentFilter = {
                         textQuery:   typeof msg.textQuery === 'string' ? msg.textQuery : '',
                         popularOnly: msg.popularOnly === true,
+                        ownOnly: msg.ownOnly === true,
                         mediaOnly:   msg.mediaOnly   === true,
                         mediaPostsOnly: msg.mediaPostsOnly === true,
                         mediaWithPrompt: msg.mediaWithPrompt === true,

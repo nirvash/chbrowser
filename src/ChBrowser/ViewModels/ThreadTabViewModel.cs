@@ -416,6 +416,10 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
     [ObservableProperty]
     private bool _isPopularFilterOn;
 
+    /// <summary>自分マークが付いた投稿だけを表示する。ほかの条件とはAND。</summary>
+    [ObservableProperty]
+    private bool _isOwnPostFilterOn;
+
     /// <summary>「画像/動画」フィルタトグル (= 🖼 ボタン)。本文に画像/動画 URL を含むレスのみ表示。</summary>
     [ObservableProperty]
     private bool _isMediaFilterOn;
@@ -446,6 +450,7 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
 
     partial void OnSearchQueryChanged(string value)        => RebuildFilter();
     partial void OnIsPopularFilterOnChanged(bool value)    => RebuildFilter();
+    partial void OnIsOwnPostFilterOnChanged(bool value)    => RebuildFilter();
     partial void OnIsMediaFilterOnChanged(bool value)      => RebuildFilter();
     partial void OnMediaFilterPostsOnlyChanged(bool value)  => OnMediaFilterOptionChanged();
     partial void OnMediaFilterWithPromptChanged(bool value) => OnMediaFilterOptionChanged();
@@ -492,7 +497,8 @@ public sealed partial class ThreadTabViewModel : ObservableObject, IThreadDispla
             MediaImages: MediaFilterImages,
             MediaVideos: MediaFilterVideos,
             MediaExclude404: MediaFilterExclude404,
-            MediaReachableOnly: MediaFilterReachableOnly);
+            MediaReachableOnly: MediaFilterReachableOnly,
+            OwnOnly: IsOwnPostFilterOn);
     }
 
     IReadOnlyCollection<int> IThreadDisplayBinding.OwnPostNumbers => OwnPostNumbers;

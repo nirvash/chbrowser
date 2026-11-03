@@ -77,8 +77,11 @@
         }
         var url = current && (current.dataset.url || current.dataset.src || '');
         if (!url || !window.chrome || !window.chrome.webview) return;
+        var postEl = current.closest('.post');
+        var noEl = postEl && postEl.querySelector('.post-no[data-number]');
         window.chrome.webview.postMessage({
             type: 'saveMediaShortcut',
+            postNumber: noEl ? parseInt(noEl.dataset.number, 10) : null,
             url: url,
             mediaType: current.dataset.mediaType || 'image'
         });

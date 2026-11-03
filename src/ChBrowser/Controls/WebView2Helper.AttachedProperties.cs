@@ -248,6 +248,7 @@ public static partial class WebView2Helper
             {
                 textQuery   = filter?.TextQuery ?? "",
                 popularOnly = filter?.PopularOnly == true,
+                ownOnly = filter?.OwnOnly == true,
                 mediaOnly   = filter?.MediaOnly   == true,
             },
         }, PostJsonOptions);
@@ -358,6 +359,7 @@ public static partial class WebView2Helper
             type        = "setFilter",
             textQuery   = filter.TextQuery,
             popularOnly = filter.PopularOnly,
+            ownOnly = filter.OwnOnly,
             mediaOnly   = filter.MediaOnly,
             mediaPostsOnly = filter.MediaPostsOnly,
             mediaWithPrompt = filter.MediaWithPrompt,

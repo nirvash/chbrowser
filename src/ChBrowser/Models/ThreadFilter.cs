@@ -26,10 +26,11 @@ public sealed record ThreadFilter(
     bool   MediaImages = true,
     bool   MediaVideos = true,
     bool   MediaExclude404 = false,
-    bool   MediaReachableOnly = false)
+    bool   MediaReachableOnly = false,
+    bool   OwnOnly = false)
 {
     /// <summary>すべての条件が「指定なし」相当か。true なら JS 側はフィルタを切る (= 全レス可視)。</summary>
     public bool IsEmpty => string.IsNullOrEmpty(TextQuery) && !PopularOnly && !MediaOnly
                            && !MediaPostsOnly && !MediaWithPrompt && MediaImages && MediaVideos && !MediaExclude404
-                           && !MediaReachableOnly;
+                           && !MediaReachableOnly && !OwnOnly;
 }

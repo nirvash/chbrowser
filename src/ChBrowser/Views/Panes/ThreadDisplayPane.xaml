@@ -359,6 +359,12 @@
                         <TextBlock Text="🖼" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </ToggleButton>
 
+                    <ToggleButton Style="{StaticResource ToolbarToggleIconButton}"
+                                  IsChecked="{Binding SelectedTab.IsOwnPostFilterOn}"
+                                  ToolTip="自分の投稿のみ表示。検索や他のフィルタとは AND 動作">
+                        <TextBlock Text="自分" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </ToggleButton>
+
                     <!-- 差分取得 -->
                     <ToggleButton Style="{StaticResource ToolbarToggleIconButton}"
                                   IsChecked="{Binding Main.IsAutoRefreshEnabled, Mode=TwoWay}"
